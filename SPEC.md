@@ -28,7 +28,11 @@ Out of scope for now: hierarchical sheets, buses, PCB layout (see §8).
                                         history/<timestamp>/
 ```
 
-- **KiCad is the authority.** Loading, ERC and netlists come from `kicad-cli`. Every save
+- **SKiDL defines the circuit.** Parts and connections exist only in the design code; its
+  netlist is the reference the drawing is checked against.
+- **KiCad reads the drawing.** Whether the file loads, which nets the drawing actually
+  forms and what ERC reports are always determined by `kicad-cli`, never by `kat`'s own
+  geometry model. `kat check --expect` compares KiCad's reading with the design. Every save
   goes through `kicad-cli sch upgrade --force`, which proves KiCad can load the file and
   applies KiCad's own formatting (clean `git diff`).
 - **Lossless file editing.** `kat.sexpr` keeps every token, including ones it does not

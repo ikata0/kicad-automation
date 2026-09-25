@@ -49,8 +49,11 @@ layout, re-sync); set `KAT_E2E_OUT=dir` to keep its snapshots for inspection.
 
 - **SKiDL for connectivity, not for drawing** — its own schematic generator is not readable
   for real circuits. atopile was not chosen: it has no schematic at all.
-- **KiCad is the authority** — every save goes through `kicad-cli sch upgrade`; ERC and
-  netlists come from `kicad-cli`.
+- **SKiDL defines the circuit** — parts and connections exist only in the design code; its
+  netlist is the reference.
+- **KiCad reads the drawing** — whether the file loads, which nets the drawing actually forms
+  and what ERC reports is always determined by `kicad-cli`, never by `kat`'s own geometry
+  model. `check --expect` compares the two. Every save goes through `kicad-cli sch upgrade`.
 - **Lossless editing** — `kat.sexpr` keeps every token. kiutils drops KiCad 8+ syntax;
   kicad-skip preserves tokens but has not been released since 2024 and lacks the geometry
   this needs.
