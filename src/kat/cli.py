@@ -85,7 +85,26 @@ def cmd_new(a):
 
 
 def cmd_list(a):
+    if a.near:
+        return kat.load(a.sch).near(a.near, a.radius)
     return kat.load(a.sch).list()
+
+
+def cmd_page(s, a):
+    return s.page(a.paper, a.portrait)
+
+
+def cmd_title(s, a):
+    return s.title(a.title, a.date, a.rev, a.company,
+                   {int(n): v for n, v in (c.split("=", 1) for c in a.comment or [])})
+
+
+def cmd_text(s, a):
+    return s.text(a.text, a.at, a.size, a.angle, a.bold)
+
+
+def cmd_restore(a):
+    return kat.restore(a.sch, a.step, a.expect)
 
 
 def cmd_pins(a):
@@ -200,9 +219,12 @@ def build_parser() -> argparse.ArgumentParser:
     s2 = lsp.add_parser("show", help="units, pins and fields of one symbol")
     s2.add_argument("lib_id", help="Library:Symbol")
 
-    cmd("list", cmd_list, "List placed symbols, labels, wires and junctions.",
-        "Symbols include position, rotation, mirror, value, footprint and body box.",
-        ["kat list tia.kicad_sch"])
+    q = cmd("list", cmd_list, "List placed symbols, labels, wires and junctions.",
+            "Symbols include position, rotation, mirror, value, footprint and body box.\n"
+            "With --near: only what lies within --radius of a point, nearest first, with uuids.",
+            ["kat list tia.kicad_sch", "kat list tia.kicad_sch --near 127,101.6 --radius 3"])
+    q.add_argument("--near", metavar="POINT", help="REF.PIN or X,Y")
+    q.add_argument("--radius", type=float, default=5.0, help="mm around --near (default 5)")
     q = cmd("pins", cmd_pins, "Show where a part's pins are on the sheet.",
             "Per pin: number, name, electrical type, sheet position and `dir`, the outward\n"
             "direction (where a wire should leave the pin).",
@@ -255,6 +277,13 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--margin", type=float, help="mm around the part or point")
     q.add_argument("--zoom", type=float, help="scale (default: longer side about 1600 px)")
     q.add_argument("--out", help="PNG path (default views/<timestamp>_<what>.png)")
+
+    q = cmd("restore", cmd_restore, "Put the schematic back to a history step.",
+            "Copies the schematic saved in STEP (a history/<timestamp>_<slug>/ directory) back\n"
+            "and checks it: the undo for a pass that broke something.",
+            ["kat restore tia.kicad_sch history/2026-09-25_141218_pass1 --expect tia_design.net"])
+    q.add_argument("step", metavar="STEP", help="history directory")
+    q.add_argument("--expect", metavar="NETLIST", help="as for `check`")
 
     q = cmd("sync", cmd_sync, "Bring a design netlist (e.g. from SKiDL) into the schematic.",
             "The netlist is the source of truth for parts and connections; the arrangement is kept.\n"
@@ -369,15 +398,37 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--unit", type=int, help="unit of a multi-unit part")
     q.add_argument("--autoplace", action="store_true", help="re-run automatic field placement")
 
-    q = cmd("detach", cmd_detach, "Disconnect a pin from everything drawn at it.",
+    q = cmd("detach", cmd_detach, "Disconnect a pin (or every pin of a part) from everything drawn at it.",
             "Removes the pin's own wire run up to the next branch point, the wire leading into\n"
             "the shared net, and labels / power symbols / flags on that run. Typical use:\n"
             "replace a label pair by a real wire - detach both pins, then `connect` them.\n"
             "Afterwards `check --expect` shows whether the net is complete again.",
-            ["kat detach s.kicad_sch R1.2",
+            ["kat detach s.kicad_sch R1.2", "kat detach s.kicad_sch R1   (all pins)",
              "in a pass: s.detach('R2.1'); s.detach('U1.1'); s.connect('R2.1', 'U1.1')"],
             mutating=True)
-    q.add_argument("pin", help="REF.PIN")
+    q.add_argument("pin", help="REF.PIN, or REF for all pins")
+
+    q = cmd("page", cmd_page, "Change the paper size.",
+            "Everything keeps its position; `check` reports items outside the new frame.",
+            ["kat page s.kicad_sch A2", "kat page s.kicad_sch A4 --portrait"], mutating=True)
+    q.add_argument("paper", help="A4, A3, A2, A1, A0, A..E, USLetter")
+    q.add_argument("--portrait", action="store_true", help="portrait orientation")
+
+    q = cmd("title", cmd_title, "Fill the title block.",
+            "Only the given fields change; an empty string clears a field.",
+            ["kat title s.kicad_sch --title 'LED matrix 10x10' --rev A --date 2026-09-25",
+             "kat title s.kicad_sch --comment 1='Drive 3.3-5 V, 2-4.5 mA per LED'"], mutating=True)
+    q.add_argument("--title"); q.add_argument("--date"); q.add_argument("--rev")
+    q.add_argument("--company")
+    q.add_argument("--comment", action="append", metavar="N=TEXT", help="comment line 1-9 (repeatable)")
+
+    q = cmd("text", cmd_text, "Place a free text (note, heading).",
+            "Not connected to anything. Remove it with `rm --uuid`.",
+            ["kat text s.kicad_sch 'J1: rows 1-5' 30,40 --size 2.54 --bold"], mutating=True)
+    q.add_argument("text"); q.add_argument("at", help="REF.PIN or X,Y")
+    q.add_argument("--size", type=float, default=1.27, help="text height in mm (default 1.27)")
+    q.add_argument("--angle", type=float, default=0, choices=[0, 90, 180, 270], help="text angle")
+    q.add_argument("--bold", action="store_true")
 
     q = cmd("rm", cmd_rm, "Remove a part, an item by UUID, or the wires at a point.",
             "Removing parts that come from the design is undone by the next `sync`; remove them\n"

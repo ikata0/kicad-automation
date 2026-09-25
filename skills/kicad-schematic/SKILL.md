@@ -105,8 +105,13 @@ and outward directions while computing coordinates. Try a large pass with
 - Coordinates: mm, y down, 1.27 mm grid; parts on multiples of 2.54 mm.
 - Junctions are maintained automatically.
 - Never fix connectivity in the drawing — if `check` reports `missing`/`extra`, either your
-  arrangement pass broke something (undo by reverting the file from the last snapshot) or the
+  arrangement pass broke something (undo: `kat restore SCH history/<last good step>`) or the
   design is wrong (fix SKiDL and sync).
+- `s.detach("R1")` frees every pin of a part; `s.near((x, y), radius=3)` lists what is at a
+  spot (with uuids for `s.rm(uuid=...)`).
+- Finish the sheet: `s.title(title=..., rev=..., date=..., comments={1: ...})`, notes and
+  headings with `s.text("J1: rows 1-5", (x, y), size=2.54)`, paper with `s.page("A2")`.
+- Part data such as MPN belongs in SKiDL (`part.fields["MPN"] = "..."`); sync carries it.
 
 ## Setup
 

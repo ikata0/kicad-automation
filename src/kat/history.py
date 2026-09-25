@@ -7,7 +7,7 @@ import json
 import shutil
 from pathlib import Path
 
-from . import checks, render
+from . import checks, env, render
 from .env import tidy
 
 
@@ -41,3 +41,15 @@ def snapshot(sch: Path | str, slug: str = "", note: str | None = None,
                    "findings": {k: len(res[k]) for k in ("overlaps", "body_overlaps", "off_page",
                                                           "duplicates")}})
     return result
+
+
+def restore(sch: Path | str, step: Path | str, expect: Path | str | None = None) -> dict:
+    """Put the schematic back to a history step (``history/<timestamp>_<slug>/``) and check
+    it. Undo for a pass that broke something."""
+    sch, step = Path(sch), Path(step)
+    saved = step / sch.name
+    if not saved.is_file():
+        raise env.KatError(f"{step} holds no {sch.name}")
+    shutil.copy(saved, sch)
+    res = tidy(checks.run(sch, Path(expect) if expect else None))
+    return {"restored": str(saved), "ok": res["ok"], "clean": res["clean"]}

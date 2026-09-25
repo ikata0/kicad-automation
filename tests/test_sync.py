@@ -270,3 +270,60 @@ def test_import_order_rows_and_paper(project, tmp_path):
     for a in report["added"]:
         ys.setdefault(a["y"], []).append(a["ref"])
     assert all(len(v) > 1 for v in ys.values())  # every part shares its row line
+
+
+def test_custom_fields_and_project_library(project, tmp_path):
+    """SKiDL custom fields (part.fields["MPN"]) become hidden symbol fields and follow
+    changes; a symbol from a project-local library (sym-lib-table with ${KIPRJMOD})."""
+    from kat import library
+    d = project.parent
+    src = library.resolve("Device:R")
+    src[1] = "MyR"
+    for sub in src:
+        if isinstance(sub, list) and str(sub[0]) == "symbol":
+            sub[1] = str(sub[1]).replace("R_", "MyR_", 1)  # unit names carry the symbol name
+    from kat.sexpr import dumps
+    (d / "mylib.kicad_sym").write_text(
+        f'(kicad_symbol_lib (version 20241209) (generator "kat_test") {dumps(src)})\n')
+    (d / "sym-lib-table").write_text(
+        '(sym_lib_table (version 7) (lib (name "mylib") (type "KiCad") '
+        '(uri "${KIPRJMOD}/mylib.kicad_sym") (options "") (descr "")))\n')
+    parts = {"R1": ("mylib", "MyR", "1k", "r1"), "R2": ("Device", "R", "2k", "r2")}
+    nets = {"A": [("R1", "1"), ("R2", "1")], "B": [("R1", "2"), ("R2", "2")]}
+
+    def netfile(mpn):
+        path = write_netlist(tmp_path / f"{mpn}.net", parts, nets)
+        text = path.read_text().replace('(field (name "SKiDL Tag") "r1")',
+                                        f'(field (name "SKiDL Tag") "r1") (field (name "MPN") "{mpn}")')
+        path.write_text(text)
+        return path
+
+    sync_ok(project, netfile("RC0402-1K"))
+    r1 = next(x for x in Schematic(project).symbols() if x.ref == "R1")
+    assert r1.lib_id == "mylib:MyR" and r1.field("MPN") == "RC0402-1K"
+    report = sync_ok(project, netfile("RC0402-1K2"))
+    assert {"ref": "R1", "field": "MPN", "from": "RC0402-1K", "to": "RC0402-1K2"} in report["updated"]
+    assert not kat.sync(project, netfile("RC0402-1K2"))["changed"]
+
+
+def test_sheet_features(project, tmp_path):
+    net = write_netlist(tmp_path / "a.net", BASE_PARTS, BASE_NETS)
+    sync_ok(project, net)
+    step = kat.snapshot(project, slug="before")["dir"]
+    with kat.edit(project) as s:
+        out = s.detach("R1")
+        assert out["pins"] == 2 and out["labels"] == 2
+        s.page("A3")
+        assert s.title(title="LED test", rev="B", comments={1: "drive 3.3 V"}) == \
+            {"title": "LED test", "rev": "B", "comment1": "drive 3.3 V"}
+        t = s.text("Note: R1 detached", (30, 30), size=2.54)
+        near = s.near((30, 30), radius=1)
+        assert near[0]["kind"] == "text" and near[0]["uuid"] == t["uuid"]
+        pin = s.near("D1.1", radius=0.1)
+        assert pin[0]["kind"] == "pin" and pin[0]["pin"] == "D1.1"
+    text = project.read_text()
+    assert '(paper "A3")' in text and '(title "LED test")' in text and "Note: R1 detached" in text
+    assert kat.check(project, net)["netlist_vs_expected"]["missing"]  # R1 is cut off now
+    back = kat.restore(project, step, net)
+    assert back["ok"]
+    assert '(paper "A3")' not in project.read_text()

@@ -13,7 +13,7 @@ from typing import Union
 
 from . import env, library
 from .schematic import Placement, Schematic
-from .sexpr import find_all
+from .sexpr import find, find_all
 from .syncer import _power_dir
 
 Point = Union[str, tuple[float, float]]
@@ -98,6 +98,79 @@ class Sheet:
         return {"symbols": syms, "labels": s.labels(),
                 "wires": [[list(p), list(q)] for p, q in s.segments()],
                 "junctions": len(find_all(s.tree, "junction"))}
+
+    def near(self, at: Point, radius: float = 5.0) -> list[dict]:
+        """Everything within ``radius`` mm of a point, nearest first: parts (by body box),
+        pins, wires, labels, junctions, no-connects and free texts, with their uuids."""
+        import math
+        from .schematic import _on_interior  # noqa: F401
+        s = self.schematic
+        x, y = self.point(at)
+
+        def box_dist(b):
+            return math.hypot(max(b[0] - x, 0, x - b[2]), max(b[1] - y, 0, y - b[3]))
+
+        def seg_dist(a, b):
+            (ax, ay), (bx, by) = a, b
+            L2 = (bx - ax) ** 2 + (by - ay) ** 2
+            u = 0 if L2 == 0 else max(0, min(1, ((x - ax) * (bx - ax) + (y - ay) * (by - ay)) / L2))
+            return math.hypot(ax + u * (bx - ax) - x, ay + u * (by - ay) - y)
+
+        found = []
+        for sym in s.symbols():
+            b = s.body_box(sym)
+            if b and (d := box_dist(b)) <= radius:
+                found.append({"kind": "power" if sym.ref.startswith("#") else "part", "ref": sym.ref,
+                              "unit": sym.unit, "value": sym.field("Value"), "uuid": sym.uuid, "dist": d})
+            for p in s.pins(sym):
+                if (d := math.hypot(p["x"] - x, p["y"] - y)) <= radius:
+                    found.append({"kind": "pin", "pin": f"{sym.ref}.{p['number']}", "name": p["name"],
+                                  "x": p["x"], "y": p["y"], "dist": d})
+        for w, (a, b) in zip(s.wires(), s.segments()):
+            if (d := seg_dist(a, b)) <= radius:
+                found.append({"kind": "wire", "from": list(a), "to": list(b),
+                              "uuid": str(find(w, "uuid")[1]), "dist": d})
+        for l in s.labels():
+            if (d := math.hypot(l["x"] - x, l["y"] - y)) <= radius:
+                found.append({"kind": l["kind"], "text": l["text"], "x": l["x"], "y": l["y"],
+                              "uuid": l["uuid"], "dist": d})
+        for kind in ("junction", "no_connect", "text"):
+            for n in find_all(s.tree, kind):
+                a = find(n, "at")
+                if (d := math.hypot(float(a[1]) - x, float(a[2]) - y)) <= radius:
+                    item = {"kind": kind, "x": float(a[1]), "y": float(a[2]),
+                            "uuid": str(find(n, "uuid")[1]), "dist": d}
+                    if kind == "text":
+                        item["text"] = str(n[1])
+                    found.append(item)
+        return sorted(found, key=lambda f: (round(f["dist"], 3), f["kind"] != "pin"))
+
+    # --- sheet ----------------------------------------------------------------
+
+    def page(self, paper: str, portrait: bool = False) -> dict:
+        """Change the paper size (A4, A3, A2, A1, A0, A..E, USLetter, ...)."""
+        from .syncer import PAPER
+        if paper not in PAPER:
+            raise env.KatError(f"unknown paper {paper!r}; one of {', '.join(PAPER)}")
+        self.schematic.set_paper(paper, portrait)
+        return {"paper": paper, "portrait": portrait}
+
+    def title(self, title: str | None = None, date: str | None = None, rev: str | None = None,
+              company: str | None = None, comments: dict[int, str] | None = None) -> dict:
+        """Fill the title block; ``None`` keeps a field, ``""`` clears it. ``comments``
+        maps comment number (1-9) to text."""
+        extra = {f"comment{n}": v for n, v in (comments or {}).items()}
+        if any(not 1 <= int(k[7:]) <= 9 for k in extra):
+            raise env.KatError("comment numbers are 1..9")
+        return self.schematic.set_title_block(title=title, date=date, rev=rev, company=company, **extra)
+
+    def text(self, text: str, at: Point, size: float = 1.27, angle: float = 0,
+             bold: bool = False) -> dict:
+        """Free text (notes, headings) at a point; not connected to anything. Remove it with
+        ``rm(uuid=...)``."""
+        x, y = self.point(at)
+        node = self.schematic.add_text(text, x, y, size, angle, bold)
+        return {"text": text, "x": x, "y": y, "uuid": str(find(node, "uuid")[1])}
 
     # --- drawing --------------------------------------------------------------
 
@@ -195,12 +268,22 @@ class Sheet:
                 s.autoplace_fields(sym)
         return {"ref": value if field == "Reference" and value else ref, "field": field}
 
-    def detach(self, pin: str) -> dict:
+    def detach(self, target: str) -> dict:
         """Disconnect ``REF.PIN`` from everything drawn at it (own wire run, labels, power
-        symbols, flags)."""
-        if "." not in pin:
-            raise env.KatError(f"expected REF.PIN, got {pin!r}")
-        return self.schematic.detach(*pin.split(".", 1))
+        symbols, flags). A bare ``REF`` detaches every pin of every placed unit."""
+        s = self.schematic
+        if "." in target:
+            return s.detach(*target.split(".", 1))
+        pins = sorted({p["number"] for sym in s.find_symbols(target) for p in s.pins(sym)},
+                      key=lambda n: (len(n), n))
+        results = [s.detach(target, n) for n in pins]
+        out = {"part": target, "pins": len(pins), "wires": sum(r["wires"] for r in results),
+               "labels": sum(r["labels"] for r in results),
+               "power_symbols": [p for r in results for p in r["power_symbols"]]}
+        warnings = [r["warning"] for r in results if "warning" in r]
+        if warnings:
+            out["warning"] = "; ".join(warnings)
+        return out
 
     def rm(self, ref: str | None = None, unit: int | None = None, uuid: str | None = None,
            wires_at: Point | None = None) -> dict:

@@ -141,6 +141,11 @@ class Syncer:
                     self.report["updated"].append({"ref": ref, "field": field, "from": have, "to": want})
             if c.tag and (syms[0].field(TAG) or "") != c.tag:
                 s.set_field(ref, TAG, c.tag, hide=True)
+            for field, want in c.fields.items():
+                have = syms[0].field(field)
+                if have != want:
+                    s.set_field(ref, field, want, hide=True if have is None else None)
+                    self.report["updated"].append({"ref": ref, "field": field, "from": have or "", "to": want})
         new = [c for ref, c in self.comps.items() if ref not in matched]
         self.new_refs = {c.ref for c in new}
         if new:
@@ -168,6 +173,9 @@ class Syncer:
                                 c.footprint or None)
         if c.tag:
             self.s.set_field(c.ref, TAG, c.tag, hide=True, unit=unit)
+        for field, value in c.fields.items():
+            self.s.set_field(c.ref, field, value, hide=True, unit=unit)
+        self.s.autoplace_fields(sym)
         return sym
 
     def _net_of(self) -> dict[Pin, str]:
@@ -257,12 +265,18 @@ class Syncer:
         pin's direction) and its visible fields will take."""
         box = library.outline(sdef, unit) or (0, 0, 0, 0)
         room = {"l": 2.54, "r": 2.54, "t": 2.54, "b": 2.54}
-        for p in library.pins(sdef):
-            if p.unit not in (0, unit) or p.hidden:
-                continue
+        pins = [p for p in library.pins(sdef) if p.unit in (0, unit) and not p.hidden]
+        for p in pins:
             name = net_of.get((c.ref, p.number), "")
-            label = 0.0 if self._pair_net(name) else 5.08 if name in self.power else text_width(name)
-            need = STUB + label + 1.27
+            if name in self.power:
+                widths = [text_width(n) for q in pins if q is not p and q.angle == p.angle
+                          and _row_neighbours((p.x, p.y), (q.x, q.y), p.angle)
+                          and (n := net_of.get((c.ref, q.number), "")) and n not in self.power]
+                stub = _reach(widths) or STUB
+                need = stub + 5.08 + text_width(name) + 1.27
+            else:
+                label = 0.0 if self._pair_net(name) else text_width(name)
+                need = STUB + label + 1.27
             side = {0: "l", 180: "r", 90: "b", 270: "t"}.get(int(p.angle) % 360, "l")
             room[side] = max(room[side], need)
         fields = max(text_width(c.ref), text_width(c.value or ""))
@@ -361,6 +375,14 @@ class Syncer:
         _, p = s.pin_owner(ref, pin)
         at, d = (p["x"], p["y"]), p["dir"]
         if net in self.power:
+            reach = self._neighbour_reach(ref, p)
+            if reach:
+                # dense pin row (connector): a sideways power symbol's text would sit on the
+                # neighbours' labels, so it goes out beyond them on a longer stub
+                end = (at[0] + d[0] * reach, at[1] + d[1] * reach)
+                if _path_free(s, at, end, clearance=0):
+                    s.add_wire([at, end], junctions=False)
+                    at = end
             self._power_symbol(net, at, d)
         else:
             ends = [(at[0] + d[0] * k, at[1] + d[1] * k) for k in (STUB, 2 * STUB, 3 * STUB)]
@@ -368,6 +390,22 @@ class Syncer:
             s.add_wire([at, end], junctions=False)
             s.add_label(net, end[0], end[1], _dir_angle(d))
         self.report["attached"].append({"pin": f"{ref}.{pin}", "net": net})
+
+    def _neighbour_reach(self, ref: str, p: dict) -> float:
+        """Stub length that clears the labels of neighbouring pins (same part, same side,
+        2.54 mm or closer) for a power symbol on pin ``p``; 0 if there are none."""
+        s = self.s
+        net_of = self._net_of()
+        widths = []
+        for sym in s.find_symbols(ref):
+            for q in s.pins(sym):
+                if q["number"] == p["number"] or q["dir"] != p["dir"]:
+                    continue
+                angle = {(-1, 0): 0, (1, 0): 180, (0, 1): 90, (0, -1): 270}[tuple(round(v) for v in p["dir"])]
+                name = net_of.get((ref, q["number"]), "")
+                if _row_neighbours((p["x"], p["y"]), (q["x"], q["y"]), angle) and name and name not in self.power:
+                    widths.append(text_width(name))
+        return _reach(widths)
 
     def _power_symbol(self, name: str, at, direction, lib_id: str | None = None):
         """Power-type symbol with its pin on ``at`` and its body pointing along ``direction``."""
@@ -512,6 +550,18 @@ def _path_free(s: Schematic, a, b, clearance: float = 2.0) -> bool:
                 box[1] - clearance < b[1] < box[3] + clearance:
             return False
     return True
+
+
+def _row_neighbours(p, q, angle: float) -> bool:
+    """Two pin ends of one part side by side in a row (same side, at most 2.54 mm apart)."""
+    horizontal = int(angle) % 180 == 0  # pin points along x: the row runs along y
+    along, across = (q[0] - p[0], q[1] - p[1]) if horizontal else (q[1] - p[1], q[0] - p[0])
+    return abs(along) < 1e-3 and abs(across) <= 2.54 + 1e-3
+
+
+def _reach(widths: list[float]) -> float:
+    """Stub that takes a power symbol beyond the longest neighbouring label; 0 if none."""
+    return math.ceil((STUB + max(widths) + 2.54) / 2.54) * 2.54 if widths else 0.0
 
 
 def _segment_clear(s: Schematic, p, q, ends) -> bool:

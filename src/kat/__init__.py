@@ -23,13 +23,14 @@ from typing import Iterator
 
 from . import checks, library, netlist, syncer
 from .env import KatError, tidy
+from .history import restore as _restore
 from .history import snapshot as _snapshot
 from .project import new
 from .sheet import Sheet
 from .views import view as _view
 
 __all__ = ["KatError", "Sheet", "check", "edit", "lib_search", "lib_show", "load", "nets",
-           "new", "snapshot", "sync", "view"]
+           "new", "restore", "snapshot", "sync", "view"]
 
 
 def load(path: Path | str) -> Sheet:
@@ -65,6 +66,11 @@ def snapshot(sch: Path | str, slug: str = "", note: str | None = None,
     ``tiles/`` unless ``tiles=False``; ``finding_crops=N`` adds close-ups of the first N
     findings. Returns the paths and the check summary."""
     return tidy(_snapshot(sch, slug, note, expect, out, zoom, tiles, finding_crops))
+
+
+def restore(sch: Path | str, step: Path | str, expect: Path | str | None = None) -> dict:
+    """Put the schematic back to a history step (its saved copy) and check it."""
+    return _restore(sch, step, expect)
 
 
 def view(sch: Path | str, around: str | None = None, at: tuple[float, float] | None = None,

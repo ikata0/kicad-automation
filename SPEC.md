@@ -131,7 +131,7 @@ re-attached pins) and fold them into the arrangement with another pass.
 | Change in the design | Effect on the drawing |
 |---|---|
 | nothing | nothing (sync is idempotent; the file is not rewritten) |
-| value / footprint | field updated in place |
+| value / footprint / custom fields (`part.fields["MPN"] = ...` in SKiDL) | field updated in place; custom fields are added hidden |
 | reference renamed (same tag) | renamed in place; position and wiring kept |
 | references swapped | handled (two-phase rename) |
 | new part | all units placed in uniform rows below the drawing, in natural order (R2 before R10); parts joined by an unnamed two-pin net sit side by side and get a short wire (`wired`), other pins a stub + label / power symbol. If the rows do not fit, the paper grows to the next ISO size (`paper`) |
@@ -140,6 +140,7 @@ re-attached pins) and fold them into the arrangement with another pass.
 | pin moved to another net | pin detached (its own wiring up to the next branch point) and attached to the new net |
 | net renamed | labels renamed; power symbols swapped (or replaced by a label if no such power symbol exists) |
 | undriven power net | one PWR_FLAG added, value hidden |
+| power pin in a dense pin row (connector) | the power symbol sits beyond the neighbours' labels on a longer stub, so its text does not cover them |
 
 A pin that directly touches another part's pin and must change net cannot be fixed
 automatically; it is listed under `unresolved`.
@@ -173,13 +174,15 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 |---|---|
 | `new PATH` | project + empty sheet |
 | `lib search WORDS` / `lib show LIB:NAME` | find symbols; units, pins, body |
-| `list SCH` / `pins SCH REF` / `netlist SCH` | inspect placement, pin positions + outward direction, KiCad's nets |
+| `list SCH [--near X,Y --radius R]` / `pins SCH REF` / `netlist SCH` | inspect placement (or what is near a point, with uuids), pin positions + outward direction, KiCad's nets |
 | `sync SCH NETLIST [--dry-run]` | bring the design into the drawing (§4.4) |
 | `check SCH [--expect NETLIST]` | ERC + netlist comparison + drawing findings |
 | `snapshot SCH [--slug] [--note] [--expect] [--tiles] [--finding-crops N]` | SVG + trimmed PNG + check into `history/`; tiles and finding close-ups |
 | `view SCH --around REF / --at X,Y / --region X,Y,W,H` | zoomed PNG of one region into `views/` |
 | `add`, `wire`, `connect`, `label`, `power`, `nc` | draw |
-| `move`, `move-many`, `set`, `detach`, `rm` | rearrange (one part, or a block move), edit fields, disconnect, delete |
+| `move`, `move-many`, `set`, `detach`, `rm` | rearrange (one part, or a block move), edit fields, disconnect (a pin or a whole part), delete |
+| `page`, `title`, `text` | paper size, title block, free text (notes, headings) |
+| `restore SCH STEP` | put the schematic back to a history step (undo a pass) |
 
 ## 6. Checks and stop criteria
 

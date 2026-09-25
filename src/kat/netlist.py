@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import tempfile
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from . import env
@@ -30,6 +30,11 @@ class Component:
     value: str
     footprint: str
     tag: str  # SKiDL tag ("" if absent); stable identity across design changes
+    fields: dict[str, str] = field(default_factory=dict)  # custom fields, e.g. MPN
+
+
+# netlist fields that are not custom part data
+_STANDARD = {"Reference", "Value", "Footprint", "Description", "SKiDL Tag", "SKiDL Line"}
 
 
 def read_design(path: Path) -> tuple[dict[str, Component], dict[str, Net]]:
@@ -46,7 +51,9 @@ def read_design(path: Path) -> tuple[dict[str, Component], dict[str, Net]]:
             ref=ref, lib_id=f'{find(src, "lib")[1]}:{find(src, "part")[1]}',
             value=str(val[1]) if val and len(val) > 1 else "",
             footprint=str(fp[1]) if fp and len(fp) > 1 else "",
-            tag=fields.get("SKiDL Tag", ""))
+            tag=fields.get("SKiDL Tag", ""),
+            fields={k: v for k, v in fields.items()
+                    if k not in _STANDARD and not (k == "Datasheet" and not v)})
     return comps, read(path)
 
 

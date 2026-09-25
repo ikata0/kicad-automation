@@ -285,7 +285,7 @@ class Schematic:
 
     def autoplace_fields(self, sym: PlacedSymbol) -> None:
         """Put visible Reference/Value (and other shown fields) horizontally beside the body:
-        to the right of tall bodies, above/below wide ones. Centre-justified so the result
+        to the right of tall bodies, above/below wide ones, and never on a side with pins. Centre-justified so the result
         does not depend on the symbol's rotation or mirroring."""
         box = self.body_box(sym)
         if box is None:
@@ -300,6 +300,12 @@ class Schematic:
             # pin-only unit (e.g. an op-amp's power unit): leave room for the pin names
             x1 += 2.54
         tall = (y1 - y0) >= (x1 - x0)
+        # keep the fields off the side where pins (and their labels) are
+        dirs = {(round(p["dir"][0]), round(p["dir"][1])) for p in self.pins(sym)}
+        if tall and (1, 0) in dirs and not dirs & {(0, 1), (0, -1)}:
+            tall = False
+        elif not tall and dirs & {(0, 1), (0, -1)} and (1, 0) not in dirs:
+            tall = True
         for i, p in enumerate(shown):
             size = _font_size(p)
             w = text_width(str(p[2]), size)
@@ -761,6 +767,54 @@ class Schematic:
         for x, y in want.values():
             self._insert(_sexp(f'(junction (at {num(x)} {num(y)}) (diameter 0) (color 0 0 0 0) '
                                f'(uuid "{new_uuid()}"))'))
+
+    # --- sheet: paper, title block, free text ------------------------------------
+
+    def set_paper(self, paper: str, portrait: bool = False) -> None:
+        node = find(self.tree, "paper")
+        new = [Sym("paper"), paper] + ([Sym("portrait")] if portrait else [])
+        if node is None:
+            self.tree.insert(4, new)
+        else:
+            node[:] = new
+
+    def set_title_block(self, **fields: str | None) -> dict:
+        """title, date, rev, company, comment1..comment9; None leaves a field as it is,
+        "" clears it."""
+        tb = find(self.tree, "title_block")
+        if tb is None:
+            tb = [Sym("title_block")]
+            idx = next(i for i, c in enumerate(self.tree) if head(c) == "paper") + 1
+            self.tree.insert(idx, tb)
+        for name, value in fields.items():
+            if value is None:
+                continue
+            if name.startswith("comment"):
+                n = int(name[7:])
+                old = next((c for c in find_all(tb, "comment") if str(c[1]) == str(n)), None)
+                if old is not None:
+                    tb.remove(old)
+                if value:
+                    tb.append([Sym("comment"), num(n), value])
+            else:
+                old = find(tb, name)
+                if old is not None:
+                    tb.remove(old)
+                if value:
+                    tb.append([Sym(name), value])
+        order = ["title", "date", "rev", "company", "comment"]
+        tb[1:] = sorted(tb[1:], key=lambda c: (order.index(head(c)), int(str(c[1])) if head(c) == "comment" else 0))
+        return {head(c) if head(c) != "comment" else f"comment{c[1]}": str(c[-1]) for c in tb[1:]}
+
+    def add_text(self, text: str, x: float, y: float, size: float = 1.27, angle: float = 0,
+                 bold: bool = False) -> list:
+        esc = text.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n")
+        style = " (bold yes)" if bold else ""
+        node = _sexp(f'(text "{esc}" (exclude_from_sim no) (at {num(snap(x))} {num(snap(y))} {num(angle)}) '
+                     f'(effects (font (size {num(size)} {num(size)}){style}) (justify left bottom)) '
+                     f'(uuid "{new_uuid()}"))')
+        self._insert(node)
+        return node
 
     def remove_by_uuid(self, u: str) -> int:
         before = len(self.tree)
