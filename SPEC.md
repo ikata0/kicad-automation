@@ -25,7 +25,7 @@ the PCB and is not used for the schematic.
                                                   │
                                          kat sync │  incremental, keeps arrangement
                                                   ▼
-  arrangement passes (kat batch) ────────►  design.kicad_sch  (the drawing)
+  arrangement passes (passN.py) ─────────►  design.kicad_sch  (the drawing)
                                                   │
                             kat check / snapshot  │  ERC, netlist vs design.net,
                                                   ▼  drawing findings, PNG for review
@@ -41,8 +41,12 @@ the PCB and is not used for the schematic.
   applies KiCad's own formatting (clean `git diff`).
 - **Lossless file editing.** `kat.sexpr` keeps every token, including ones it does not
   understand. Library symbols are embedded exactly as KiCad would embed them.
+- **Library first.** `import kat` is the implementation; the `kat` command (also
+  `python -m kat`) only parses arguments, calls the library and prints its result. Every
+  editing command is a method of `kat.Sheet` with the same arguments.
 - **One JSON document per command** on stdout; exit code 0 = fine, 1 = checks failed,
-  2 = error (`{"error": ...}`).
+  2 = error (`{"error": ...}`). Library functions return the same documents and raise
+  `kat.KatError`.
 
 ## 3. Rules
 
@@ -77,19 +81,37 @@ passes the checks, but it is grouped by part rather than by signal flow.
 ### 4.2 Arrangement passes
 
 1. Look at `history/<latest>/<name>.png` (the trimmed image, meant for review).
-2. Write `passN.kat`: a comment saying what the review found, then commands.
-3. `kat batch board.kicad_sch passN.kat`
+2. Write `passN.py`: a docstring saying what the review found, then the edits.
+3. `python passN.py`
 4. `kat snapshot board.kicad_sch --slug passN --expect design.net --note "..."`
 5. Repeat until the stop criteria (§6) hold.
 
-Typical arrangement commands:
+A pass is an ordinary Python script. `kat.edit` saves once when the block ends, and leaves
+the file untouched if anything raises, so a failed pass needs no clean-up. Loops and
+functions handle repeated structures; `kat.edit(path, dry_run=True)` tries a pass without
+saving.
 
-| Goal | Commands |
+```python
+"""pass 2: R1 sits in the strip below; PD_ANODE is a label pair -> wire."""
+import kat
+
+with kat.edit("board/board.kicad_sch") as s:
+    s.move("R1", to=(127, 86.36), rot=90)
+    for p in ("J1.1", "U1.2"):
+        s.detach(p)
+    s.connect("J1.1", "U1.2")
+    s.label("PD_ANODE", (101.6, 99.06))    # the net keeps its visible name
+```
+
+Typical arrangement edits (`s` is the `kat.Sheet`):
+
+| Goal | Calls |
 |---|---|
-| arrange parts | `move REF --to X,Y [--rot R] [--mirror x/y] [--unit N]` |
-| label pair → real wire | `detach A.1`, `detach B.2`, `connect A.1 B.2 [--via ...]`, then `label NET X,Y` on the wire so the net keeps its name |
-| tidy fields | `set REF Value --unit N --at X,Y`, `set '#FLG1' Value --hide` |
-| re-orient a power symbol after mirroring its part | `detach REF.PIN`, `power GND REF.PIN --stub DX,DY` |
+| arrange parts | `s.move(REF, to=(x, y), rot=R, mirror="x"/"y", unit=N)` |
+| label pair → real wire | `s.detach("A.1")`, `s.detach("B.2")`, `s.connect("A.1", "B.2", via=[...])`, then `s.label(NET, (x, y))` on the wire so the net keeps its name |
+| tidy fields | `s.set(REF, "Value", unit=N, at=(x, y))`, `s.set("#FLG1", "Value", hide=True)` |
+| re-orient a power symbol after mirroring its part | `s.detach("REF.PIN")`, `s.power("GND", "REF.PIN", stub=(dx, dy))` |
+| inspect | `s.pins(REF)` (sheet positions, outward `dir`), `s.list()` |
 
 ### 4.3 Design change
 
@@ -122,6 +144,10 @@ automatically; it is listed under `unresolved`.
 
 ## 5. Command reference
 
+Library: `kat.new`, `kat.load`, `kat.edit`, `kat.sync`, `kat.check`, `kat.snapshot`,
+`kat.nets`, `kat.lib_search`, `kat.lib_show`, and the `kat.Sheet` methods; each returns what
+the matching command prints.
+
 `kat --help` shows the workflow; `kat <command> --help` shows each command's arguments and
 examples. Points are `REF.PIN` (number, or a unique pin name) or `X,Y` in mm; y grows
 downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
@@ -134,7 +160,6 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `sync SCH NETLIST [--dry-run]` | bring the design into the drawing (§4.4) |
 | `check SCH [--expect NETLIST]` | ERC + netlist comparison + drawing findings |
 | `snapshot SCH [--slug] [--note] [--expect]` | SVG + trimmed PNG + check into `history/` |
-| `batch SCH SCRIPT` | many editing commands, one save, all-or-nothing |
 | `add`, `wire`, `connect`, `label`, `power`, `nc` | draw |
 | `move`, `set`, `detach`, `rm` | rearrange, edit fields, disconnect, delete |
 

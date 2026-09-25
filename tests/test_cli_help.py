@@ -28,12 +28,19 @@ def test_every_command_has_description_and_examples(name, capsys):
     assert f"kat {name}" in out.split("Examples:")[1]
 
 
-def test_batch_rejects_bad_arguments_without_saving(tmp_path, capsys):
+def test_python_module_runs_the_cli():
+    import subprocess
+    import sys
+    out = subprocess.run([sys.executable, "-m", "kat", "--help"], capture_output=True, text=True)
+    assert out.returncode == 0 and "kat.edit" in out.stdout
+
+
+def test_edit_error_saves_nothing(tmp_path):
+    import kat
     sch = tmp_path / "b" / "b.kicad_sch"
-    assert cli.main(["new", str(sch)]) == 0
+    kat.new(sch)
     before = sch.read_text()
-    script = tmp_path / "s.kat"
-    script.write_text("move R1 --by nonsense\n")
-    assert cli.main(["batch", str(sch), str(script)]) == 2
-    assert "line 1" in capsys.readouterr().out.splitlines()[-1]
+    with pytest.raises(kat.KatError):
+        with kat.edit(sch) as s:
+            s.move("R1", by=(0, 2.54))  # no such part
     assert sch.read_text() == before

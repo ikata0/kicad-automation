@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+import kat
 from kat import cli, library, netlist
 from kat.schematic import Schematic
 from kat.sexpr import dumps, loads
@@ -75,14 +76,13 @@ def test_pin_positions_all_orientations(tmp_path):
 
 # --- end to end through the CLI -----------------------------------------------------
 
-LED = """
-add Device:R 100 80 --ref R1 --value 330
-add Device:LED 100 95 --rot 90 --ref D1
-connect R1.2 D1.2
-label VIN R1.1 --stub 0,-2.54
-power GND D1.1 --stub 0,2.54
-power PWR_FLAG 100,98.81 --stub -5.08,0
-"""
+def draw_led(s):
+    s.add("Device:R", 100, 80, ref="R1", value="330")
+    s.add("Device:LED", 100, 95, rot=90, ref="D1")
+    s.connect("R1.2", "D1.2")
+    s.label("VIN", "R1.1", stub=(0, -2.54))
+    s.power("GND", "D1.1", stub=(0, 2.54))
+    s.power("PWR_FLAG", (100, 98.81), stub=(-5.08, 0))
 
 EXPECTED = """(export (version "E") (nets
   (net (code "1") (name "VIN") (node (ref "R1") (pin "1")))
@@ -91,13 +91,11 @@ EXPECTED = """(export (version "E") (nets
 
 
 @needs_kicad
-def test_batch_check_and_move(tmp_path, capsys):
+def test_edit_check_and_move(tmp_path, capsys):
     sch = tmp_path / "led" / "led.kicad_sch"
     run(capsys, "new", sch)
-    script = tmp_path / "led.kat"
-    script.write_text(LED)
-    _, out = run(capsys, "batch", sch, script)
-    assert out["applied"] == 6
+    with kat.edit(sch) as s:
+        draw_led(s)
     (tmp_path / "expect.net").write_text(EXPECTED)
 
     _, res = run(capsys, "check", sch, "--expect", tmp_path / "expect.net")
@@ -114,15 +112,50 @@ def test_batch_check_and_move(tmp_path, capsys):
 
 
 @needs_kicad
-def test_batch_error_saves_nothing(tmp_path, capsys):
+def test_edit_error_and_dry_run_save_nothing(tmp_path, capsys):
     sch = tmp_path / "e" / "e.kicad_sch"
     run(capsys, "new", sch)
     before = sch.read_text()
-    script = tmp_path / "bad.kat"
-    script.write_text("add Device:R 10 10\nadd Device:NoSuchPart 20 20\n")
-    assert cli.main(["batch", str(sch), str(script)]) == 2
-    assert "line 2" in json.loads(capsys.readouterr().out)["error"]
+    with pytest.raises(kat.KatError):
+        with kat.edit(sch) as s:
+            s.add("Device:R", 10, 10)
+            s.add("Device:NoSuchPart", 20, 20)
     assert sch.read_text() == before
+    with kat.edit(sch, dry_run=True) as s:
+        s.add("Device:R", 10, 10)
+    assert sch.read_text() == before
+
+
+@needs_kicad
+def test_cli_and_library_give_the_same_file(tmp_path, capsys):
+    """The CLI is a thin layer: the same edits through both paths give the same drawing.
+    UUIDs are new for every item, and the CLI saves (and KiCad reorders) after every step,
+    so the top-level items are compared as sorted lists."""
+    import re
+    a, b = tmp_path / "a" / "x.kicad_sch", tmp_path / "b" / "x.kicad_sch"
+    run(capsys, "new", a)
+    run(capsys, "new", b)
+    with kat.edit(a) as s:
+        draw_led(s)
+        s.move("D1", by=(12.7, 0))
+        s.set("R1", "Value", "470", at=(104.14, 80))
+        s.detach("R1.1")
+        s.nc("R1.1")
+    for argv in (["add", "Device:R", "100", "80", "--ref", "R1", "--value", "330"],
+                 ["add", "Device:LED", "100", "95", "--rot", "90", "--ref", "D1"],
+                 ["connect", "R1.2", "D1.2"],
+                 ["label", "VIN", "R1.1", "--stub", "0,-2.54"],
+                 ["power", "GND", "D1.1", "--stub", "0,2.54"],
+                 ["power", "PWR_FLAG", "100,98.81", "--stub", "-5.08,0"],
+                 ["move", "D1", "--by", "12.7,0"],
+                 ["set", "R1", "Value", "470", "--at", "104.14,80"],
+                 ["detach", "R1.1"],
+                 ["nc", "R1.1"]):
+        run(capsys, argv[0], b, *argv[1:])
+    def items(p):
+        tree = Schematic(p).tree
+        return sorted(re.sub(r'[0-9a-f]{8}-[0-9a-f-]{27}', 'U', dumps(c)) for c in tree[1:])
+    assert items(a) == items(b)
 
 
 # --- netlist comparison ---------------------------------------------------------------

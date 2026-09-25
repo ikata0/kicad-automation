@@ -9,6 +9,8 @@ Command-line tooling for agent-driven KiCad 10 work. Package `kat` in `src/kat/`
 - `sexpr.py` must stay lossless: never drop or reorder tokens it does not know.
 - Geometry changes must be checked against KiCad's netlist (see `test_pin_positions_all_orientations`),
   not only against our own model.
+- Library first: logic lives in the library (`kat.Sheet`, `kat.*` functions); `cli.py` only
+  parses arguments and calls it. New commands get a library function or method first.
 - CLI output is JSON only; errors are `{"error": ...}` with exit code 2.
 - The workflow and sync semantics are specified in `SPEC.md`; keep it, the skill and
   `kat --help` texts in sync when behaviour changes. New pitfalls go into SPEC.md §7.

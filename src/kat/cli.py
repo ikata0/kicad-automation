@@ -1,238 +1,105 @@
-"""``kat`` command line. Every command prints one JSON document to stdout.
+"""``kat`` command line: a thin layer over the library (``import kat``).
 
-Mutating commands load the schematic, apply the change, and save it through
-``kicad-cli sch upgrade`` so the file is validated and in KiCad's own formatting.
-``kat batch`` applies many commands with a single load/save.
+Every command prints one JSON document to stdout. Mutating commands run inside
+``kat.edit``: load, apply, save once through ``kicad-cli sch upgrade`` (validation and
+KiCad's own formatting). Arrangement passes are Python scripts using the same API.
 """
 
 from __future__ import annotations
 
 import argparse
-import datetime as dt
 import json
-import shlex
-import shutil
 import sys
-from pathlib import Path
 
-from . import check as check_mod
-from . import env, library, netlist, render, sync
-from .schematic import Placement, Schematic
-from .sexpr import find_all
+import kat
 
-MUTATING = {"add", "wire", "connect", "label", "power", "nc", "move", "set", "rm", "detach"}
+from . import env
+from .sheet import xy as _xy
 
-
-# --- argument helpers ---------------------------------------------------------
 
 def xy(text: str) -> tuple[float, float]:
     try:
-        x, y = (float(v) for v in text.split(","))
-    except ValueError:
-        raise argparse.ArgumentTypeError(f"expected X,Y in mm, got {text!r}")
-    return x, y
+        return _xy(text)
+    except ValueError as e:
+        raise argparse.ArgumentTypeError(str(e))
 
 
-def point(s: Schematic, text: str) -> tuple[float, float]:
-    """``REF.PIN`` (pin number or unique name) or ``X,Y``."""
-    if "," in text:
-        return xy(text)
-    if "." not in text:
-        raise env.KatError(f"expected REF.PIN or X,Y, got {text!r}")
-    ref, pin = text.split(".", 1)
-    return s.pin(ref, pin)
-
-
-def sym_info(s: Schematic, sym) -> dict:
-    return {"ref": sym.ref, "lib_id": sym.lib_id, "unit": sym.unit,
-            "x": sym.place.x, "y": sym.place.y, "rot": sym.place.rot, "mirror": sym.place.mirror,
-            "value": sym.field("Value"), "footprint": sym.field("Footprint"),
-            "body": [round(v, 2) for v in (s.body_box(sym) or ())],
-            "pins": s.pins(sym)}
-
-
-# --- commands on a loaded schematic --------------------------------------------
+# --- handlers: one library call each ----------------------------------------------
+# Mutating handlers take (sheet, args); the others take (args).
 
 def cmd_add(s, a):
-    sym = s.add_symbol(a.lib_id, a.x, a.y, a.rot, a.mirror or "", a.unit, a.ref, a.value, a.footprint)
-    return sym_info(s, sym)
+    return s.add(a.lib_id, a.x, a.y, a.rot, a.mirror or "", a.unit, a.ref, a.value, a.footprint)
 
 
 def cmd_wire(s, a):
-    pts = [point(s, p) for p in a.points]
-    return {"wires": len(s.add_wire(pts)), "points": pts}
+    return s.wire(*a.points)
 
 
 def cmd_connect(s, a):
-    p, q = point(s, a.a), point(s, a.b)
-    via = [xy(v) for v in a.via or []]
-    return {"wires": len(s.route(p, q, via, a.first)), "from": p, "to": q}
-
-
-def _stub(s, at: tuple[float, float], stub: tuple[float, float] | None) -> tuple[float, float]:
-    if not stub:
-        return at
-    end = (at[0] + stub[0], at[1] + stub[1])
-    s.add_wire([at, end])
-    return end
+    return s.connect(a.a, a.b, [xy(v) for v in a.via or []], a.first)
 
 
 def cmd_label(s, a):
-    end = _stub(s, point(s, a.at), a.stub)
-    s.add_label(a.name, end[0], end[1], a.angle, "global_label" if a.glob else "label", a.shape)
-    s.fix_junctions()
-    return {"label": a.name, "x": end[0], "y": end[1]}
+    return s.label(a.name, a.at, a.stub, a.angle, a.glob, a.shape)
 
 
 def cmd_power(s, a):
-    """Power symbol (e.g. GND, +3V3) whose pin sits at the target (after an optional stub)."""
-    end = _stub(s, point(s, a.at), a.stub)
-    lib_id = a.name if ":" in a.name else f"power:{a.name}"
-    sdef = s.ensure_lib_symbol(lib_id)
-    pin = library.pins(sdef)[0]
-    off = Placement(0, 0, a.rot).to_sheet(pin.x, pin.y)
-    sym = s.add_symbol(lib_id, end[0] - off[0], end[1] - off[1], a.rot)
-    s.place_power_text(sym, sync._power_dir(s, sym))
-    s.fix_junctions()
-    return {"ref": sym.ref, "lib_id": lib_id, "x": end[0], "y": end[1]}
+    return s.power(a.name, a.at, a.stub, a.rot)
 
 
 def cmd_nc(s, a):
-    p = point(s, a.at)
-    s.add_no_connect(*p)
-    return {"no_connect": p}
+    return s.nc(a.at)
 
 
 def cmd_move(s, a):
-    to = a.to or (None, None)
-    by = a.by or (0, 0)
-    s.move_symbol(a.ref, to[0], to[1], by[0], by[1], a.rot, a.mirror, a.unit, drag=not a.no_drag)
-    s.fix_junctions()
-    return [sym_info(s, x) for x in s.find_symbols(a.ref, a.unit)]
+    return s.move(a.ref, a.to, a.by, a.rot, a.mirror, a.unit, drag=not a.no_drag)
 
 
 def cmd_set(s, a):
     hide = True if a.hide else False if a.show else None
-    s.set_field(a.ref, a.field, a.value, a.at, a.angle, hide, a.unit)
-    if a.autoplace:
-        for sym in s.find_symbols(a.ref, a.unit):
-            s.autoplace_fields(sym)
-    return {"ref": a.value if a.field == "Reference" and a.value else a.ref, "field": a.field}
+    return s.set(a.ref, a.field, a.value, a.at, a.angle, hide, a.unit, a.autoplace)
 
 
 def cmd_detach(s, a):
-    if "." not in a.pin:
-        raise env.KatError(f"expected REF.PIN, got {a.pin!r}")
-    return s.detach(*a.pin.split(".", 1))
+    return s.detach(a.pin)
 
 
 def cmd_rm(s, a):
-    if a.uuid:
-        n = s.remove_by_uuid(a.uuid)
-    elif a.wires_at:
-        n = s.remove_wires_at(*point(s, a.wires_at))
-    elif a.ref:
-        n = s.remove_symbol(a.ref, a.unit)
-    else:
-        raise env.KatError("rm needs REF, --uuid or --wires-at")
-    s.fix_junctions()
-    return {"removed": n}
+    return s.rm(a.ref, a.unit, a.uuid, a.wires_at)
 
-
-# --- read-only / file-level commands -------------------------------------------
 
 def cmd_new(a):
-    target = Path(a.path)
-    d, name = (target, target.name) if target.suffix == "" else (target.parent, target.stem)
-    d.mkdir(parents=True, exist_ok=True)
-    pro, sch = d / f"{name}.kicad_pro", d / f"{name}.kicad_sch"
-    if sch.exists() and not a.force:
-        raise env.KatError(f"{sch} exists (use --force to overwrite)")
-    tmpl = (env.stock_symbol_dir() or Path("/nonexistent")).parent / "template" / "kicad.kicad_pro"
-    if tmpl.exists():
-        shutil.copy(tmpl, pro)
-    elif not pro.exists():
-        pro.write_text('{"meta": {"filename": "%s.kicad_pro", "version": 3}}\n' % name)
-    Schematic.create(sch, a.paper)
-    return {"project": str(pro), "schematic": str(sch)}
+    return kat.new(a.path, a.paper, a.force)
 
 
 def cmd_list(a):
-    s = Schematic(a.sch)
-    syms = [{k: v for k, v in sym_info(s, x).items() if k != "pins"} for x in s.symbols()]
-    return {"symbols": syms, "labels": s.labels(),
-            "wires": [[list(p), list(q)] for p, q in s.segments()],
-            "junctions": len(find_all(s.tree, "junction"))}
+    return kat.load(a.sch).list()
 
 
 def cmd_pins(a):
-    s = Schematic(a.sch)
-    return [sym_info(s, x) for x in s.find_symbols(a.ref, a.unit)]
+    return kat.load(a.sch).pins(a.ref, a.unit)
 
 
 def cmd_lib(a):
     if a.lib_cmd == "search":
-        return library.search(" ".join(a.query), a.limit)
-    sdef = library.resolve(a.lib_id)
-    props = {str(p[1]): str(p[2]) for p in find_all(sdef, "property")}
-    units = library.unit_count(sdef)
-    return {"lib_id": a.lib_id, "units": units, "properties": props,
-            "body": {u: library.outline(sdef, u) for u in range(1, units + 1)},
-            "pins": [vars(p) for p in library.pins(sdef)]}
+        return kat.lib_search(" ".join(a.query), a.limit)
+    return kat.lib_show(a.lib_id)
 
 
 def cmd_netlist(a):
-    nets = netlist.from_schematic(Path(a.sch))
-    return {name: sorted(pins) for name, pins in sorted(nets.items())}
+    return kat.nets(a.sch)
 
 
 def cmd_check(a):
-    return check_mod.run(Path(a.sch), Path(a.expect) if a.expect else None)
+    return kat.check(a.sch, a.expect)
 
 
 def cmd_snapshot(a):
-    sch = Path(a.sch)
-    stamp = dt.datetime.now().strftime("%Y-%m-%d_%H%M%S")
-    slug = ("_" + "".join(c if c.isalnum() or c in "-_" else "-" for c in a.slug)) if a.slug else ""
-    out = Path(a.out or sch.parent / "history") / f"{stamp}{slug}"
-    result = render.snapshot(sch, out, a.zoom)
-    shutil.copy(sch, out / sch.name)
-    res = check_mod.run(sch, Path(a.expect) if a.expect else None)
-    (out / "check.json").write_text(json.dumps(res, indent=1))
-    if a.note:
-        (out / "note.md").write_text(a.note + "\n")
-    result.update({"dir": str(out), "ok": res["ok"], "erc_errors": res["erc"]["errors"],
-                   "erc_warnings": res["erc"]["warnings"], "overlaps": len(res["overlaps"])})
-    return result
+    return kat.snapshot(a.sch, a.slug, a.note, a.expect, a.out, a.zoom)
 
 
 def cmd_sync(a):
-    return sync.run(Path(a.sch), Path(a.netlist), a.dry_run)
-
-
-def cmd_batch(a):
-    """Apply one mutating command per line (without the schematic argument); save once.
-    Blank lines and lines starting with # are skipped. Stops at the first error without saving."""
-    s = Schematic(a.sch)
-    src = sys.stdin if a.script == "-" else open(a.script, encoding="utf-8")
-    results = []
-    for n, line in enumerate(src, 1):
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        argv = shlex.split(line)
-        if argv[0] not in MUTATING:
-            raise env.KatError(f"line {n}: batch supports only {sorted(MUTATING)}")
-        try:
-            sub = build_parser().parse_args([argv[0], "SCH", *argv[1:]])
-        except SystemExit:
-            raise env.KatError(f"line {n}: invalid arguments: {line}; nothing saved")
-        try:
-            results.append({"line": n, "result": sub.func(s, sub)})
-        except env.KatError as e:
-            raise env.KatError(f"line {n} ({line}): {e}; nothing saved") from e
-    s.save()
-    return {"applied": len(results), "results": results}
+    return kat.sync(a.sch, a.netlist, a.dry_run)
 
 
 # --- parser -------------------------------------------------------------------
@@ -248,8 +115,15 @@ Workflow (see SPEC.md):
   2. kat new DIR/NAME.kicad_sch            empty project, once
   3. kat sync SCH design.net               parts + connectivity from the design
   4. kat snapshot SCH --expect design.net  image + checks into history/
-  5. review the PNG, then arrange:        kat batch SCH passN.kat
+  5. review the PNG, then arrange:       python passN.py  (uses `import kat`)
   6. repeat 4-5; after a design change: regenerate design.net and go to 3
+
+An arrangement pass is a Python script; it is saved once, or not at all on an error:
+    import kat
+    with kat.edit("board/board.kicad_sch") as s:
+        s.move("R1", to=(127, 86.36), rot=90)
+        s.detach("R1.1"); s.connect("R1.1", "U1.2")
+The editing commands below are the methods of kat.Sheet, with the same arguments.
 
 Connectivity changes belong in SKiDL only. Arrangement commands must keep
 `kat check --expect design.net` matching.
@@ -352,13 +226,6 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("netlist", metavar="NETLIST", help="KiCad s-expression netlist, e.g. SKiDL generate_netlist()")
     q.add_argument("--dry-run", action="store_true", help="report what would change, save nothing")
 
-    q = cmd("batch", cmd_batch, "Apply many editing commands with one load and one save.",
-            "SCRIPT holds one editing command per line, written without `kat` and without SCH;\n"
-            "`#` starts a comment line. The first failing line aborts and nothing is saved.\n"
-            f"Allowed commands: {', '.join(sorted(MUTATING))}.",
-            ["kat batch tia.kicad_sch pass2.kat", "echo 'move R1 --by 0,-2.54' | kat batch tia.kicad_sch -"])
-    q.add_argument("script", help="script file, or - for stdin")
-
     # --- editing ---
     q = cmd("add", cmd_add, "Place a library symbol.",
             "Returns the new part with its pin positions. Multi-unit parts: one call per unit\n"
@@ -447,7 +314,8 @@ def build_parser() -> argparse.ArgumentParser:
             "the shared net, and labels / power symbols / flags on that run. Typical use:\n"
             "replace a label pair by a real wire - detach both pins, then `connect` them.\n"
             "Afterwards `check --expect` shows whether the net is complete again.",
-            ["kat detach s.kicad_sch R1.2", "printf 'detach R2.1\\ndetach U1.1\\nconnect R2.1 U1.1\\n' | kat batch s.kicad_sch -"],
+            ["kat detach s.kicad_sch R1.2",
+             "in a pass: s.detach('R2.1'); s.detach('U1.1'); s.connect('R2.1', 'U1.1')"],
             mutating=True)
     q.add_argument("pin", help="REF.PIN")
 
@@ -467,9 +335,8 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         if args.mutating:
-            s = Schematic(Path(args.sch))
-            out = args.func(s, args)
-            s.save()
+            with kat.edit(args.sch) as s:
+                out = args.func(s, args)
         else:
             out = args.func(args)
         print(json.dumps(out, indent=1, default=list))

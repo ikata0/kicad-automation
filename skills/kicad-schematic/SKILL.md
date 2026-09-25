@@ -1,6 +1,6 @@
 ---
 name: kicad-schematic
-description: Develop KiCad 10 schematics from the command line with the `kat` tool — circuit defined in SKiDL, brought into the .kicad_sch with `kat sync` (incremental, keeps the arrangement), arranged for readability with `kat batch`, verified by ERC, netlist comparison and rendered snapshots. Use when asked to create, update after a design change, arrange, tidy or check a KiCad schematic without the KiCad GUI.
+description: Develop KiCad 10 schematics from the command line with the `kat` tool — circuit defined in SKiDL, brought into the .kicad_sch with `kat sync` (incremental, keeps the arrangement), arranged for readability with Python passes (`import kat`), verified by ERC, netlist comparison and rendered snapshots. Use when asked to create, update after a design change, arrange, tidy or check a KiCad schematic without the KiCad GUI.
 ---
 
 # KiCad schematics with SKiDL + `kat`
@@ -29,30 +29,43 @@ layout.
    parts parked in the strip below the drawing; signal flow (inputs left, outputs right,
    supplies up, ground down); labels that would read better as wires.
    `check.json` lists `overlaps`, `body_overlaps`, `off_page`, `unnamed` — hints, not a verdict.
-5. **Arrange** the drawing with a script, `kat batch SCH passN.kat` (all-or-nothing), starting with a
-   comment that states what the review found. Then back to 3.
+5. **Arrange** the drawing with a Python pass, `python passN.py`. It starts with a docstring
+   that states what the review found and edits inside `with kat.edit(SCH) as s:`, which
+   saves once, or not at all if anything raises. Then back to 3.
 
 **Stop when** `check.json` says `"clean": true` and the image shows no problems. Report
 remaining ERC warnings instead of polishing forever.
 
 ## Arrangement recipes
 
+`s` is a `kat.Sheet`; every `kat` editing command is a method with the same arguments
+(`kat move SCH R1 --to X,Y` = `s.move("R1", to=(x, y))`). Points: `"REF.PIN"` or `(x, y)`.
+
+```python
+"""pass 2: <what the review found>."""
+import kat
+
+with kat.edit("board/board.kicad_sch") as s:
+    # arrange
+    s.move("U1", unit=1, to=(127, 101.6), mirror="x")
+    s.move("R1", to=(127, 86.36), rot=90)
+    # replace a label pair by a wire, keep the net name visible
+    for p in ("R1.1", "U1.2"):
+        s.detach(p)
+    s.connect("R1.1", "U1.2", via=[(114.3, 86.36)])
+    s.label("PD_ANODE", (104.14, 99.06))
+    # fields
+    s.set("U1", "Value", unit=2, at=(147.32, 127))
+    s.set("#FLG1", "Value", hide=True)
+    # power symbol pointing the wrong way after a mirror
+    s.detach("J2.2")
+    s.power("GND", "J2.2", stub=(-5.08, 0))
 ```
-# arrange
-move U1 --unit 1 --to 127,101.6 --mirror x
-move R1 --to 127,86.36 --rot 90
-# replace a label pair by a wire, keep the net name visible
-detach R1.1
-detach U1.2
-connect R1.1 U1.2 --via 114.3,86.36
-label PD_ANODE 104.14,99.06
-# fields
-set U1 Value --unit 2 --at 147.32,127
-set '#FLG1' Value --hide
-# power symbol pointing the wrong way after a mirror
-detach J2.2
-power GND J2.2 --stub -5.08,0
-```
+
+Repeated structures (rows of LEDs, connector pins): write a function for one cell and call
+it in a loop, instead of spelling out every line. Use `s.pins(REF)` to read pin positions
+and outward directions while computing coordinates. Try a large pass with
+`kat.edit(SCH, dry_run=True)` first.
 
 ## Behaviour worth knowing
 
@@ -62,7 +75,7 @@ power GND J2.2 --stub -5.08,0
 - `move` carries what hangs only off the part (stubs, labels, power symbols, flags) and
   drags wires into shared nets. Steps left by dragging: `detach` + `connect`.
 - `detach REF.PIN` removes the pin's own wiring up to the next branch point, including labels
-  and power symbols on it. Follow it with `connect`/`label`/`power` in the same batch.
+  and power symbols on it. Follow it with `connect`/`label`/`power` in the same pass.
 - Coordinates: mm, y down, 1.27 mm grid; parts on multiples of 2.54 mm.
 - Junctions are maintained automatically.
 - Never fix connectivity in the drawing — if `check` reports `missing`/`extra`, either your

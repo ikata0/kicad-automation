@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from kat import cli, netlist, sync
+import kat
+from kat import cli, netlist
 from kat.schematic import Schematic
 
 pytestmark = pytest.mark.skipif(shutil.which("kicad-cli") is None, reason="kicad-cli not installed")
@@ -51,7 +52,7 @@ def positions(sch: Path) -> dict:
 
 
 def sync_ok(sch, net) -> dict:
-    report = sync.run(sch, net)
+    report = kat.sync(sch, net)
     assert report["check"]["ok"], report["check"]
     assert not report["unresolved"]
     return report
@@ -66,7 +67,7 @@ def test_first_import_is_correct_clean_and_idempotent(project, tmp_path):
     s = Schematic(project)
     assert {x.field("SKiDL Tag") for x in s.symbols() if not x.ref.startswith("#")} == \
         {"tag-j1", "tag-r1", "tag-d1"}
-    again = sync.run(project, net)
+    again = kat.sync(project, net)
     assert not again["changed"], again
 
 
@@ -172,7 +173,7 @@ def test_new_parts_go_below_existing_drawing(project, tmp_path):
 
 def test_dry_run_saves_nothing(project, tmp_path):
     before = project.read_text()
-    report = sync.run(project, write_netlist(tmp_path / "a.net", BASE_PARTS, BASE_NETS), dry_run=True)
+    report = kat.sync(project, write_netlist(tmp_path / "a.net", BASE_PARTS, BASE_NETS), dry_run=True)
     assert report["changed"] and report["check"] is None
     assert project.read_text() == before
 
@@ -180,10 +181,10 @@ def test_dry_run_saves_nothing(project, tmp_path):
 def test_detach_then_connect_replaces_labels_by_wire(project, tmp_path, capsys):
     net = write_netlist(tmp_path / "a.net", BASE_PARTS, BASE_NETS)
     sync_ok(project, net)
-    script = tmp_path / "wire.kat"
-    script.write_text("detach R1.2\ndetach D1.2\nconnect R1.2 D1.2\n")
-    assert cli.main(["batch", str(project), str(script)]) == 0
-    capsys.readouterr()
+    with kat.edit(project) as s:
+        s.detach("R1.2")
+        s.detach("D1.2")
+        s.connect("R1.2", "D1.2")
     assert "LED_A" not in {l["text"] for l in Schematic(project).labels()}
     cmp = netlist.compare(netlist.from_schematic(project), netlist.read(net))
     assert cmp["match"], cmp
@@ -194,4 +195,4 @@ def test_detach_then_connect_replaces_labels_by_wire(project, tmp_path, capsys):
     # a label on the new wire restores it; sync then has nothing to do
     assert cli.main(["label", str(project), "LED_A", "R1.2", "--stub", "0,0"]) == 0
     capsys.readouterr()
-    assert not sync.run(project, net)["changed"]
+    assert not kat.sync(project, net)["changed"]

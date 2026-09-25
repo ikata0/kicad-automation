@@ -3,14 +3,14 @@
 Tools for letting an agent (or a script) develop KiCad 10 schematics from the command line,
 without MCP and with the KiCad GUI closed.
 
-- `kat` — CLI: sync a SKiDL design into a `.kicad_sch`, arrange the drawing, check, snapshot (`src/kat/`)
+- `kat` — Python library and CLI (`kat …`, `python -m kat …`): sync a SKiDL design into a `.kicad_sch`, arrange the drawing, check, snapshot (`src/kat/`)
 - `skills/kicad-schematic/` — the agent skill for the design → sync → review → arrange loop
 - [`SPEC.md`](SPEC.md) — workflow, sync semantics, checks, and the pitfalls found so far
 
 ## In one picture
 
 ```
-SKiDL design ──netlist──► kat sync ──► .kicad_sch ◄── kat batch (arrangement passes)
+SKiDL design ──netlist──► kat sync ──► .kicad_sch ◄── passN.py (arrangement, import kat)
                                            │
                                  kat snapshot / check: ERC, netlist == design,
                                  drawing findings, PNG for review
@@ -38,7 +38,7 @@ kat sync tia/tia.kicad_sch v1.net                          # parts + connectivit
 kat snapshot tia/tia.kicad_sch --slug import --expect v1.net
 python tests/e2e/tia_design.py v2 v2.net                  # design change
 kat sync tia/tia.kicad_sch v2.net                          # arrangement kept, changes reported
-kat batch tia/tia.kicad_sch tests/e2e/layout_v2.kat       # arrangement pass
+python tests/e2e/arrange_v2.py tia/tia.kicad_sch         # arrangement pass (Python)
 kat snapshot tia/tia.kicad_sch --slug arrange --expect v2.net
 ```
 

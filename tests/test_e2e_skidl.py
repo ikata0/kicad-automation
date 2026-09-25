@@ -14,7 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from kat import cli, sync
+import kat
+from kat import cli
 from kat.schematic import Schematic
 
 HERE = Path(__file__).parent / "e2e"
@@ -31,7 +32,7 @@ def design(variant: str, out: Path) -> Path:
     return net
 
 
-def kat(capsys, *argv) -> dict:
+def run_kat(capsys, *argv) -> dict:
     code = cli.main([str(a) for a in argv])
     out = json.loads(capsys.readouterr().out)
     assert code in (0, 1) and "error" not in out, out
@@ -49,7 +50,7 @@ def assert_clean(check: dict) -> None:
 
 
 def snapshot(capsys, sch: Path, slug: str, net: Path, note: str) -> dict:
-    snap = kat(capsys, "snapshot", sch, "--slug", slug, "--expect", net, "--note", note)
+    snap = run_kat(capsys, "snapshot", sch, "--slug", slug, "--expect", net, "--note", note)
     assert Path(snap["images"][0]["png"]).stat().st_size > 1000
     check = json.loads((Path(snap["dir"]) / "check.json").read_text())
     assert_clean(check)
@@ -73,8 +74,8 @@ def test_iterative_design_flow(tmp_path, capsys):
     v1 = design("v1", root)
 
     # 2. translate to KiCad
-    kat(capsys, "new", sch)
-    report = kat(capsys, "sync", sch, v1)
+    run_kat(capsys, "new", sch)
+    report = run_kat(capsys, "sync", sch, v1)
     assert {a["ref"] for a in report["added"]} == {"U1", "R1", "C1", "J1", "J2", "C2", "C3"}
     assert not report["unresolved"]
 
@@ -87,7 +88,7 @@ def test_iterative_design_flow(tmp_path, capsys):
     v2 = design("v2", root)
 
     # 5. sync and validate
-    report = kat(capsys, "sync", sch, v2)
+    report = run_kat(capsys, "sync", sch, v2)
     assert report["renamed"] == [{"from": "C1", "to": "CF1"}]
     assert [a["ref"] for a in report["added"]] == ["ROUT"]
     assert report["detached"] == ["J2.1"]  # output connector moved from TIA_OUT to OUT
@@ -103,12 +104,11 @@ def test_iterative_design_flow(tmp_path, capsys):
     snapshot(capsys, sch, "v2-sync", v2, "Design v2: ROUT added, C1 renamed CF1.")
 
     # 6. arrange the drawing for readability and validate
-    out = kat(capsys, "batch", sch, HERE / "layout_v2.kat")
-    assert out["applied"] > 20
+    subprocess.run([sys.executable, str(HERE / "arrange_v2.py"), str(sch)], check=True)
     snapshot(capsys, sch, "v2-arrange", v2, "Manual arrangement: signal flow left to right.")
 
     # 7. the arrangement survives a further sync of the unchanged design
     text = sch.read_text()
-    again = sync.run(sch, v2)
+    again = kat.sync(sch, v2)
     assert not again["changed"], {k: v for k, v in again.items() if v and k != "check"}
     assert sch.read_text() == text

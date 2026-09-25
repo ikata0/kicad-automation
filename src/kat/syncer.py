@@ -13,7 +13,7 @@ import tempfile
 from collections import Counter
 from pathlib import Path
 
-from . import check, env, library, netlist
+from . import checks, env, library, netlist
 from .netlist import Component
 from .schematic import GRID, Placement, Schematic, same, snap, text_width
 from .sexpr import dumps, find, find_all
@@ -53,7 +53,7 @@ def _drawn_erc(s: Schematic) -> dict:
     with tempfile.TemporaryDirectory() as d:
         tmp = Path(d) / "sync.kicad_sch"
         tmp.write_text(dumps(s.tree) + "\n", encoding="utf-8")
-        return check.erc(tmp)
+        return checks.erc(tmp)
 
 
 def power_names() -> set[str]:
@@ -429,5 +429,5 @@ def run(sch: Path, design: Path, dry_run: bool = False) -> dict:
         s.save()
     report["dry_run"] = dry_run
     report["changed"] = changed
-    report["check"] = check.run(sch, design) if not dry_run else None
+    report["check"] = checks.run(sch, design) if not dry_run else None
     return report

@@ -115,7 +115,7 @@ def body_overlaps(s: Schematic) -> list[dict]:
 
 def off_page(s: Schematic, margin: float = 10.0) -> list[str]:
     """Items outside the drawing frame (page minus ``margin`` on every side)."""
-    from .sync import paper_size
+    from .syncer import paper_size
     w, h = paper_size(s)
     inside = lambda b: b[0] >= margin and b[1] >= margin and b[2] <= w - margin and b[3] <= h - margin
     out = [f"{sym.ref}/{sym.unit}" for sym in s.symbols() if (b := s.body_box(sym)) and not inside(b)]
