@@ -8,20 +8,12 @@ from __future__ import annotations
 
 import fnmatch
 import tempfile
-from functools import lru_cache
 from pathlib import Path
 
 from . import checks, env
+from .pcb.footprints import summary as footprint_summary
 from .sexpr import find, find_all, loads
 from .syncer import natural_key
-
-
-@lru_cache(maxsize=512)
-def _footprint(path: str) -> dict:
-    """Pad numbers and 3D model paths of a .kicad_mod file."""
-    tree = loads(Path(path).read_text(encoding="utf-8"))
-    return {"pads": frozenset(str(p[1]) for p in find_all(tree, "pad") if str(p[1])),
-            "models": [str(m[1]) for m in find_all(tree, "model")]}
 
 
 def _export(sch: Path) -> list:
@@ -112,7 +104,7 @@ def run(sch: Path, expect: Path | None = None, require: tuple[str, ...] = ("MPN"
         if not path.is_file():
             err(ref, "footprint_not_found", fp_id)
             continue
-        fp = _footprint(str(path))
+        fp = footprint_summary(path)
         if missing := sorted(lib_pins - fp["pads"], key=natural_key):
             err(ref, "pin_without_pad", f"{fp_id}: pins {', '.join(missing)}")
         if extra := sorted(fp["pads"] - lib_pins, key=natural_key):
