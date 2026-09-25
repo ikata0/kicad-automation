@@ -22,3 +22,4 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["slow: large end-to-end designs (LED matrix); deselect with -m 'not slow'"]

@@ -10,6 +10,7 @@ import copy
 import math
 import re
 import uuid as uuidlib
+from collections import Counter, defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -31,6 +32,28 @@ def snap(v: float) -> float:
 
 def same(a: tuple[float, float], b: tuple[float, float]) -> bool:
     return abs(a[0] - b[0]) < EPS and abs(a[1] - b[1]) < EPS
+
+
+def key(p: tuple[float, float]) -> tuple[int, int]:
+    """Hashable point identity (0.01 mm); all drawn points sit on the 1.27 mm grid."""
+    return round(p[0] * 100), round(p[1] * 100)
+
+
+class SegIndex:
+    """Orthogonal wire segments by line, for fast "point on a wire's interior" tests."""
+
+    def __init__(self, segs):
+        self.v: dict[int, list] = defaultdict(list)
+        self.h: dict[int, list] = defaultdict(list)
+        for a, b in segs:
+            if abs(a[0] - b[0]) < EPS:
+                self.v[round(a[0] * 100)].append((min(a[1], b[1]), max(a[1], b[1])))
+            elif abs(a[1] - b[1]) < EPS:
+                self.h[round(a[1] * 100)].append((min(a[0], b[0]), max(a[0], b[0])))
+
+    def interior(self, p) -> bool:
+        return (any(lo + EPS < p[1] < hi - EPS for lo, hi in self.v.get(round(p[0] * 100), ()))
+                or any(lo + EPS < p[0] < hi - EPS for lo, hi in self.h.get(round(p[1] * 100), ())))
 
 
 @dataclass
@@ -78,6 +101,8 @@ class Schematic:
     def __init__(self, path: Path):
         self.path = Path(path)
         self.tree = loads(self.path.read_text(encoding="utf-8"))
+        self._pin_cache: dict = {}
+        self._sym_cache: dict = {}
         if head(self.tree) != "kicad_sch":
             raise env.KatError(f"{path} is not a KiCad schematic")
 
@@ -135,11 +160,15 @@ class Schematic:
 
     def symbols(self) -> list[PlacedSymbol]:
         out = []
+        cache = self._sym_cache
         for n in find_all(self.tree, "symbol"):
-            at = find(n, "at")
+            # the child lists are edited in place, so references to them stay valid;
+            # only `mirror` is removed/inserted and is looked up every time
+            hit = cache.get(id(n))
+            if hit is None or hit[0] is not n:
+                hit = cache[id(n)] = (n, find(n, "at"), find(n, "unit"), prop(n, "Reference"))
+            _, at, unit, ref = hit
             mir = find(n, "mirror")
-            unit = find(n, "unit")
-            ref = prop(n, "Reference")
             out.append(PlacedSymbol(
                 node=n, ref=str(ref[2]) if ref else "?", lib_id=str(find(n, "lib_id")[1]),
                 unit=int(str(unit[1])) if unit else 1,
@@ -155,6 +184,16 @@ class Schematic:
 
     def pins(self, sym: PlacedSymbol) -> list[dict]:
         sdef = self.lib_symbol(sym.lib_id)
+        pl = sym.place
+        ck = (id(sym.node), sym.unit, pl.x, pl.y, pl.rot, pl.mirror)
+        hit = self._pin_cache.get(ck)
+        if hit and hit[0] is sym.node and hit[1] is sdef:
+            return [dict(p) for p in hit[2]]
+        out = self._pins(sym, sdef)
+        self._pin_cache[ck] = (sym.node, sdef, out)
+        return [dict(p) for p in out]
+
+    def _pins(self, sym: PlacedSymbol, sdef: list) -> list[dict]:
         out = []
         for p in library.pins(sdef):
             if p.unit not in (0, sym.unit):
@@ -391,19 +430,25 @@ class Schematic:
         the first point that is another part's pin, a branch (3+ wire ends) or a T-join.
         Returns (private wires, points reached, boundary wires as (near point, wire))."""
         wires = [(w, seg) for w, seg in zip(self.wires(), self.segments()) if id(w) not in skip]
-        anchors = [(p["x"], p["y"]) for o in self.symbols()
-                   if o.node is not owner and not o.ref.startswith("#") for p in self.pins(o)]
-        ends = [e for _, seg in wires for e in seg]
+        anchors = {key((p["x"], p["y"])) for o in self.symbols()
+                   if o.node is not owner and not o.ref.startswith("#") for p in self.pins(o)}
+        ends = Counter(key(e) for _, seg in wires for e in seg)
+        at_end = defaultdict(list)
+        for w, seg in wires:
+            at_end[key(seg[0])].append((w, seg))
+            if key(seg[1]) != key(seg[0]):
+                at_end[key(seg[1])].append((w, seg))
+        index = SegIndex([seg for _, seg in wires])
         points, taken, frontier, boundary = [start], [], [start], []
         while frontier:
             p = frontier.pop()
-            for w, seg in wires:
-                if any(w is t for t in taken) or not (same(seg[0], p) or same(seg[1], p)):
+            for w, seg in at_end.get(key(p), ()):
+                if any(w is t for t in taken):
                     continue
                 q = seg[1] if same(seg[0], p) else seg[0]
-                private = (not any(same(q, a) for a in anchors)
-                           and sum(same(q, e) for e in ends) <= 2
-                           and not any(_on_interior(q, s2) for _, s2 in wires)
+                private = (key(q) not in anchors
+                           and ends[key(q)] <= 2
+                           and not index.interior(q)
                            and len(taken) < 20)
                 if not private:
                     if not any(b[1] is w for b in boundary):
@@ -621,21 +666,17 @@ class Schematic:
         segs = self.segments()
         ends = [p for s in segs for p in s]
         pin_pts = [(p["x"], p["y"]) for s in self.symbols() for p in self.pins(s)]
-        want: list[tuple[float, float]] = []
-
-        def add(p):
-            if not any(same(p, q) for q in want):
-                want.append(p)
-
+        want: dict[tuple[int, int], tuple[float, float]] = {}
+        index = SegIndex(segs)
         for p in ends + pin_pts:
-            if any(_on_interior(p, s) for s in segs):
-                add(p)
+            if key(p) not in want and index.interior(p):
+                want[key(p)] = p
+        degree = Counter(key(p) for p in ends + pin_pts)
         for p in ends:
-            degree = sum(same(p, q) for q in ends) + sum(same(p, q) for q in pin_pts)
-            if degree >= 3:
-                add(p)
+            if degree[key(p)] >= 3:
+                want.setdefault(key(p), p)
         self.tree[:] = [c for c in self.tree if head(c) != "junction"]
-        for x, y in want:
+        for x, y in want.values():
             self._insert(_sexp(f'(junction (at {num(x)} {num(y)}) (diameter 0) (color 0 0 0 0) '
                                f'(uuid "{new_uuid()}"))'))
 
