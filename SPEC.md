@@ -12,7 +12,7 @@ with the KiCad GUI closed, such that
 - **design changes** do not throw away the arrangement work already done.
 
 In scope: single-sheet schematics, SKiDL as design language, KiCad 10 files.
-Out of scope for now: hierarchical sheets, buses, PCB layout (see §8).
+Out of scope for now: hierarchical sheets, buses; PCB layout is being added (§4.6, §8).
 
 Terms: **arrangement** is placing parts, labels, wires and fields on the schematic sheet so
 it reads well; an **arrangement pass** is one script doing that. **Layout** always means
@@ -160,10 +160,39 @@ is resolved.
   `views/` in under a second (the frameless SVG is cached per file version). The result
   has `region` and `px_per_mm` to map pixels back to sheet mm.
 
+### 4.6 Board sync
+
+`kat pcb sync PCB` (library: `kat.pcb.sync`) puts the schematic's parts and nets on the
+board; it is the file-based counterpart of KiCad's "Update PCB from Schematic", which neither
+kicad-cli nor kicad-python offers.
+
+- **Source**: the netlist KiCad exports from the schematic (`sch export netlist`), not the
+  SKiDL netlist: DRC schematic parity compares KiCad's own net names (`/LED_1_1`,
+  `Net-(D1-A)`) and every symbol field.
+- **Gate**: refuses unless `kat ready` passes (`--force` overrides; the report carries the
+  gate result either way).
+- **Identity**: symbol path `/<uuid>` (KiCad's link) → SKiDL tag → reference. A footprint
+  still linked to another design symbol is never taken over by a fallback.
+- **Add**: footprint from `fp-lib-table` with reference, value, all symbol fields (hidden),
+  symbol path, sheet name/file, DNP / exclude-from-BOM flags, pad nets, pin names and types.
+  New parts go in rows to the right of the board outline.
+- **Update**: reference, value, fields (extra custom fields removed), flags, pad nets.
+  A changed footprint is **replaced in place** (position, rotation, side, uuid kept).
+- **Remove**: footprints whose symbol left the design.
+- **Copper**: a net that disappeared while all its pads went to one new net is renamed on
+  tracks, vias and zones (`renamed_nets`). Tracks touching a pad of another net and copper
+  on vanished nets are **reported** (`stale_tracks`); `--rip-stale` removes them.
+- **Proof**: every run ends with DRC; `ok` = parity 0 and nothing unresolved. A second run
+  of the same schematic changes nothing.
+
+Board geometry (pad positions, courtyards) follows KiCad's storage convention — children
+in footprint coordinates, bottom side mirrored in y, pad and text angles absolute — and is
+tested against IPC-D-356 and DRC's library comparison.
+
 ## 5. Command reference
 
 Library: `kat.new`, `kat.load`, `kat.edit`, `kat.sync`, `kat.check`, `kat.snapshot`, `kat.view`,
-`kat.ready`, `kat.nets`, `kat.lib_search`, `kat.lib_show`, and the `kat.Sheet` methods; each returns what
+`kat.ready`, `kat.pcb.sync` / `kat.pcb.edit` / `kat.pcb.drc` (board), `kat.nets`, `kat.lib_search`, `kat.lib_show`, and the `kat.Sheet` methods; each returns what
 the matching command prints.
 
 `kat --help` shows the workflow; `kat <command> --help` shows each command's arguments and
@@ -178,6 +207,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `sync SCH NETLIST [--dry-run]` | bring the design into the drawing (§4.4) |
 | `check SCH [--expect NETLIST]` | ERC + netlist comparison + drawing findings |
 | `ready SCH [--expect NETLIST] [--require-field NAME]` | gate before the PCB layout (§6.1) |
+| `pcb sync PCB [--sch] [--dry-run] [--force] [--rip-stale]` | parts and nets onto the board (§4.6) |
 | `snapshot SCH [--slug] [--note] [--expect] [--tiles] [--finding-crops N]` | SVG + trimmed PNG + check into `history/`; tiles and finding close-ups |
 | `view SCH --around REF / --at X,Y / --region X,Y,W,H` | zoomed PNG of one region into `views/` |
 | `add`, `wire`, `connect`, `label`, `power`, `nc` | draw |
@@ -256,8 +286,8 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
 ## 8. Open points
 
 - Hierarchical sheets, buses, global labels across sheets in `sync`.
-- Netlist → PCB: KiCad 10 has no command-line "update PCB from schematic", and kicad-python
-  offers none either. Planned: a file-based board sync in `kat`, proven by DRC schematic
-  parity (spike: `kicad-sandbox/experiments/2026-09-25-pcb-spike/`).
+- PCB layout beyond the board sync (§4.6): outline and rules, board checks and views,
+  placement, structure, routing (Freerouting via own Specctra DSN/SES), finishing and
+  fabrication output. Spike: `kicad-sandbox/experiments/2026-09-25-pcb-spike/`.
 - SKiDL `NC` pins → no-connect flags in the drawing.
 - Automatic arrangement beyond the placement strip (signal-flow placement) is left to the agent.

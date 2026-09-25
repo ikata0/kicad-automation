@@ -117,6 +117,13 @@ def cmd_lib(a):
     return kat.lib_show(a.lib_id)
 
 
+def cmd_pcb(a):
+    if a.pcb_cmd == "sync":
+        return kat.pcb.sync(a.pcb, a.sch, a.dry_run, a.force, a.rip_stale,
+                            () if a.no_require else (a.require_field or ["MPN"]))
+    raise env.KatError(f"unknown pcb action {a.pcb_cmd!r}")
+
+
 def cmd_netlist(a):
     return kat.nets(a.sch)
 
@@ -462,6 +469,30 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--unit", type=int, help="only this unit")
     q.add_argument("--uuid", help="remove the item with this uuid (wire, label, junction, ...)")
     q.add_argument("--wires-at", metavar="POINT", help="REF.PIN or X,Y: wires ending at or passing through it")
+
+    # --- board ---
+    q = cmd("pcb", cmd_pcb, "Board (PCB layout) commands.",
+            "The board follows the schematic: `pcb sync` puts its parts and nets on the board\n"
+            "(KiCad's own netlist of the schematic, so DRC schematic parity holds). Nothing is\n"
+            "connected on the board by hand; design changes go SKiDL -> kat sync -> kat pcb sync.",
+            ["kat pcb sync board/board.kicad_pcb",
+             "kat pcb sync board/board.kicad_pcb --dry-run"], sch=False)
+    psp = q.add_subparsers(dest="pcb_cmd", required=True, metavar="ACTION")
+    s1 = psp.add_parser("sync", formatter_class=_Fmt,
+                        help="parts and nets from the schematic; keeps placement and copper",
+                        description="Creates the board if missing. Footprints match by symbol link, then\n"
+                                    "SKiDL tag, then reference. New parts go in rows right of the outline.\n"
+                                    "A changed footprint is replaced in place. Copper that no longer fits\n"
+                                    "its pads is listed in stale_tracks (--rip-stale removes it).\n"
+                                    "Refuses unless `kat ready` passes (--force overrides).")
+    s1.add_argument("pcb", metavar="PCB", help="the .kicad_pcb file (created if missing)")
+    s1.add_argument("--sch", help="schematic (default: PCB with .kicad_sch)")
+    s1.add_argument("--dry-run", action="store_true", help="report only, save nothing")
+    s1.add_argument("--force", action="store_true", help="sync even if `kat ready` fails")
+    s1.add_argument("--rip-stale", action="store_true", help="remove stale tracks and vias")
+    s1.add_argument("--require-field", action="append", metavar="NAME",
+                    help="field the gate requires (repeatable; default MPN)")
+    s1.add_argument("--no-require", action="store_true", help="gate requires no fields")
     return p
 
 

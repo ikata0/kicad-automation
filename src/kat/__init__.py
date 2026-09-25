@@ -21,7 +21,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from . import checks, gate, library, netlist, syncer
+from . import checks, gate, library, netlist, pcb, syncer
 from .env import KatError, tidy
 from .history import restore as _restore
 from .history import snapshot as _snapshot
@@ -30,7 +30,7 @@ from .sheet import Sheet
 from .views import view as _view
 
 __all__ = ["KatError", "Sheet", "check", "edit", "lib_search", "lib_show", "load", "nets",
-           "new", "ready", "restore", "snapshot", "sync", "view"]
+           "new", "pcb", "ready", "restore", "snapshot", "sync", "view"]
 
 
 def load(path: Path | str) -> Sheet:

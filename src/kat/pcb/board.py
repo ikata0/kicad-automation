@@ -265,6 +265,15 @@ class Board:
                         "node": n})
         return out
 
+    def add_track(self, start: tuple[float, float], end: tuple[float, float], width: float,
+                  layer: str, net: str) -> dict:
+        from ..schematic import new_uuid
+        node = [Sym("segment"), [Sym("start"), num(start[0]), num(start[1])],
+                [Sym("end"), num(end[0]), num(end[1])], [Sym("width"), num(width)],
+                [Sym("layer"), layer], [Sym("net"), net], [Sym("uuid"), new_uuid()]]
+        self._insert(node)
+        return {"uuid": str(node[-1][1])}
+
     def zones(self) -> list[list]:
         return find_all(self.tree, "zone")
 

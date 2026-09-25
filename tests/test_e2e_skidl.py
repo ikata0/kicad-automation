@@ -126,3 +126,8 @@ def test_iterative_design_flow(tmp_path, capsys):
     gate = kat.ready(sch, expect=v3)
     assert gate["ready"], gate["errors"]
     assert sch.read_text() != text and placements(sch) == placements_before_v3
+
+    # 9. the board: parts and nets from the schematic, proven by DRC schematic parity
+    board = kat.pcb.sync(sch.with_suffix(".kicad_pcb"))
+    assert board["ok"] and board["check"]["parity"] == 0 and len(board["added"]) == 8
+    assert not kat.pcb.sync(sch.with_suffix(".kicad_pcb"))["changed"]
