@@ -107,7 +107,18 @@ def cmd_check(a):
 
 
 def cmd_snapshot(a):
-    return kat.snapshot(a.sch, a.slug, a.note, a.expect, a.out, a.zoom)
+    return kat.snapshot(a.sch, a.slug, a.note, a.expect, a.out, a.zoom, a.tiles, a.finding_crops)
+
+
+def cmd_view(a):
+    region = None
+    if a.region:
+        try:
+            region = tuple(float(v) for v in a.region.split(","))
+            assert len(region) == 4
+        except (ValueError, AssertionError):
+            raise env.KatError(f"--region expects X,Y,W,H in mm, got {a.region!r}")
+    return kat.view(a.sch, a.around, a.at, region, a.margin, a.zoom, a.out)
 
 
 def cmd_sync(a):
@@ -126,7 +137,8 @@ Workflow (see SPEC.md):
   1. describe the circuit in SKiDL (set tag= on parts), generate design.net
   2. kat new DIR/NAME.kicad_sch            empty project, once
   3. kat sync SCH design.net               parts + connectivity from the design
-  4. kat snapshot SCH --expect design.net  image + checks into history/
+  4. kat snapshot SCH --expect design.net  image + checks into history/ (+ tiles if large)
+     kat view SCH --around U1             zoom into details the overview cannot show
   5. review the PNG, then arrange:       python passN.py  (uses `import kat`)
   6. repeat 4-5; after a design change: regenerate design.net and go to 3
 
@@ -216,13 +228,33 @@ def build_parser() -> argparse.ArgumentParser:
             "Writes history/<timestamp>[_SLUG]/ next to the schematic (or under --out) with:\n"
             "  <name>.svg   full page with frame (for people)\n"
             "  <name>.png   trimmed, frameless image (for review by the agent)\n"
-            "  <name>.kicad_sch copy, check.json, note.md (if --note)",
+            "  <name>.kicad_sch copy, check.json, note.md (if --note)\n"
+            "  tiles/r<i>c<j>.png  readable pieces of large sheets, with their regions in mm\n"
+            "  findings/NN_*.png   close-ups of findings (--finding-crops N)",
             ["kat snapshot tia.kicad_sch --slug pass2 --expect tia_design.net --note \"moved R1\""])
     q.add_argument("--out", help="history root directory (default: history/ next to SCH)")
     q.add_argument("--slug", default="", help="short name appended to the timestamp")
     q.add_argument("--note", help="text saved as note.md: what changed and why")
     q.add_argument("--zoom", type=float, default=3.0, help="PNG scale factor (default 3)")
     q.add_argument("--expect", metavar="NETLIST", help="as for `check`")
+    q.add_argument("--tiles", action=argparse.BooleanOptionalAction, default=None,
+                   help="also write tiles/r<i>c<j>.png of ~1600 px (default: when the PNG exceeds 2000 px)")
+    q.add_argument("--finding-crops", type=int, default=0, metavar="N",
+                   help="write close-ups of the first N findings with a position to findings/")
+
+    q = cmd("view", cmd_view, "Render a zoomed view of one region of the sheet.",
+            "For details the full image cannot show (large sheets are downscaled when viewed).\n"
+            "Give one of --around REF, --at X,Y or --region X,Y,W,H (sheet mm). Writes\n"
+            "views/<timestamp>_<what>.png next to SCH (not a history step) and returns its size,\n"
+            "the region and px_per_mm: sheet x = region x + pixel x / px_per_mm.",
+            ["kat view tia.kicad_sch --around U1", "kat view tia.kicad_sch --at 127,101.6 --margin 8",
+             "kat view big.kicad_sch --region 100,50,120,80 --zoom 6"])
+    q.add_argument("--around", metavar="REF", help="the part, its fields and --margin (default 10 mm)")
+    q.add_argument("--at", type=xy, metavar="X,Y", help="square of +-margin (default 15 mm) around a point")
+    q.add_argument("--region", metavar="X,Y,W,H", help="rectangle in sheet mm")
+    q.add_argument("--margin", type=float, help="mm around the part or point")
+    q.add_argument("--zoom", type=float, help="scale (default: longer side about 1600 px)")
+    q.add_argument("--out", help="PNG path (default views/<timestamp>_<what>.png)")
 
     q = cmd("sync", cmd_sync, "Bring a design netlist (e.g. from SKiDL) into the schematic.",
             "The netlist is the source of truth for parts and connections; the arrangement is kept.\n"

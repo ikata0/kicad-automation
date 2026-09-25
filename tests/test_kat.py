@@ -197,3 +197,26 @@ def test_results_are_rounded_and_flag_removal_warns(tmp_path):
         s.power("PWR_FLAG", "R1.2", stub=(0, 2.54))
         res = s.detach("R1.2")
     assert res["power_symbols"] == ["#FLG1"] and "PWR_FLAG" in res["warning"]
+
+
+@needs_kicad
+def test_view_tiles_and_finding_crops(tmp_path):
+    sch = tmp_path / "v" / "v.kicad_sch"
+    kat.new(sch)
+    with kat.edit(sch) as s:
+        draw_led(s)
+        s.add("Device:R", 150, 80, ref="R2")
+        s.label("CLASH", (150, 80))  # text over the body of R2: an overlap finding
+    v = kat.view(sch, around="R1")
+    x, y, w, h = v["region"]
+    assert x < 100 < x + w and y < 80 < y + h
+    assert abs(v["width"] - w * v["px_per_mm"]) <= 2
+    assert Path(v["png"]).parent.name == "views"
+    v2 = kat.view(sch, region=(90, 70, 40, 20), zoom=4)
+    assert v2["region"] == [90, 70, 40, 20] and v2["width"] == round(40 * v2["px_per_mm"])
+    with pytest.raises(kat.KatError):
+        kat.view(sch)
+    snap = kat.snapshot(sch, tiles=True, finding_crops=5)
+    assert snap["tiles"] and all(Path(t["png"]).exists() for t in snap["tiles"])
+    assert snap["finding_crops"] and Path(snap["finding_crops"][0]["png"]).exists()
+    assert not kat.snapshot(sch).get("tiles")  # small sheet: no tiles by default

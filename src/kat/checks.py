@@ -109,7 +109,10 @@ def body_overlaps(s: Schematic) -> list[dict]:
             if a.ref.startswith("#") or b.ref.startswith("#"):
                 continue
             if _overlap(ba, bb, margin=0.5):
-                found.append({"a": f"{a.ref}/{a.unit}", "b": f"{b.ref}/{b.unit}"})
+                cx = (max(ba[0], bb[0]) + min(ba[2], bb[2])) / 2
+                cy = (max(ba[1], bb[1]) + min(ba[3], bb[3])) / 2
+                found.append({"a": f"{a.ref}/{a.unit}", "b": f"{b.ref}/{b.unit}",
+                              "at": [round(cx, 2), round(cy, 2)]})
     return found
 
 

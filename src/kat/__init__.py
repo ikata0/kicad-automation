@@ -26,9 +26,10 @@ from .env import KatError, tidy
 from .history import snapshot as _snapshot
 from .project import new
 from .sheet import Sheet
+from .views import view as _view
 
 __all__ = ["KatError", "Sheet", "check", "edit", "lib_search", "lib_show", "load", "nets",
-           "new", "snapshot", "sync"]
+           "new", "snapshot", "sync", "view"]
 
 
 def load(path: Path | str) -> Sheet:
@@ -58,10 +59,20 @@ def check(sch: Path | str, expect: Path | str | None = None) -> dict:
 
 def snapshot(sch: Path | str, slug: str = "", note: str | None = None,
              expect: Path | str | None = None, out: Path | str | None = None,
-             zoom: float = 3.0) -> dict:
+             zoom: float = 3.0, tiles: bool | None = None, finding_crops: int = 0) -> dict:
     """Render and check the sheet into ``history/<timestamp>[_slug]/`` (SVG, trimmed PNG,
-    schematic copy, check.json, note.md). Returns the paths and the check summary."""
-    return tidy(_snapshot(sch, slug, note, expect, out, zoom))
+    schematic copy, check.json, note.md). Large sheets (PNG > 2000 px) also get readable
+    ``tiles/`` unless ``tiles=False``; ``finding_crops=N`` adds close-ups of the first N
+    findings. Returns the paths and the check summary."""
+    return tidy(_snapshot(sch, slug, note, expect, out, zoom, tiles, finding_crops))
+
+
+def view(sch: Path | str, around: str | None = None, at: tuple[float, float] | None = None,
+         region: tuple[float, float, float, float] | None = None, margin: float | None = None,
+         zoom: float | None = None, out: Path | str | None = None) -> dict:
+    """Zoomed PNG of one region: ``around`` a part, ``at`` a point (x, y) or a ``region``
+    (x, y, w, h) in sheet mm. Written to ``views/``; not a history step."""
+    return tidy(_view(sch, around, at, region, margin, zoom, out))
 
 
 def nets(sch: Path | str) -> dict[str, list]:

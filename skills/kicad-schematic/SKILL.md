@@ -25,17 +25,37 @@ layout.
 2. **Sync**: `kat sync SCH design.net` (first time after `kat new SCH`). Read the report:
    `added`, `renamed`, `detached`/`attached`, `removed`, `unresolved` tell you where to look.
 3. **Snapshot**: `kat snapshot SCH --slug NAME --expect design.net --note "what changed"`.
-4. **Review** the PNG it wrote (Read it). Look for: text touching text, symbols or wires;
-   parts parked in the import rows below the drawing; signal flow (inputs left, outputs right,
-   supplies up, ground down); labels that would read better as wires.
-   `check.json` lists `overlaps`, `body_overlaps`, `off_page`, `duplicates`, `unnamed` —
-   hints, not a verdict.
+4. **Review** — overview first, then details (sub-loop below). Look for: text touching
+   text, symbols or wires; parts parked in the import rows below the drawing; signal flow
+   (inputs left, outputs right, supplies up, ground down); labels that would read better
+   as wires. `check.json` lists `overlaps`, `body_overlaps`, `off_page`, `duplicates`,
+   `unnamed` — hints, not a verdict.
 5. **Arrange** the drawing with a Python pass, `python passN.py`. It starts with a docstring
    that states what the review found and edits inside `with kat.edit(SCH) as s:`, which
    saves once, or not at all if anything raises. Then back to 3.
 
-**Stop when** `check.json` says `"clean": true` and the image shows no problems. Report
-remaining ERC warnings instead of polishing forever.
+**Stop when** `check.json` says `"clean": true` and the review — at readable resolution,
+over the whole sheet — shows no problems. Report remaining ERC warnings instead of
+polishing forever.
+
+## Review sub-loop (step 4)
+
+Image viewers downscale large images (about 2000 px), so on big sheets the overview shows
+layout but not pin numbers or label text. Zoom in until every question is answered:
+
+1. **Overview**: Read `history/<step>/<name>.png`. Note the spots that look wrong or that
+   you cannot read.
+2. **Tiles**: if the snapshot result lists `tiles` (automatic above 2000 px, i.e. about
+   A3 and larger), Read every tile once — each has its `region_mm`.
+3. **Close-ups**: for each noted spot and each finding with a position, render a view and
+   Read it:
+   `kat view SCH --around U1` · `kat view SCH --at X,Y [--margin 8]` ·
+   `kat view SCH --region X,Y,W,H` (or `kat.view(...)` in Python). A pixel maps back to
+   sheet mm as `x = region[0] + px / px_per_mm`. `kat snapshot ... --finding-crops 20`
+   renders the findings in one go.
+4. Still unsure about something? Take the next view (closer, or next to it). Views are
+   cheap (under a second) and are not history steps.
+5. Write down what the review found; it goes into the next pass's docstring.
 
 ## Arrangement recipes
 

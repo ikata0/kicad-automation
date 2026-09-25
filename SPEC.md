@@ -80,7 +80,9 @@ passes the checks, but it is grouped by part rather than by signal flow.
 
 ### 4.2 Arrangement passes
 
-1. Look at `history/<latest>/<name>.png` (the trimmed image, meant for review).
+1. Look at `history/<latest>/<name>.png` (the trimmed image, meant for review), then at
+   the details: `tiles/` (large sheets), `kat view` close-ups around parts, points or
+   regions, `findings/` crops (§4.5).
 2. Write `passN.py`: a docstring saying what the review found, then the edits.
 3. `python passN.py`
 4. `kat snapshot board.kicad_sch --slug passN --expect design.net --note "..."`
@@ -142,9 +144,24 @@ re-attached pins) and fold them into the arrangement with another pass.
 A pin that directly touches another part's pin and must change net cannot be fixed
 automatically; it is listed under `unresolved`.
 
+### 4.5 Reviewing large sheets
+
+An agent's image viewer downscales pictures to about 2000 px, so the overview PNG of an A2
+sheet (5600 px at zoom 3) shows the arrangement but not pin numbers or label text. The
+review is therefore a loop: overview → tiles → close-ups → next close-up, until every doubt
+is resolved.
+
+- `snapshot` writes `tiles/r<i>c<j>.png` (about 1600 px, 10 % overlap, each with its
+  `region_mm`) when the PNG exceeds 2000 px (`--tiles` / `--no-tiles` to force).
+- `snapshot --finding-crops N` writes close-ups of the first N findings with a position
+  (ERC items, text overlaps, body overlaps) to `findings/`.
+- `kat view SCH --around REF | --at X,Y | --region X,Y,W,H` renders one region to
+  `views/` in under a second (the frameless SVG is cached per file version). The result
+  has `region` and `px_per_mm` to map pixels back to sheet mm.
+
 ## 5. Command reference
 
-Library: `kat.new`, `kat.load`, `kat.edit`, `kat.sync`, `kat.check`, `kat.snapshot`,
+Library: `kat.new`, `kat.load`, `kat.edit`, `kat.sync`, `kat.check`, `kat.snapshot`, `kat.view`,
 `kat.nets`, `kat.lib_search`, `kat.lib_show`, and the `kat.Sheet` methods; each returns what
 the matching command prints.
 
@@ -159,7 +176,8 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `list SCH` / `pins SCH REF` / `netlist SCH` | inspect placement, pin positions + outward direction, KiCad's nets |
 | `sync SCH NETLIST [--dry-run]` | bring the design into the drawing (§4.4) |
 | `check SCH [--expect NETLIST]` | ERC + netlist comparison + drawing findings |
-| `snapshot SCH [--slug] [--note] [--expect]` | SVG + trimmed PNG + check into `history/` |
+| `snapshot SCH [--slug] [--note] [--expect] [--tiles] [--finding-crops N]` | SVG + trimmed PNG + check into `history/`; tiles and finding close-ups |
+| `view SCH --around REF / --at X,Y / --region X,Y,W,H` | zoomed PNG of one region into `views/` |
 | `add`, `wire`, `connect`, `label`, `power`, `nc` | draw |
 | `move`, `move-many`, `set`, `detach`, `rm` | rearrange (one part, or a block move), edit fields, disconnect, delete |
 
