@@ -1,0 +1,73 @@
+---
+name: kicad-schematic
+description: Develop KiCad 10 schematics from the command line with the `kat` tool — circuit defined in SKiDL, brought into the .kicad_sch with `kat sync` (incremental, keeps the layout), laid out for readability with `kat batch`, verified by ERC, netlist comparison and rendered snapshots. Use when asked to create, update after a design change, lay out, tidy or check a KiCad schematic without the KiCad GUI.
+---
+
+# KiCad schematics with SKiDL + `kat`
+
+Full specification: `SPEC.md` in the kicad-automation repo. `kat --help` and
+`kat <command> --help` explain every command with examples.
+
+## Rules
+
+1. **Connectivity lives in the SKiDL design only.** In the drawing you only arrange things;
+   `kat check --expect design.net` must keep matching.
+2. Every SKiDL part gets `tag=` and `ref=`; name the nets that matter (`Net("TIA_OUT")`).
+3. KiCad GUI closed while editing.
+4. Snapshot after every sync and every layout pass.
+
+## Loop
+
+1. **Design**: write/modify the SKiDL file, run it → `design.net`.
+2. **Sync**: `kat sync SCH design.net` (first time after `kat new SCH`). Read the report:
+   `added`, `renamed`, `detached`/`attached`, `removed`, `unresolved` tell you where to look.
+3. **Snapshot**: `kat snapshot SCH --slug NAME --expect design.net --note "what changed"`.
+4. **Review** the PNG it wrote (Read it). Look for: text touching text, symbols or wires;
+   parts parked in the strip below the drawing; signal flow (inputs left, outputs right,
+   supplies up, ground down); labels that would read better as wires.
+   `check.json` lists `overlaps`, `body_overlaps`, `off_page`, `unnamed` — hints, not a verdict.
+5. **Layout** with a script, `kat batch SCH passN.kat` (all-or-nothing), starting with a
+   comment that states what the review found. Then back to 3.
+
+**Stop when** `check.json` says `"clean": true` and the image shows no problems. Report
+remaining ERC warnings instead of polishing forever.
+
+## Layout recipes
+
+```
+# arrange
+move U1 --unit 1 --to 127,101.6 --mirror x
+move R1 --to 127,86.36 --rot 90
+# replace a label pair by a wire, keep the net name visible
+detach R1.1
+detach U1.2
+connect R1.1 U1.2 --via 114.3,86.36
+label PD_ANODE 104.14,99.06
+# fields
+set U1 Value --unit 2 --at 147.32,127
+set '#FLG1' Value --hide
+# power symbol pointing the wrong way after a mirror
+detach J2.2
+power GND J2.2 --stub -5.08,0
+```
+
+## Behaviour worth knowing
+
+- `sync` is idempotent and matches parts by SKiDL tag, then reference. New parts appear in
+  a strip below the drawing with stub + label wiring; power nets get power symbols;
+  PWR_FLAGs are added for undriven supplies.
+- `move` carries what hangs only off the part (stubs, labels, power symbols, flags) and
+  drags wires into shared nets. Steps left by dragging: `detach` + `connect`.
+- `detach REF.PIN` removes the pin's own wiring up to the next branch point, including labels
+  and power symbols on it. Follow it with `connect`/`label`/`power` in the same batch.
+- Coordinates: mm, y down, 1.27 mm grid; parts on multiples of 2.54 mm.
+- Junctions are maintained automatically.
+- Never fix connectivity in the drawing — if `check` reports `missing`/`extra`, either your
+  layout batch broke something (undo by reverting the file from the last snapshot) or the
+  design is wrong (fix SKiDL and sync).
+
+## Setup
+
+`pip install -e <kicad-automation>[dev]` (SKiDL included; add `render` on systems without
+`rsvg-convert`, e.g. Windows). Needs `kicad-cli` on PATH or `KICAD_CLI`; SKiDL needs
+`KICAD10_SYMBOL_DIR` pointing at KiCad's symbol directory.

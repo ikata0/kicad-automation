@@ -1,0 +1,16 @@
+# kicad-automation
+
+Command-line tooling for agent-driven KiCad 10 work. Package `kat` in `src/kat/`, skill in
+`skills/kicad-schematic/`.
+
+- Dev setup: `python -m venv .venv && .venv/bin/pip install -e '.[dev]'`; tests: `.venv/bin/pytest`
+  (most tests need `kicad-cli`).
+- Experiments that produce KiCad projects belong in `../kicad-sandbox/experiments/`, not here.
+- `sexpr.py` must stay lossless: never drop or reorder tokens it does not know.
+- Geometry changes must be checked against KiCad's netlist (see `test_pin_positions_all_orientations`),
+  not only against our own model.
+- CLI output is JSON only; errors are `{"error": ...}` with exit code 2.
+- The workflow and sync semantics are specified in `SPEC.md`; keep it, the skill and
+  `kat --help` texts in sync when behaviour changes. New pitfalls go into SPEC.md §7.
+- `tests/test_e2e_skidl.py` is the full iterative flow; run it with `KAT_E2E_OUT=<dir>` and
+  look at the PNGs when changing sync, move or field placement — the checks are heuristics.

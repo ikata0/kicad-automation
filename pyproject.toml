@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kat"
+version = "0.1.0"
+description = "KiCad automation tools: file-based schematic editing and checks for agents"
+requires-python = ">=3.10"
+dependencies = ["pillow>=10"]
+
+[project.optional-dependencies]
+# SVG rasteriser for systems without rsvg-convert (e.g. Windows). AGPL-3.0 licensed.
+render = ["pymupdf>=1.24"]
+dev = ["pytest>=8", "skidl>=2.3"]
+
+[project.scripts]
+kat = "kat.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
