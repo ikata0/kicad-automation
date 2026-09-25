@@ -221,6 +221,9 @@ pin names/numbers or wires running through text, so the image review is mandator
 | `sync` re-attached pins whose net had not changed when their partner pin left the net: each run stacked another stub + label | a lone pin that already carries the net's name counts as drawn; `check` reports `duplicates` |
 | `detach` on stacked identical wires removed the wires but left the labels floating | stacked identical wires count as one run |
 | The import strip ignored the page height (294 items off an A2 page, invisible in the PNG) | rows wrap within the page; the paper grows when needed |
+| Agents' image viewers downscale large PNGs (A2 at zoom 3 = 5600 px → 2000 px): pin numbers and labels become unreadable, yet the image looks fine | snapshot tiles, `kat view` close-ups and the review sub-loop (§4.5) |
+| Text layout scripts (`.kat`) had no loops: a 100-cell matrix needed a generator emitting 1,100 lines, run at ~0.2 s per line | arrangement passes are Python on the `kat` library; geometry indexed (LED matrix pass: 193 s → 9 s) |
+| Sideways power symbols on dense connector pins put their text on the neighbours' labels | sync places them beyond the labels on a longer stub |
 | Power symbols / labels on a pin were left behind or bridged by a wire on `move` | `move` carries everything hanging only off the part |
 | Mirroring a part does not re-orient its carried power symbols | `detach` + `power ... --stub` after mirroring |
 | `set --at` on a multi-unit part moved all units' fields to one spot | refuses without `--unit` |

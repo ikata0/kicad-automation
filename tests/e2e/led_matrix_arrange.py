@@ -68,7 +68,8 @@ def pass2(s: kat.Sheet) -> None:
     - matrix: 'GND' text of every cathode collides with the LED value
       -> GND 5.08 mm out, LED value moved
     - J1/J2 reference and value sit on the right-hand labels -> above / below the body
-    - the import's PWR_FLAG went away with the detached stubs -> one flag on the J1 rail"""
+    - the import's PWR_FLAG went away with the detached stubs -> one flag on the J1 rail
+    - the import grew the paper; the arranged drawing fits on A2 again"""
     lx, rx = J_X - 10 * G, J_X + 11 * G    # pin tips at J_X-2G / J_X+3G, rails 8G further out
     for j in J_Y:
         left = [k for k in range(1, 65, 2) if gnd_pin(k)]
@@ -82,6 +83,7 @@ def pass2(s: kat.Sheet) -> None:
         s.set(f"J{j}", "Reference", at=(J_X, J_Y[j] - 17 * G))
         s.set(f"J{j}", "Value", at=(J_X, J_Y[j] + 18 * G))
     s.power("PWR_FLAG", (lx, pin_y(1, 1)), stub=(0, -2 * G))
+    s.page("A2")  # the import needed more room than the arranged drawing
     for r, c in CELLS:
         n, (x, y) = n_of(r, c), origin(r, c)
         s.detach(f"D{n}.1")

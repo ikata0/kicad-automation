@@ -43,7 +43,9 @@ kat snapshot tia/tia.kicad_sch --slug arrange --expect v2.net
 ```
 
 `tests/test_e2e_skidl.py` runs the full iterative flow (import, design change, re-sync,
-arrangement, re-sync); set `KAT_E2E_OUT=dir` to keep its snapshots for inspection.
+arrangement, re-sync); `tests/test_e2e_led_matrix.py` (marker `slow`, about 75 s) does the same
+for a 200-part LED matrix on A2. Set `KAT_E2E_OUT=dir` to keep their snapshots for
+inspection; `pytest -m 'not slow'` skips the large one.
 
 ## Design decisions
 
