@@ -185,6 +185,23 @@ kicad-cli nor kicad-python offers.
 - **Proof**: every run ends with DRC; `ok` = parity 0 and nothing unresolved. A second run
   of the same schematic changes nothing.
 
+### 4.7 Board setup
+
+Methods of `kat.pcb.Board`, used inside `with kat.pcb.edit(PCB) as b:` (saved once):
+
+| Method | Effect |
+|---|---|
+| `outline(rect=(x, y, w, h), radius=r)` / `outline(polygon=[...])` | replaces everything on Edge.Cuts |
+| `set_copper_layers(n)` | 2, 4, 6 … copper layers (inner ones refused for removal while used) |
+| `mounting_hole(at, "M3")`, `add_board_part(lib_id, ref, at)` | footprints without a symbol, marked board-only: sync and parity leave them alone |
+| `zone(net, layers, polygon=None)` | copper pour (default: outline minus 0.5 mm); filled by KiCad on check |
+| `keepout(layers, rect/polygon, tracks=False, vias=True, ...)` | rule area; `False` forbids that item kind |
+| `netclass(name, track, clearance, via, via_drill, nets=[patterns])` | `.kicad_pro` net class + pattern assignment |
+| `rules(text)` | `.kicad_dru` custom rules (KiCad rule language) |
+
+Net classes and rules are what DRC and the router use; derive them from the specification
+(current → width, voltage → clearance/creepage) before placing parts.
+
 Board geometry (pad positions, courtyards) follows KiCad's storage convention — children
 in footprint coordinates, bottom side mirrored in y, pad and text angles absolute — and is
 tested against IPC-D-356 and DRC's library comparison.

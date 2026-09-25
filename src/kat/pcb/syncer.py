@@ -129,6 +129,7 @@ class BoardSync:
 
     def _match(self, board: Board, parts: dict[str, Part]) -> dict[str, Footprint]:
         fps_ = board.footprints()
+        fps_ = [f for f in fps_ if not f.board_only]  # mounting holes etc. have no symbol
         by_path = {f.path: f for f in fps_ if f.path}
         by_tag = {f.field(TAG): f for f in fps_ if f.field(TAG)}
         by_ref = {f.ref: f for f in fps_}
@@ -164,7 +165,7 @@ class BoardSync:
 
         kept = {id(m.node) for m in matched.values()}
         for f in board.footprints():
-            if id(f.node) not in kept:
+            if id(f.node) not in kept and not f.board_only:
                 self.report["removed"].append(f.ref)
                 board.tree.remove(f.node)
                 self.changed = True

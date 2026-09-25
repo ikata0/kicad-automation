@@ -13,6 +13,7 @@ from .. import env
 from ..sexpr import Sym, dumps, find, find_all, head, loads, num
 from . import footprints as fps
 from .geometry import Box, box_of, pad_outline, to_board, union
+from .setup import SetupMixin
 
 FORMAT = "20260206"
 
@@ -64,6 +65,11 @@ class Footprint:
     side = property(lambda self: "B" if str(find(self.node, "layer")[1]).startswith("B.") else "F")
     ref = property(lambda self: self.field("Reference") or "")
     value = property(lambda self: self.field("Value") or "")
+
+    @property
+    def board_only(self) -> bool:
+        attr = find(self.node, "attr")
+        return attr is not None and any(str(t) == "board_only" for t in attr[1:])
 
     @property
     def path(self) -> str:
@@ -186,12 +192,14 @@ class Footprint:
                 "box": list(b) if (b := self.box()) else None}
 
 
-class Board:
+class Board(SetupMixin):
     def __init__(self, path: Path | str):
         self.path = Path(path)
         self.tree = loads(self.path.read_text(encoding="utf-8"))
         if head(self.tree) != "kicad_pcb":
             raise env.KatError(f"{path} is not a KiCad board")
+        self._pro_edits: list = []
+        self._rules_text: str | None = None
 
     @staticmethod
     def create(path: Path | str) -> "Board":
@@ -203,6 +211,7 @@ class Board:
         return Board(path)
 
     def save(self) -> None:
+        self._write_project_files()
         self.path.write_text(dumps(self.tree) + "\n", encoding="utf-8")
         normalize(self.path)
         self.tree = loads(self.path.read_text(encoding="utf-8"))
