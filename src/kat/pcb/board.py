@@ -13,6 +13,7 @@ from .. import env
 from ..sexpr import Sym, dumps, find, find_all, head, loads, num
 from . import footprints as fps
 from .geometry import Box, box_of, pad_outline, to_board, union
+from .placement import PlacementMixin
 from .setup import SetupMixin
 
 FORMAT = "20260206"
@@ -192,7 +193,7 @@ class Footprint:
                 "box": list(b) if (b := self.box()) else None}
 
 
-class Board(SetupMixin):
+class Board(SetupMixin, PlacementMixin):
     def __init__(self, path: Path | str):
         self.path = Path(path)
         self.tree = loads(self.path.read_text(encoding="utf-8"))

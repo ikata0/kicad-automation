@@ -202,7 +202,26 @@ Methods of `kat.pcb.Board`, used inside `with kat.pcb.edit(PCB) as b:` (saved on
 Net classes and rules are what DRC and the router use; derive them from the specification
 (current → width, voltage → clearance/creepage) before placing parts.
 
-### 4.8 Board checks and review
+### 4.8 Placement
+
+Methods of `kat.pcb.Board` (in `with kat.pcb.edit(PCB) as b:`); layout passes are Python,
+like arrangement passes:
+
+| Method | Effect |
+|---|---|
+| `move(ref, to, rot, side)` | refused when its courtyard would overlap another on the same side (`allow_overlap`) |
+| `move_many({ref: {to, rot, side}})` | simultaneous; checked on the final arrangement (parts may swap places) |
+| `flip(ref)`, `align(refs, axis)`, `distribute(refs, start, pitch)` | side, rows/columns, even spacing |
+| `place_near(ref, "U1.8")` | a two-pad part beside a pin: outside the host's courtyard, on the side the pin faces, its pad on the pin's net nearest; steps sideways until free |
+| `near(point, radius)`, `collisions(refs)` | what is around a point / courtyard overlaps |
+| `blocks()`, `block_box(name)`, `move_block(name, to/by)` | functional blocks: the `Block` field set in SKiDL (`part.fields["Block"] = "ch1"`) |
+| `replicate("ch1", {"ch2": (x, y), ...})` | arrange other blocks like the template; parts pair up by SKiDL tag with the block name removed (`ch1_r` ↔ `ch2_r`), else by footprint and reference order |
+
+Order in a placement pass: mechanical and fixed parts, connectors, critical analog parts and
+heat sources, decoupling (`place_near`), then the rest; repeated blocks once, then
+`replicate` (or a loop).
+
+### 4.9 Board checks and review
 
 `kat pcb check PCB` runs KiCad's DRC with zones refilled in memory and schematic parity,
 plus kat's findings (outline missing, parts outside the outline). `ok` = no DRC errors,
@@ -246,7 +265,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `check SCH [--expect NETLIST]` | ERC + netlist comparison + drawing findings |
 | `ready SCH [--expect NETLIST] [--require-field NAME]` | gate before the PCB layout (§6.1) |
 | `pcb sync PCB [--sch] [--dry-run] [--force] [--rip-stale]` | parts and nets onto the board (§4.6) |
-| `pcb check PCB` / `pcb snapshot PCB` / `pcb view PCB ...` | board DRC + findings, history step with pictures, zoomed view (§4.8) |
+| `pcb check PCB` / `pcb snapshot PCB` / `pcb view PCB ...` | board DRC + findings, history step with pictures, zoomed view (§4.9) |
 | `snapshot SCH [--slug] [--note] [--expect] [--tiles] [--finding-crops N]` | SVG + trimmed PNG + check into `history/`; tiles and finding close-ups |
 | `view SCH --around REF / --at X,Y / --region X,Y,W,H` | zoomed PNG of one region into `views/` |
 | `add`, `wire`, `connect`, `label`, `power`, `nc` | draw |
