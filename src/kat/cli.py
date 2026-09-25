@@ -125,6 +125,10 @@ def cmd_check(a):
     return kat.check(a.sch, a.expect)
 
 
+def cmd_ready(a):
+    return kat.ready(a.sch, a.expect, () if a.no_require else (a.require_field or ["MPN"]))
+
+
 def cmd_snapshot(a):
     return kat.snapshot(a.sch, a.slug, a.note, a.expect, a.out, a.zoom, a.tiles, a.finding_crops)
 
@@ -160,6 +164,7 @@ Workflow (see SPEC.md):
      kat view SCH --around U1             zoom into details the overview cannot show
   5. review the PNG, then arrange:       python passN.py  (uses `import kat`)
   6. repeat 4-5; after a design change: regenerate design.net and go to 3
+  7. kat ready SCH --expect design.net     gate before the PCB layout starts
 
 An arrangement pass is a Python script; it is saved once, or not at all on an error:
     import kat
@@ -245,6 +250,24 @@ def build_parser() -> argparse.ArgumentParser:
             ["kat check tia.kicad_sch", "kat check tia.kicad_sch --expect tia_design.net"])
     q.add_argument("--expect", metavar="NETLIST",
                    help="KiCad s-expression netlist (e.g. from SKiDL) the drawing must match")
+
+    q = cmd("ready", cmd_ready, "Gate before the PCB layout: is the schematic finished?",
+            "Checks the parts KiCad will put on the board (symbols marked 'not on board' are\n"
+            "skipped):\n"
+            "  errors   schematic not ok/clean (as kat check), unannotated reference, empty\n"
+            "           value, no footprint, footprint library or file not found, symbol pin\n"
+            "           without a pad, missing required field (default MPN; parts excluded\n"
+            "           from the BOM are exempt)\n"
+            "  warnings no --expect, numbered pad without a symbol pin (often fine: mounting\n"
+            "           or shield pads), footprint outside the symbol's filters, no 3D model\n"
+            "ready = no errors. Footprints come from fp-lib-table (global + project).",
+            ["kat ready tia.kicad_sch --expect tia_design.net",
+             "kat ready tia.kicad_sch --expect tia_design.net --require-field MPN "
+             "--require-field Manufacturer"])
+    q.add_argument("--expect", metavar="NETLIST", help="design netlist, as for kat check")
+    q.add_argument("--require-field", action="append", metavar="NAME",
+                   help="field every BOM part must fill (repeatable; default MPN)")
+    q.add_argument("--no-require", action="store_true", help="require no fields")
 
     q = cmd("snapshot", cmd_snapshot, "Render the schematic and record a checked history step.",
             "Writes history/<timestamp>[_SLUG]/ next to the schematic (or under --out) with:\n"
@@ -451,7 +474,7 @@ def main(argv: list[str] | None = None) -> int:
         else:
             out = args.func(args)
         print(json.dumps(env.tidy(out), indent=1, default=list))
-        failed = isinstance(out, dict) and (out.get("ok") is False or
+        failed = isinstance(out, dict) and (out.get("ok") is False or out.get("ready") is False or
                                             (out.get("check") or {}).get("ok") is False)
         return 1 if failed else 0
     except (env.KatError, ValueError, OSError) as e:

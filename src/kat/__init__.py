@@ -21,7 +21,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from . import checks, library, netlist, syncer
+from . import checks, gate, library, netlist, syncer
 from .env import KatError, tidy
 from .history import restore as _restore
 from .history import snapshot as _snapshot
@@ -30,7 +30,7 @@ from .sheet import Sheet
 from .views import view as _view
 
 __all__ = ["KatError", "Sheet", "check", "edit", "lib_search", "lib_show", "load", "nets",
-           "new", "restore", "snapshot", "sync", "view"]
+           "new", "ready", "restore", "snapshot", "sync", "view"]
 
 
 def load(path: Path | str) -> Sheet:
@@ -56,6 +56,15 @@ def sync(sch: Path | str, design: Path | str, dry_run: bool = False) -> dict:
 def check(sch: Path | str, expect: Path | str | None = None) -> dict:
     """ERC, netlist comparison with ``expect`` and drawing findings (``ok`` / ``clean``)."""
     return tidy(checks.run(Path(sch), Path(expect) if expect else None))
+
+
+def ready(sch: Path | str, expect: Path | str | None = None,
+          require: tuple[str, ...] | list[str] = ("MPN",)) -> dict:
+    """Ready-for-layout gate: ``ready`` is true when the schematic is clean and every board
+    part has a value, a footprint that exists and has a pad for every symbol pin, and the
+    ``require`` fields (parts excluded from the BOM are exempt). ``errors`` block the
+    layout; ``warnings`` (extra pads, footprint filters, 3D models) want a human look."""
+    return tidy(gate.run(Path(sch), Path(expect) if expect else None, tuple(require)))
 
 
 def snapshot(sch: Path | str, slug: str = "", note: str | None = None,

@@ -1,4 +1,4 @@
-"""Locate kicad-cli and the KiCad symbol libraries on Linux, macOS and Windows."""
+"""Locate kicad-cli and the KiCad symbol and footprint libraries on Linux, macOS and Windows."""
 
 from __future__ import annotations
 
@@ -63,31 +63,44 @@ def _config_dir() -> Path:
     return Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "kicad" / KICAD_MAJOR
 
 
-def stock_symbol_dir() -> Path | None:
-    for var in ("KICAD10_SYMBOL_DIR", "KICAD9_SYMBOL_DIR", "KICAD_SYMBOL_DIR"):
+# stock library directory -> KiCad path variable stem (KICAD10_SYMBOL_DIR, ...)
+_STOCK = {"symbols": "SYMBOL", "footprints": "FOOTPRINT", "3dmodels": "3DMODEL"}
+
+
+def stock_dir(kind: str) -> Path | None:
+    """KiCad's installed ``symbols``, ``footprints`` or ``3dmodels`` directory."""
+    stem = _STOCK[kind]
+    for var in (f"KICAD10_{stem}_DIR", f"KICAD9_{stem}_DIR", f"KICAD_{stem}_DIR"):
         if os.environ.get(var):
             return Path(os.environ[var])
-    cands = ["/usr/share/kicad/symbols", "/usr/local/share/kicad/symbols",
-             "/Applications/KiCad/KiCad.app/Contents/SharedSupport/symbols"]
+    cands = [f"/usr/share/kicad/{kind}", f"/usr/local/share/kicad/{kind}",
+             f"/Applications/KiCad/KiCad.app/Contents/SharedSupport/{kind}"]
     if sys.platform == "win32":
         cli = Path(kicad_cli())
-        cands.insert(0, str(cli.parent.parent / "share" / "kicad" / "symbols"))
+        cands.insert(0, str(cli.parent.parent / "share" / "kicad" / kind))
     for c in cands:
         if os.path.isdir(c):
             return Path(c)
     return None
 
 
-def _expand(uri: str, project_dir: Path | None) -> str:
-    sym = stock_symbol_dir()
-    vars_ = {"KIPRJMOD": str(project_dir or "."), "KICAD10_SYMBOL_DIR": str(sym or ""),
-             "KICAD9_SYMBOL_DIR": str(sym or ""), "KICAD_SYMBOL_DIR": str(sym or "")}
+def stock_symbol_dir() -> Path | None:
+    return stock_dir("symbols")
+
+
+def expand(uri: str, project_dir: Path | None) -> str:
+    """Resolve ${KIPRJMOD}, ${KICAD10_FOOTPRINT_DIR}, ... in a library or model path."""
+    vars_ = {"KIPRJMOD": str(project_dir or ".")}
+    for kind, stem in _STOCK.items():
+        d = str(stock_dir(kind) or "")
+        vars_.update({f"KICAD10_{stem}_DIR": d, f"KICAD9_{stem}_DIR": d, f"KICAD_{stem}_DIR": d})
     vars_.update(os.environ)
     return re.sub(r"\$\{(\w+)\}", lambda m: vars_.get(m.group(1), m.group(0)), uri)
 
 
 def _read_lib_table(path: Path, project_dir: Path | None, depth: int = 0) -> dict[str, Path]:
-    """Parse a sym-lib-table; KiCad 10 tables may nest other tables (type "Table")."""
+    """Parse a sym-lib-table or fp-lib-table; KiCad 10 tables may nest other tables
+    (type "Table")."""
     out: dict[str, Path] = {}
     if not path.exists() or depth > 5:
         return out
@@ -98,7 +111,7 @@ def _read_lib_table(path: Path, project_dir: Path | None, depth: int = 0) -> dic
         name, uri, typ = (find(lib, k) for k in ("name", "uri", "type"))
         if not (name and uri):
             continue
-        target = Path(_expand(str(uri[1]), project_dir))
+        target = Path(expand(str(uri[1]), project_dir))
         if typ and str(typ[1]) == "Table":
             out.update(_read_lib_table(target, project_dir, depth + 1))
         else:
@@ -113,6 +126,16 @@ def symbol_libraries(project_dir: Path | None = None) -> dict[str, Path]:
         libs = {p.stem: p for p in sorted(sym.glob("*.kicad_sym"))}
     if project_dir:
         libs.update(_read_lib_table(project_dir / "sym-lib-table", project_dir))
+    return {k: v for k, v in libs.items() if v.exists()}
+
+
+def footprint_libraries(project_dir: Path | None = None) -> dict[str, Path]:
+    """Nickname -> .pretty directory, from global + project fp-lib-table, else the stock dir."""
+    libs = _read_lib_table(_config_dir() / "fp-lib-table", project_dir)
+    if not libs and (fp := stock_dir("footprints")):
+        libs = {p.stem: p for p in sorted(fp.glob("*.pretty"))}
+    if project_dir:
+        libs.update(_read_lib_table(project_dir / "fp-lib-table", project_dir))
     return {k: v for k, v in libs.items() if v.exists()}
 
 

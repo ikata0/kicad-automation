@@ -109,6 +109,20 @@ def test_iterative_design_flow(tmp_path, capsys):
 
     # 7. the arrangement survives a further sync of the unchanged design
     text = sch.read_text()
+    placements_before_v3 = placements(sch)
     again = kat.sync(sch, v2)
     assert not again["changed"], {k: v for k, v in again.items() if v and k != "check"}
     assert sch.read_text() == text
+
+    # 8. ready for the PCB: the gate names what is missing; v3 adds footprints and MPNs
+    gate = kat.ready(sch, expect=v2)
+    assert not gate["ready"]
+    # U1 has a footprint from its library symbol already
+    assert gate["by_problem"]["no_footprint"] == 7 and gate["by_problem"]["missing_field"] == 8
+    v3 = design("v3", root)
+    report = kat.sync(sch, v3)
+    assert not report["added"] and not report["removed"] and not report["detached"]
+    assert_clean(report["check"])
+    gate = kat.ready(sch, expect=v3)
+    assert gate["ready"], gate["errors"]
+    assert sch.read_text() != text and placements(sch) == placements_before_v3

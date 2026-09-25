@@ -163,7 +163,7 @@ is resolved.
 ## 5. Command reference
 
 Library: `kat.new`, `kat.load`, `kat.edit`, `kat.sync`, `kat.check`, `kat.snapshot`, `kat.view`,
-`kat.nets`, `kat.lib_search`, `kat.lib_show`, and the `kat.Sheet` methods; each returns what
+`kat.ready`, `kat.nets`, `kat.lib_search`, `kat.lib_show`, and the `kat.Sheet` methods; each returns what
 the matching command prints.
 
 `kat --help` shows the workflow; `kat <command> --help` shows each command's arguments and
@@ -177,6 +177,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `list SCH [--near X,Y --radius R]` / `pins SCH REF` / `netlist SCH` | inspect placement (or what is near a point, with uuids), pin positions + outward direction, KiCad's nets |
 | `sync SCH NETLIST [--dry-run]` | bring the design into the drawing (§4.4) |
 | `check SCH [--expect NETLIST]` | ERC + netlist comparison + drawing findings |
+| `ready SCH [--expect NETLIST] [--require-field NAME]` | gate before the PCB layout (§6.1) |
 | `snapshot SCH [--slug] [--note] [--expect] [--tiles] [--finding-crops N]` | SVG + trimmed PNG + check into `history/`; tiles and finding close-ups |
 | `view SCH --around REF / --at X,Y / --region X,Y,W,H` | zoomed PNG of one region into `views/` |
 | `add`, `wire`, `connect`, `label`, `power`, `nc` | draw |
@@ -199,6 +200,25 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 
 **Stop when** `clean` is true *and* the image review finds nothing. The heuristics do not see
 pin names/numbers or wires running through text, so the image review is mandatory.
+
+### 6.1 Ready for layout
+
+`kat ready SCH --expect design.net` is the gate between schematic and PCB. It reads the
+netlist KiCad exports from the schematic — the data the board is built from — so symbols
+marked "not on board" are not board parts (and, if the design has them, show up as a
+netlist difference).
+
+| Errors (block the layout) | Warnings (look, then decide) |
+|---|---|
+| schematic not `ok` / not `clean` (as `kat check`) | no `--expect` given |
+| reference not annotated (`R?`), empty value | numbered pad without a symbol pin (mounting, shield or thermal pads are often fine) |
+| no footprint; footprint library not in `fp-lib-table` (global + project); footprint file missing | footprint outside the symbol's footprint filters (`ki_fp_filters`) |
+| a symbol pin without a pad of that number (the part cannot be connected) | footprint has no 3D model file |
+| a required field empty (default `MPN`, `--require-field` repeatable, `--no-require`); parts excluded from the BOM are exempt | |
+
+`ready` is true when there are no errors; `by_problem` counts both lists. Footprints and
+part numbers are chosen in SKiDL (`footprint=`, `part.fields["MPN"]`) and reach the
+schematic through `sync`, so fixing the gate is a design change (§4.3), not a drawing edit.
 
 ## 7. Pitfalls found, and their solutions
 
@@ -236,6 +256,8 @@ pin names/numbers or wires running through text, so the image review is mandator
 ## 8. Open points
 
 - Hierarchical sheets, buses, global labels across sheets in `sync`.
-- Netlist → PCB: KiCad 10 has no command-line "update PCB from schematic".
+- Netlist → PCB: KiCad 10 has no command-line "update PCB from schematic", and kicad-python
+  offers none either. Planned: a file-based board sync in `kat`, proven by DRC schematic
+  parity (spike: `kicad-sandbox/experiments/2026-09-25-pcb-spike/`).
 - SKiDL `NC` pins → no-connect flags in the drawing.
 - Automatic arrangement beyond the placement strip (signal-flow placement) is left to the agent.

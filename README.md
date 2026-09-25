@@ -40,6 +40,9 @@ python tests/e2e/tia_design.py v2 v2.net                  # design change
 kat sync tia/tia.kicad_sch v2.net                          # arrangement kept, changes reported
 python tests/e2e/arrange_v2.py tia/tia.kicad_sch         # arrangement pass (Python)
 kat snapshot tia/tia.kicad_sch --slug arrange --expect v2.net
+python tests/e2e/tia_design.py v3 v3.net                  # + footprints and part numbers
+kat sync tia/tia.kicad_sch v3.net
+kat ready tia/tia.kicad_sch --expect v3.net                # gate before the PCB layout
 ```
 
 `tests/test_e2e_skidl.py` runs the full iterative flow (import, design change, re-sync,

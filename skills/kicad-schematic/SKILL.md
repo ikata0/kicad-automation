@@ -1,6 +1,6 @@
 ---
 name: kicad-schematic
-description: Develop KiCad 10 schematics from the command line with the `kat` tool — circuit defined in SKiDL, brought into the .kicad_sch with `kat sync` (incremental, keeps the arrangement), arranged for readability with Python passes (`import kat`), verified by ERC, netlist comparison and rendered snapshots. Use when asked to create, update after a design change, arrange, tidy or check a KiCad schematic without the KiCad GUI.
+description: Develop KiCad 10 schematics from the command line with the `kat` tool — circuit defined in SKiDL, brought into the .kicad_sch with `kat sync` (incremental, keeps the arrangement), arranged for readability with Python passes (`import kat`), verified by ERC, netlist comparison and rendered snapshots, and gated for the PCB with `kat ready`. Use when asked to create, update after a design change, arrange, tidy or check a KiCad schematic without the KiCad GUI, or to get it ready for PCB layout.
 ---
 
 # KiCad schematics with SKiDL + `kat`
@@ -37,6 +37,13 @@ layout.
 **Stop when** `check.json` says `"clean": true` and the review — at readable resolution,
 over the whole sheet — shows no problems. Report remaining ERC warnings instead of
 polishing forever.
+
+**Before PCB layout**: `kat ready SCH --expect design.net` must say `"ready": true`.
+Fix its errors in SKiDL, then sync (step 1–2): `footprint="Lib:Name"` on every part
+(`kat ready` names the library/file it cannot find and pins without a pad),
+`part.fields["MPN"] = "..."` for the chosen part. Look at each warning and say in the
+report why it is fine (e.g. an extra pad for the exposed thermal pad, a footprint outside
+the symbol's filters on purpose).
 
 ## Review sub-loop (step 4)
 

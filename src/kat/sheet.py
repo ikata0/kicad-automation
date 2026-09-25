@@ -143,7 +143,11 @@ class Sheet:
                     if kind == "text":
                         item["text"] = str(n[1])
                     found.append(item)
-        return sorted(found, key=lambda f: (round(f["dist"], 3), f["kind"] != "pin"))
+        # ties (a power symbol sitting on a pin): pins first, a part's pin before the power
+        # symbol's; never file order, which follows KiCad's random uuids
+        return sorted(found, key=lambda f: (round(f["dist"], 3), f["kind"] != "pin",
+                                            f.get("pin", f.get("ref", "")).startswith("#"),
+                                            f.get("pin", f.get("ref", ""))))
 
     # --- sheet ----------------------------------------------------------------
 

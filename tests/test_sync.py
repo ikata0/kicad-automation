@@ -24,12 +24,14 @@ BASE_NETS = {
 }
 
 
-def write_netlist(path: Path, parts: dict, nets: dict, footprints: dict | None = None) -> Path:
+def write_netlist(path: Path, parts: dict, nets: dict, footprints: dict | None = None,
+                  fields: dict | None = None) -> Path:
     comps = []
     for ref, (lib, part, value, tag) in parts.items():
         fp = (footprints or {}).get(ref, "")
+        extra = "".join(f' (field (name "{k}") "{v}")' for k, v in (fields or {}).get(ref, {}).items())
         comps.append(f'(comp (ref "{ref}") (value "{value}") (footprint "{fp}") '
-                      f'(fields (field (name "SKiDL Tag") "{tag}")) '
+                      f'(fields (field (name "SKiDL Tag") "{tag}"){extra}) '
                       f'(libsource (lib "{lib}") (part "{part}")))')
     net_txt = []
     for i, (name, pins) in enumerate(nets.items(), 1):
