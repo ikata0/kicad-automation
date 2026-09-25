@@ -121,6 +121,20 @@ def cmd_pcb(a):
     if a.pcb_cmd == "sync":
         return kat.pcb.sync(a.pcb, a.sch, a.dry_run, a.force, a.rip_stale,
                             () if a.no_require else (a.require_field or ["MPN"]))
+    if a.pcb_cmd == "check":
+        return kat.pcb.check(a.pcb)
+    if a.pcb_cmd == "snapshot":
+        return kat.pcb.snapshot(a.pcb, a.slug, a.note, a.out, a.tiles, a.finding_crops, not a.no_3d)
+    if a.pcb_cmd == "view":
+        region = None
+        if a.region:
+            try:
+                region = tuple(float(v) for v in a.region.split(","))
+                assert len(region) == 4
+            except (ValueError, AssertionError):
+                raise env.KatError("--region needs X,Y,W,H")
+        return kat.pcb.view(a.pcb, a.around, xy(a.at) if a.at else None, region, a.layers,
+                            a.margin, a.ppm)
     raise env.KatError(f"unknown pcb action {a.pcb_cmd!r}")
 
 
@@ -475,8 +489,9 @@ def build_parser() -> argparse.ArgumentParser:
             "The board follows the schematic: `pcb sync` puts its parts and nets on the board\n"
             "(KiCad's own netlist of the schematic, so DRC schematic parity holds). Nothing is\n"
             "connected on the board by hand; design changes go SKiDL -> kat sync -> kat pcb sync.",
-            ["kat pcb sync board/board.kicad_pcb",
-             "kat pcb sync board/board.kicad_pcb --dry-run"], sch=False)
+            ["kat pcb sync board/board.kicad_pcb", "kat pcb check board/board.kicad_pcb",
+             "kat pcb snapshot board/board.kicad_pcb --slug place1 --note 'connectors placed'",
+             "kat pcb view board/board.kicad_pcb --around U1 --layers copper"], sch=False)
     psp = q.add_subparsers(dest="pcb_cmd", required=True, metavar="ACTION")
     s1 = psp.add_parser("sync", formatter_class=_Fmt,
                         help="parts and nets from the schematic; keeps placement and copper",
@@ -493,6 +508,35 @@ def build_parser() -> argparse.ArgumentParser:
     s1.add_argument("--require-field", action="append", metavar="NAME",
                     help="field the gate requires (repeatable; default MPN)")
     s1.add_argument("--no-require", action="store_true", help="gate requires no fields")
+    s2 = psp.add_parser("check", formatter_class=_Fmt, help="DRC + parity + kat findings",
+                        description="KiCad's DRC with zones refilled (in memory) and schematic parity,\n"
+                                    "plus: outline missing, parts outside the outline.\n"
+                                    "  ok    = no DRC errors, parity 0, nothing unconnected, outline\n"
+                                    "  clean = ok, no DRC warnings, no kat findings\n"
+                                    "islands counts copper cut off from its net (starved thermals,\n"
+                                    "isolated copper): the router's own \"all routed\" does not see them.")
+    s2.add_argument("pcb", metavar="PCB")
+    s3 = psp.add_parser("snapshot", formatter_class=_Fmt, help="pictures + check into history/",
+                        description="history/<stamp>_pcb_<slug>/: top.png, bottom.png, placement.png,\n"
+                                    "In<n>.png (whole board, ~2000 px), tiles/top|bottom/ at 30 px/mm when\n"
+                                    "the overview is coarser, findings/ close-ups, 3d_top/bottom.png,\n"
+                                    "check.json, note.md and a copy of the board.")
+    s3.add_argument("pcb", metavar="PCB")
+    s3.add_argument("--slug", default=""); s3.add_argument("--note")
+    s3.add_argument("--out", help="history directory (default: history/ next to the board)")
+    s3.add_argument("--tiles", action="store_true", default=None, help="always write tiles")
+    s3.add_argument("--no-tiles", action="store_false", dest="tiles", help="never write tiles")
+    s3.add_argument("--finding-crops", type=int, default=0, metavar="N", help="close-ups of N findings")
+    s3.add_argument("--no-3d", action="store_true", help="skip the 3D renders")
+    s4 = psp.add_parser("view", formatter_class=_Fmt, help="zoomed PNG of one board region",
+                        description="Into views/ next to the board; not a history step. Layer sets:\n"
+                                    "top, bottom, placement, copper, In1, ... or KiCad layer names.\n"
+                                    "A pixel maps back to board mm as x = region[0] + px / px_per_mm.")
+    s4.add_argument("pcb", metavar="PCB")
+    s4.add_argument("--around", metavar="REF"); s4.add_argument("--at", metavar="X,Y")
+    s4.add_argument("--region", metavar="X,Y,W,H")
+    s4.add_argument("--layers", default="top", help="set name or F.Cu,B.Cu,... (default top)")
+    s4.add_argument("--margin", type=float); s4.add_argument("--ppm", type=float, help="px per mm")
     return p
 
 

@@ -202,6 +202,27 @@ Methods of `kat.pcb.Board`, used inside `with kat.pcb.edit(PCB) as b:` (saved on
 Net classes and rules are what DRC and the router use; derive them from the specification
 (current → width, voltage → clearance/creepage) before placing parts.
 
+### 4.8 Board checks and review
+
+`kat pcb check PCB` runs KiCad's DRC with zones refilled in memory and schematic parity,
+plus kat's findings (outline missing, parts outside the outline). `ok` = no DRC errors,
+parity 0, nothing unconnected, outline present; `clean` = `ok` and no DRC warnings or kat
+findings. `islands` counts copper cut off from its net (starved thermals, isolated copper).
+
+On a board, numbers come first: unconnected items, islands, clearances and parity are
+exact. Pictures are for what numbers cannot say (fan-out, detours, crowding, silkscreen):
+
+- `kat pcb snapshot PCB --slug NAME --note "..."` → `history/<stamp>_pcb_<slug>/` with
+  `top.png`, `bottom.png`, `placement.png`, `In<n>.png` (whole board, about 2000 px),
+  `tiles/top|bottom/` at 30 px/mm when the overview is coarser, `findings/` close-ups
+  (`--finding-crops N`), `3d_top.png` / `3d_bottom.png`, `check.json`, a board copy.
+- `kat pcb view PCB --around REF | --at X,Y | --region X,Y,W,H --layers SET` → `views/`.
+  Sets: `top`, `bottom`, `placement`, `copper`, `In1`…, or KiCad layer names.
+
+SVGs are exported in page coordinates (`--page-size-mode 1`), so SVG units are board mm
+and regions are cut by rewriting the viewBox, as for the schematic. Pours are filled for
+the picture (`--check-zones`) without changing the file.
+
 Board geometry (pad positions, courtyards) follows KiCad's storage convention — children
 in footprint coordinates, bottom side mirrored in y, pad and text angles absolute — and is
 tested against IPC-D-356 and DRC's library comparison.
@@ -209,7 +230,7 @@ tested against IPC-D-356 and DRC's library comparison.
 ## 5. Command reference
 
 Library: `kat.new`, `kat.load`, `kat.edit`, `kat.sync`, `kat.check`, `kat.snapshot`, `kat.view`,
-`kat.ready`, `kat.pcb.sync` / `kat.pcb.edit` / `kat.pcb.drc` (board), `kat.nets`, `kat.lib_search`, `kat.lib_show`, and the `kat.Sheet` methods; each returns what
+`kat.ready`, `kat.pcb.sync` / `edit` / `check` / `snapshot` / `view` / `drc` (board), `kat.nets`, `kat.lib_search`, `kat.lib_show`, and the `kat.Sheet` methods; each returns what
 the matching command prints.
 
 `kat --help` shows the workflow; `kat <command> --help` shows each command's arguments and
@@ -225,6 +246,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `check SCH [--expect NETLIST]` | ERC + netlist comparison + drawing findings |
 | `ready SCH [--expect NETLIST] [--require-field NAME]` | gate before the PCB layout (§6.1) |
 | `pcb sync PCB [--sch] [--dry-run] [--force] [--rip-stale]` | parts and nets onto the board (§4.6) |
+| `pcb check PCB` / `pcb snapshot PCB` / `pcb view PCB ...` | board DRC + findings, history step with pictures, zoomed view (§4.8) |
 | `snapshot SCH [--slug] [--note] [--expect] [--tiles] [--finding-crops N]` | SVG + trimmed PNG + check into `history/`; tiles and finding close-ups |
 | `view SCH --around REF / --at X,Y / --region X,Y,W,H` | zoomed PNG of one region into `views/` |
 | `add`, `wire`, `connect`, `label`, `power`, `nc` | draw |

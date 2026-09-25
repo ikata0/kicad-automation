@@ -13,10 +13,10 @@ from pathlib import Path
 from typing import Iterator
 
 from ..env import tidy
-from . import checks, syncer
+from . import checks, syncer, views
 from .board import Board, Footprint, Pad
 
-__all__ = ["Board", "Footprint", "Pad", "drc", "edit", "load", "sync"]
+__all__ = ["Board", "Footprint", "Pad", "check", "drc", "edit", "load", "snapshot", "sync", "view"]
 
 
 def load(path: Path | str) -> Board:
@@ -46,3 +46,21 @@ def sync(pcb: Path | str, sch: Path | str | None = None, dry_run: bool = False,
 def drc(pcb: Path | str, parity: bool = True, refill: bool = False) -> dict:
     """KiCad's DRC: violations, unconnected items, schematic parity problems."""
     return tidy(checks.drc(Path(pcb), parity, refill))
+
+
+def check(pcb: Path | str) -> dict:
+    """DRC (zones refilled in memory, parity) plus kat's findings; ``ok`` / ``clean``."""
+    return tidy(checks.run(Path(pcb)))
+
+
+def snapshot(pcb: Path | str, slug: str = "", note: str | None = None, out: Path | str | None = None,
+             tiles: bool | None = None, finding_crops: int = 0, three_d: bool = True) -> dict:
+    """History step with pictures per layer set, tiles, finding close-ups, 3D view, check."""
+    return views.snapshot(pcb, slug, note, out, tiles, finding_crops, three_d)
+
+
+def view(pcb: Path | str, around: str | None = None, at: tuple[float, float] | None = None,
+         region: tuple[float, float, float, float] | None = None, layers: str | list[str] = "top",
+         margin: float | None = None, ppm: float | None = None, out: Path | str | None = None) -> dict:
+    """Zoomed PNG of one board region (see ``kat.pcb.views.view``)."""
+    return views.view(pcb, around, at, region, layers, margin, ppm, out)
