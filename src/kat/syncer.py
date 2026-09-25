@@ -27,6 +27,11 @@ PAPER = {"A5": (210, 148), "A4": (297, 210), "A3": (420, 297), "A2": (594, 420),
 Pin = tuple[str, str]  # (ref, pin number)
 
 
+def natural_key(ref: str) -> list:
+    """R2 < R10: digits compare as numbers."""
+    return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", ref)]
+
+
 def paper_size(s: Schematic) -> tuple[float, float]:
     p = find(s.tree, "paper")
     if p is None:
@@ -75,7 +80,8 @@ class Syncer:
         self.power = power_names()
         self.report: dict[str, list] = {k: [] for k in (
             "added", "removed", "renamed", "updated", "replaced", "detached", "attached",
-            "named", "flags", "unresolved")}
+            "named", "wired", "flags", "paper", "unresolved")}
+        self.new_refs: set[str] = set()
 
     # --- parts ----------------------------------------------------------------------
 
@@ -136,6 +142,7 @@ class Syncer:
             if c.tag and (syms[0].field(TAG) or "") != c.tag:
                 s.set_field(ref, TAG, c.tag, hide=True)
         new = [c for ref, c in self.comps.items() if ref not in matched]
+        self.new_refs = {c.ref for c in new}
         if new:
             self._place_new(new)
         if self.report["removed"] or self.report["replaced"]:
@@ -166,33 +173,136 @@ class Syncer:
     def _net_of(self) -> dict[Pin, str]:
         return {pin: name for name, pins in self.nets.items() for pin in pins}
 
+    def _order(self, comps: list[Component]) -> list[list[Component]]:
+        """Natural reference order (R2 before R10), with parts that share an unnamed two-pin
+        net placed next to each other (D1 then R1), so that net can be a short wire."""
+        by_ref = {c.ref: c for c in comps}
+        partners: dict[str, list[str]] = {r: [] for r in by_ref}
+        for name, pins in self.nets.items():
+            refs = sorted({r for r, _ in pins})
+            if len(refs) == 2 and all(r in by_ref for r in refs) and self._pair_net(name):
+                partners[refs[0]].append(refs[1])
+                partners[refs[1]].append(refs[0])
+        groups, seen = [], set()
+        for ref in sorted(by_ref, key=natural_key):
+            stack, group = [ref], []
+            while stack:
+                r = stack.pop()
+                if r in seen:
+                    continue
+                seen.add(r)
+                group.append(by_ref[r])
+                stack += sorted(partners[r], key=natural_key, reverse=True)
+            if group:
+                groups.append(group)
+        return groups
+
     def _place_new(self, comps: list[Component], units: list[int] | None = None) -> None:
-        """Put new parts in a free strip below everything already drawn."""
+        """Put new parts in uniform rows in a free area below everything already drawn. If
+        they do not fit on the page, the paper grows to the next ISO size (reported)."""
         s = self.s
         boxes = [b for sym in s.symbols() if (b := s.body_box(sym))]
         boxes += [(l["x"], l["y"] - 1.3, l["x"] + text_width(l["text"]), l["y"]) for l in s.labels()]
-        page_w, _ = paper_size(s)
         x0 = 50.8 if not boxes else max(25.4, snap(min(b[0] for b in boxes)))
-        y = 50.8 if not boxes else max(b[3] for b in boxes) + 20.32
-        x, row_h = x0, 0.0
+        y0 = 50.8 if not boxes else max(b[3] for b in boxes) + 20.32
         net_of = self._net_of()
-        for c in comps:
-            sdef = s.ensure_lib_symbol(c.lib_id)
-            for unit in units or range(1, library.unit_count(sdef) + 1):
-                box = library.outline(sdef, unit) or (0, 0, 0, 0)
-                w, h = box[2] - box[0], box[3] - box[1]
-                names = [net_of.get((c.ref, p.number), "") for p in library.pins(sdef)
-                         if p.unit in (0, unit)]
-                room = max([text_width(n) for n in names] + [0]) + STUB + 3
-                if x + w + 2 * room > page_w - 20 and x > x0:
-                    x, y, row_h = x0, y + row_h, 0.0
-                cx = math.ceil((x + room - box[0]) / 2.54) * 2.54
-                cy = math.ceil((y + room + box[3]) / 2.54) * 2.54  # library y is up
+        groups = []  # parts joined by pair nets stay together in one row
+        for group in self._order(comps):
+            items = []
+            for c in group:
+                sdef = s.ensure_lib_symbol(c.lib_id)
+                for unit in units or range(1, library.unit_count(sdef) + 1):
+                    items.append((c, unit, *self._footprint_box(c, sdef, unit, net_of)))
+            groups.append(items)
+        while True:
+            page_w, page_h = paper_size(s)
+            rows, row, x = [], [], x0
+            for items in groups:
+                for attempt in (0, 1):
+                    placed, gx = [], x
+                    for it in items:
+                        box = it[2]  # library coordinates, including room for labels and fields
+                        cx = math.ceil((gx - box[0]) / 2.54) * 2.54
+                        if (placed or row) and cx + box[2] > page_w - 20:
+                            if attempt == 0 and row:
+                                break  # the group does not fit: start it on a new row
+                            rows.append(row + placed)
+                            row, placed, gx = [], [], x0
+                            cx = math.ceil((gx - box[0]) / 2.54) * 2.54
+                        placed.append((it, cx))
+                        gx = cx + box[2] + 2.54
+                    else:
+                        row += placed
+                        x = gx
+                        break
+                    rows.append(row)
+                    row, x = [], x0
+            rows.append(row)
+            heights = [max(it[2][3] - it[2][1] for it, _ in r) + 2.54 for r in rows]
+            # keep clear of the title block in the bottom right corner
+            if y0 + sum(heights) <= page_h - 45 or not self._grow_paper():
+                break
+        y = y0
+        for r, h in zip(rows, heights):
+            mid = y + h / 2
+            for (c, unit, box), cx in r:
+                cy = round((mid + (box[1] + box[3]) / 2) / 2.54) * 2.54  # body centred in the row
                 self._add(c, unit, cx, cy)
                 self.report["added"].append({"ref": c.ref, "unit": unit, "x": round(cx, 2),
                                              "y": round(cy, 2)})
-                x = cx + box[2] + room + 5.08
-                row_h = max(row_h, h + 2 * room)
+            y += h
+
+    def _footprint_box(self, c: Component, sdef: list, unit: int, net_of: dict) -> tuple:
+        """Library-coordinate box of a new part plus the room its stubs + labels (in each
+        pin's direction) and its visible fields will take."""
+        box = library.outline(sdef, unit) or (0, 0, 0, 0)
+        room = {"l": 2.54, "r": 2.54, "t": 2.54, "b": 2.54}
+        for p in library.pins(sdef):
+            if p.unit not in (0, unit) or p.hidden:
+                continue
+            name = net_of.get((c.ref, p.number), "")
+            label = 0.0 if self._pair_net(name) else 5.08 if name in self.power else text_width(name)
+            need = STUB + label + 1.27
+            side = {0: "l", 180: "r", 90: "b", 270: "t"}.get(int(p.angle) % 360, "l")
+            room[side] = max(room[side], need)
+        fields = max(text_width(c.ref), text_width(c.value or ""))
+        half = max(0.0, fields / 2 + 1.27 - (box[2] - box[0]) / 2)
+        room["l"], room["r"] = max(room["l"], half), max(room["r"], half)
+        room["t"] += 2.54
+        room["b"] += 2.54
+        return (box[0] - room["l"], box[1] - room["b"], box[2] + room["r"], box[3] + room["t"]),
+
+    def _pair_net(self, name: str) -> bool:
+        """An unnamed net joining exactly two pins: drawn as a wire, no label needed."""
+        return (bool(name) and netlist._auto(name) and name not in self.power
+                and len(self.nets.get(name, ())) == 2)
+
+    def _wire_pair(self, a: Pin, b: Pin) -> bool:
+        """Join two pins of freshly placed parts with a short L-shaped wire, if one of the
+        two L shapes touches nothing else and crosses no part body."""
+        s = self.s
+        if a[0] not in self.new_refs or b[0] not in self.new_refs:
+            return False
+        pa, pb = s.pin(*a), s.pin(*b)
+        if abs(pa[0] - pb[0]) + abs(pa[1] - pb[1]) > 30:
+            return False
+        for corner in ((pb[0], pa[1]), (pa[0], pb[1])):
+            path = [p for i, p in enumerate([pa, corner, pb]) if i != 1 or not (same(p, pa) or same(p, pb))]
+            if all(_segment_clear(s, p, q, (pa, pb)) for p, q in zip(path, path[1:])):
+                s.add_wire(path, junctions=False)
+                return True
+        return False
+
+    def _grow_paper(self) -> bool:
+        p = find(self.s.tree, "paper")
+        sizes = ["A4", "A3", "A2", "A1", "A0"]
+        if p is None or str(p[1]) not in sizes[:-1]:
+            return False
+        old = str(p[1])
+        p[1] = sizes[sizes.index(old) + 1]
+        grown = [g for g in self.report["paper"]]
+        self.report["paper"] = [{"from": grown[0]["from"] if grown else old, "to": str(p[1])}]
+        return True
 
     # --- connectivity -----------------------------------------------------------------
 
@@ -219,14 +329,21 @@ class Syncer:
             epins = {p for p in epins if p[0] in existing}
             if not epins or (len(epins) < 2 and ename not in self.power):
                 continue  # a lone pin on a signal net needs no drawing; on a power net it does
-            # the main group is an existing wired/labelled group (2+ pins), never a lone pin
-            groups = Counter(g for p in epins if (g := group_of.get(p)) and len(drawn[g]) > 1)
+            # the main group is an existing wired/labelled group (2+ pins), or a lone pin that
+            # already carries the net's name (its partner was just detached): re-labelling
+            # that pin would stack a second stub + label on it
+            groups = Counter(g for p in epins
+                             if (g := group_of.get(p)) and (len(drawn[g]) > 1 or g == ename))
             main = max(groups, key=lambda g: (groups[g], g == ename, g)) if groups else None
             main_pins = drawn[main] if main else frozenset()
             missing = sorted(p for p in epins if p not in main_pins)
             # generated names (N$1 ...) only need a label when pins are joined by label
             if main != ename and len(main_pins) > 1 and (missing or not netlist._auto(ename)):
                 self._name_group(main, ename, sorted(epins & main_pins)[0])
+            if len(missing) == 2 and missing == sorted(epins) and self._pair_net(ename) \
+                    and self._wire_pair(*missing):
+                self.report["wired"].append(ename)
+                continue
             for ref, pin in missing:
                 self._attach(ref, pin, ename)
         s.fix_junctions()
@@ -393,6 +510,29 @@ def _path_free(s: Schematic, a, b, clearance: float = 2.0) -> bool:
         box = s.body_box(sym)
         if box and box[0] - clearance < b[0] < box[2] + clearance and \
                 box[1] - clearance < b[1] < box[3] + clearance:
+            return False
+    return True
+
+
+def _segment_clear(s: Schematic, p, q, ends) -> bool:
+    """A new wire p-q would touch no pin, wire or label except at ``ends``, end on no
+    wire's interior, and run through no part body."""
+    from .schematic import _on_interior
+    seg = (p, q)
+    pts = [(x["x"], x["y"]) for sym in s.symbols() for x in s.pins(sym)]
+    pts += [e for w in s.segments() for e in w] + [(l["x"], l["y"]) for l in s.labels()]
+    for pt in pts:
+        if any(same(pt, e) for e in ends):
+            continue
+        if same(pt, p) or same(pt, q) or _on_interior(pt, seg):
+            return False
+    if any(_on_interior(e, w) for w in s.segments() for e in (p, q)):
+        return False
+    lo_x, hi_x = sorted((p[0], q[0]))
+    lo_y, hi_y = sorted((p[1], q[1]))
+    for sym in s.symbols():
+        box = s.body_box(sym)
+        if box and lo_x < box[2] - 0.1 and hi_x > box[0] + 0.1 and lo_y < box[3] - 0.1 and hi_y > box[1] + 0.1:
             return False
     return True
 

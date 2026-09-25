@@ -166,3 +166,34 @@ def test_compare_ignores_generated_names():
     r = netlist.compare(a, e)
     assert r["match"]
     assert r["name_differences"] == [{"pins": [("C1", "2"), ("D1", "1")], "expected": "0V", "actual": "GND"}]
+
+
+@needs_kicad
+def test_detach_removes_stacked_duplicates(tmp_path):
+    """B3: a pin with the same stub + label drawn three times is detached completely."""
+    sch = tmp_path / "d" / "d.kicad_sch"
+    kat.new(sch)
+    with kat.edit(sch) as s:
+        s.add("Device:R", 100, 80, ref="R1")
+        for _ in range(3):
+            s.label("SIG", "R1.1", stub=(0, -2.54))
+    assert kat.check(sch)["duplicates"] == ["3x label SIG 100.33,73.66", "3x wire 100.33,73.66 100.33,76.2"]
+    with kat.edit(sch) as s:
+        out = s.detach("R1.1")
+        assert out["wires"] == 3 and out["labels"] == 3, out
+        assert not s.list()["labels"] and not s.list()["wires"]
+
+
+@needs_kicad
+def test_results_are_rounded_and_flag_removal_warns(tmp_path):
+    """B7: no float noise such as 506.72999999999996 in results. B6: detaching a pin that
+    carries a PWR_FLAG says so."""
+    sch = tmp_path / "f" / "f.kicad_sch"
+    kat.new(sch)
+    with kat.edit(sch) as s:
+        s.add("Device:R", 501.65, 80, ref="R1")
+        out = s.power("GND", "R1.1", stub=(5.08, 0))
+        assert out["x"] == round(out["x"], 4) and len(repr(out["x"])) < 10, out
+        s.power("PWR_FLAG", "R1.2", stub=(0, 2.54))
+        res = s.detach("R1.2")
+    assert res["power_symbols"] == ["#FLG1"] and "PWR_FLAG" in res["warning"]

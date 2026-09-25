@@ -381,80 +381,179 @@ class Schematic:
     def move_symbol(self, ref: str, x: float | None = None, y: float | None = None,
                     dx: float = 0, dy: float = 0, rot: float | None = None,
                     mirror: str | None = None, unit: int | None = None,
-                    drag: bool = True) -> None:
-        syms = self.find_symbols(ref, unit)
-        if len(syms) > 1:
-            raise env.KatError(f"{ref} has several units placed; pass --unit")
-        s = syms[0]
-        old_pins = {p["number"]: (p["x"], p["y"]) for p in self.pins(s)}
-        old_fields = {id(p): (float(find(p, "at")[1]) - s.place.x, float(find(p, "at")[2]) - s.place.y)
-                      for p in find_all(s.node, "property")}
-        nx = snap(x if x is not None else s.place.x + dx)
-        ny = snap(y if y is not None else s.place.y + dy)
-        at = find(s.node, "at")
-        at[1:] = [num(nx), num(ny), num(rot if rot is not None else s.place.rot)]
-        s.node[:] = [c for c in s.node if head(c) != "mirror"]
-        new_mirror = s.place.mirror if mirror is None else mirror
-        if new_mirror:
-            s.node.insert(3, [Sym("mirror"), Sym(new_mirror)])
-        s.place = Placement(nx, ny, float(at[3]), new_mirror)
-        if rot is not None or mirror is not None:
-            self.autoplace_fields(s)
-        else:
-            for p in find_all(s.node, "property"):
-                ox, oy = old_fields[id(p)]
-                fa = find(p, "at")
-                fa[1], fa[2] = num(nx + ox), num(ny + oy)
+                    drag: bool = True, allow_contact: bool = False) -> None:
+        self.move_symbols([dict(ref=ref, x=x, y=y, dx=dx, dy=dy, rot=rot, mirror=mirror, unit=unit)],
+                          drag, allow_contact)
+
+    def move_symbols(self, moves: list[dict], drag: bool = True, allow_contact: bool = False) -> None:
+        """Move several parts *simultaneously*: every decision (what is carried, what is
+        dragged, what would touch) is made on the drawing before any part moves. Each move
+        is a dict with ref and optionally x, y (absolute), dx, dy, rot, mirror, unit.
+
+        Unless ``allow_contact``, refuses when a pin would land on another part's pin, a
+        wire, a label or a power symbol it does not carry: that contact would join nets
+        silently (and a later move would drag wires between them)."""
+        todo = []
+        for m in moves:
+            syms = self.find_symbols(m["ref"], m.get("unit"))
+            if len(syms) > 1:
+                raise env.KatError(f"{m['ref']} has several units placed; pass unit")
+            s = syms[0]
+            x, y = m.get("x"), m.get("y")
+            nx = snap(x if x is not None else s.place.x + (m.get("dx") or 0))
+            ny = snap(y if y is not None else s.place.y + (m.get("dy") or 0))
+            rot = s.place.rot if m.get("rot") is None else float(m["rot"])
+            mir = s.place.mirror if m.get("mirror") is None else m["mirror"]
+            new = PlacedSymbol(s.node, s.ref, s.lib_id, s.unit, Placement(nx, ny, rot, mir))
+            old_pins = {p["number"]: (p["x"], p["y"]) for p in self.pins(s)}
+            new_pins = {p["number"]: (p["x"], p["y"]) for p in self._pins(new, self.lib_symbol(s.lib_id))}
+            todo.append((s, new, old_pins, new_pins,
+                         m.get("rot") is not None or m.get("mirror") is not None))
+        if len({id(s.node) for s, *_ in todo}) < len(todo):
+            raise env.KatError("a part is listed twice")
+        moving = {id(s.node) for s, *_ in todo}
+
+        # --- plan on the unchanged drawing ---
+        carried: set[int] = set()
+        boundary_ids: set[int] = set()
+        translate, drags, contacts = [], [], []
+        carried_items: set[int] = set()
         if drag:
-            new_pins = {p["number"]: (p["x"], p["y"]) for p in self.pins(s)}
-            # real parts only: power symbols / flags on a pin are carried along instead
-            others = [(p["x"], p["y"]) for o in self.symbols()
-                      if o.node is not s.node and not o.ref.startswith("#") for p in self.pins(o)]
-            carried: set[int] = set()
-            drags: list[tuple[tuple[float, float], tuple[float, float]]] = []
-            for num_, old in old_pins.items():
-                new = new_pins[num_]
-                if any(same(old, o) for o in others):
-                    # pin sat directly on another pin: keep that contact with a new wire
-                    self.route(old, new, first="v")
-                    continue
-                ids, d = self._carry(s, old, (new[0] - old[0], new[1] - old[1]), carried)
-                carried |= ids
-                drags += d
-            for old, new in drags:
-                self._drag_wire_ends(old, new, skip=carried)
+            others = {key((p["x"], p["y"])) for o in self.symbols()
+                      if id(o.node) not in moving and not o.ref.startswith("#") for p in self.pins(o)}
+            moving_old = defaultdict(list)
+            for s, _, old_pins, new_pins, _ in todo:
+                for n, old in old_pins.items():
+                    moving_old[key(old)].append((s.ref, (new_pins[n][0] - old[0], new_pins[n][1] - old[1])))
+            for s, _, old_pins, new_pins, _ in todo:
+                for n, old in old_pins.items():
+                    new_p = new_pins[n]
+                    delta = (new_p[0] - old[0], new_p[1] - old[1])
+                    if key(old) in others:
+                        contacts.append((old, new_p))  # pin on a staying part's pin: keep it
+                        continue
+                    if len({(round(d[0], 3), round(d[1], 3)) for _, d in moving_old[key(old)]}) > 1:
+                        refs = sorted({r for r, _ in moving_old[key(old)]})
+                        raise env.KatError(f"{' and '.join(refs)} touch pin on pin at {old[0]:g},{old[1]:g} "
+                                           "and move apart; detach them first")
+                    if abs(delta[0]) < EPS and abs(delta[1]) < EPS:
+                        continue
+                    taken, points, boundary = self.private_run(old, s.node, carried)
+                    marks, powers = self._items_at(points, exclude=s.node)
+                    # each item moves once, even when stacked pins (e.g. an exposed pad) reach it
+                    items = [n for n in marks + [o.node for o in powers] if id(n) not in carried_items]
+                    carried |= {id(w) for w in taken}
+                    boundary_ids |= {id(w) for _, w in boundary}
+                    carried_items |= {id(n) for n in items}
+                    translate.append((taken, items, delta))
+                    for bp, _ in boundary:
+                        if not any(same(d[0], bp) for d in drags):
+                            drags.append((bp, (bp[0] + delta[0], bp[1] + delta[1])))
+
+        if not allow_contact:
+            self._check_contacts(todo, moving, carried | boundary_ids, carried_items)
+
+        # --- apply ---
+        for s, new, _, _, reorient in todo:
+            old_fields = {id(p): (float(find(p, "at")[1]) - s.place.x, float(find(p, "at")[2]) - s.place.y)
+                          for p in find_all(s.node, "property")}
+            pl = new.place
+            at = find(s.node, "at")
+            at[1:] = [num(pl.x), num(pl.y), num(pl.rot)]
+            s.node[:] = [c for c in s.node if head(c) != "mirror"]
+            if pl.mirror:
+                s.node.insert(3, [Sym("mirror"), Sym(pl.mirror)])
+            s.place = pl
+            if reorient:
+                self.autoplace_fields(s)
+            else:
+                for p in find_all(s.node, "property"):
+                    ox, oy = old_fields[id(p)]
+                    fa = find(p, "at")
+                    fa[1], fa[2] = num(pl.x + ox), num(pl.y + oy)
+        for wires, nodes, (dx, dy) in translate:
+            for w in wires:
+                for xy in find_all(find(w, "pts"), "xy"):
+                    xy[1], xy[2] = num(float(xy[1]) + dx), num(float(xy[2]) + dy)
+            for n in nodes:
+                for m in [n] + (find_all(n, "property") if head(n) == "symbol" else []):
+                    a = find(m, "at")
+                    a[1], a[2] = num(float(a[1]) + dx), num(float(a[2]) + dy)
+        for old, new_p in drags:
+            self._drag_wire_ends(old, new_p, skip=carried)
+        for old, new_p in contacts:
+            self.route(old, new_p, first="v")
+
+    def _check_contacts(self, todo, moving: set[int], own_wires: set[int], own_items: set[int]) -> None:
+        """Raise if a moved pin would touch something it does not bring along."""
+        taken: dict[tuple[int, int], tuple[int, str]] = {}  # point -> (owner node id, what)
+        for o in self.symbols():
+            if id(o.node) in moving or id(o.node) in own_items:
+                continue
+            for p in self.pins(o):
+                taken.setdefault(key((p["x"], p["y"])), (id(o.node), f"pin {o.ref}.{p['number']}"))
+        for s, _, _, new_pins, _ in todo:
+            for n, q in new_pins.items():
+                taken.setdefault(key(q), (id(s.node), f"pin {s.ref}.{n}"))
+        foreign = [(w, seg) for w, seg in zip(self.wires(), self.segments()) if id(w) not in own_wires]
+        for _, (a, b) in foreign:
+            taken.setdefault(key(a), (0, "a wire end"))
+            taken.setdefault(key(b), (0, "a wire end"))
+        for kind in ("label", "global_label", "hierarchical_label"):
+            for n in find_all(self.tree, kind):
+                if id(n) not in own_items:
+                    at = find(n, "at")
+                    taken.setdefault(key((float(at[1]), float(at[2]))), (0, f"label {n[1]}"))
+        index = SegIndex([seg for _, seg in foreign])
+        for s, _, old_pins, new_pins, _ in todo:
+            for n, q in new_pins.items():
+                if same(q, old_pins[n]):
+                    continue  # this pin stays where it is
+                owner, hit = taken.get(key(q), (0, None))
+                if owner == id(s.node):
+                    hit = None  # own pin (stacked pins of one unit, e.g. an exposed pad)
+                if hit is None and index.interior(q):
+                    hit = "a wire"
+                if hit:
+                    raise env.KatError(
+                        f"{s.ref}.{n} would land on {hit} at {q[0]:g},{q[1]:g} and join nets; "
+                        "move that first, move both at once (move_many), or allow_contact=True")
 
     def private_run(self, start: tuple[float, float], owner: list | None = None,
                     skip: set[int] = frozenset()):
         """Walk the wires hanging *only* off ``start`` (a pin of symbol node ``owner``): up to
         the first point that is another part's pin, a branch (3+ wire ends) or a T-join.
-        Returns (private wires, points reached, boundary wires as (near point, wire))."""
-        wires = [(w, seg) for w, seg in zip(self.wires(), self.segments()) if id(w) not in skip]
+        Returns (private wires, points reached, boundary wires as (near point, wire)).
+        Stacked identical wires count as one wire (and are all taken or all boundary)."""
+        groups: dict[tuple, list] = {}
+        for w, seg in zip(self.wires(), self.segments()):
+            if id(w) not in skip:
+                groups.setdefault(tuple(sorted((key(seg[0]), key(seg[1])))), [seg, []])[1].append(w)
         anchors = {key((p["x"], p["y"])) for o in self.symbols()
                    if o.node is not owner and not o.ref.startswith("#") for p in self.pins(o)}
-        ends = Counter(key(e) for _, seg in wires for e in seg)
+        ends = Counter(pk for gk in groups for pk in gk)
         at_end = defaultdict(list)
-        for w, seg in wires:
-            at_end[key(seg[0])].append((w, seg))
-            if key(seg[1]) != key(seg[0]):
-                at_end[key(seg[1])].append((w, seg))
-        index = SegIndex([seg for _, seg in wires])
-        points, taken, frontier, boundary = [start], [], [start], []
+        for g in groups.values():
+            for k in {key(g[0][0]), key(g[0][1])}:
+                at_end[k].append(g)
+        index = SegIndex([g[0] for g in groups.values()])
+        points, taken, frontier, boundary, seen = [start], [], [start], [], set()
         while frontier:
             p = frontier.pop()
-            for w, seg in at_end.get(key(p), ()):
-                if any(w is t for t in taken):
+            for g in at_end.get(key(p), ()):
+                if id(g) in seen:
                     continue
+                seg, ws = g
                 q = seg[1] if same(seg[0], p) else seg[0]
                 private = (key(q) not in anchors
                            and ends[key(q)] <= 2
                            and not index.interior(q)
                            and len(taken) < 20)
+                seen.add(id(g))
                 if not private:
-                    if not any(b[1] is w for b in boundary):
-                        boundary.append((p, w))
+                    boundary += [(p, w) for w in ws]
                     continue
-                taken.append(w)
+                taken += ws
                 points.append(q)
                 frontier.append(q)
         return taken, points, boundary
@@ -467,29 +566,6 @@ class Schematic:
         powers = [o for o in self.symbols() if o.ref.startswith("#") and o.node is not exclude
                   and any(same((pp["x"], pp["y"]), p) for pp in self.pins(o) for p in points)]
         return marks, powers
-
-    def _carry(self, moving: PlacedSymbol, start: tuple[float, float],
-               delta: tuple[float, float], already: set[int]
-               ) -> tuple[set[int], list[tuple[tuple[float, float], tuple[float, float]]]]:
-        """Translate what hangs *only* off this pin: wires up to the first point shared with
-        other circuitry, plus labels, power symbols and no-connect flags on them. Wires that
-        continue into shared circuitry are returned as drags (their near end follows)."""
-        if abs(delta[0]) < EPS and abs(delta[1]) < EPS:
-            return set(), []
-        shift = lambda p: (round(p[0] + delta[0], 4), round(p[1] + delta[1], 4))
-        taken, points, boundary = self.private_run(start, moving.node, already)
-        drags = []
-        for p, _ in boundary:
-            if not any(same(d[0], p) for d in drags):
-                drags.append((p, shift(p)))
-        for w in taken:
-            for xy in find_all(find(w, "pts"), "xy"):
-                xy[1], xy[2] = num(float(xy[1]) + delta[0]), num(float(xy[2]) + delta[1])
-        marks, powers = self._items_at(points, exclude=moving.node)
-        for n in marks + [n for o in powers for n in [o.node] + find_all(o.node, "property")]:
-            at = find(n, "at")
-            at[1], at[2] = num(float(at[1]) + delta[0]), num(float(at[2]) + delta[1])
-        return {id(w) for w in taken}, drags
 
     def pin_owner(self, ref: str, pin: str) -> tuple[PlacedSymbol, dict]:
         for s in self.find_symbols(ref):
@@ -518,8 +594,14 @@ class Schematic:
         self.tree[:] = [c for c in self.tree if id(c) not in doomed]
         self._prune_lib_symbols()
         self.fix_junctions()
-        return {"pin": f"{ref}.{pin}", "wires": len(taken) + len(boundary), "labels": len(marks),
-                "power_symbols": [o.ref for o in powers]}
+        out = {"pin": f"{ref}.{pin}", "wires": len(taken) + len(boundary), "labels": len(marks),
+               "power_symbols": [o.ref for o in powers]}
+        flags = [o.ref for o in powers if o.lib_id == "power:PWR_FLAG"]
+        if flags:
+            out["warning"] = (f"removed {', '.join(flags)} (PWR_FLAG): if it was the net's only flag, "
+                              "ERC reports power_pin_not_driven; add one with power('PWR_FLAG', ...) "
+                              "or run sync, which re-adds it")
+        return out
 
     def prune_dangling(self) -> int:
         """Repeatedly remove wires with a free end and labels / flags / power symbols that

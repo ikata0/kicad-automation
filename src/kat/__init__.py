@@ -22,8 +22,8 @@ from pathlib import Path
 from typing import Iterator
 
 from . import checks, library, netlist, syncer
-from .env import KatError
-from .history import snapshot
+from .env import KatError, tidy
+from .history import snapshot as _snapshot
 from .project import new
 from .sheet import Sheet
 
@@ -48,12 +48,20 @@ def edit(path: Path | str, dry_run: bool = False) -> Iterator[Sheet]:
 
 def sync(sch: Path | str, design: Path | str, dry_run: bool = False) -> dict:
     """Bring a design netlist (e.g. from SKiDL) into the schematic, keeping the arrangement."""
-    return syncer.run(Path(sch), Path(design), dry_run)
+    return tidy(syncer.run(Path(sch), Path(design), dry_run))
 
 
 def check(sch: Path | str, expect: Path | str | None = None) -> dict:
     """ERC, netlist comparison with ``expect`` and drawing findings (``ok`` / ``clean``)."""
-    return checks.run(Path(sch), Path(expect) if expect else None)
+    return tidy(checks.run(Path(sch), Path(expect) if expect else None))
+
+
+def snapshot(sch: Path | str, slug: str = "", note: str | None = None,
+             expect: Path | str | None = None, out: Path | str | None = None,
+             zoom: float = 3.0) -> dict:
+    """Render and check the sheet into ``history/<timestamp>[_slug]/`` (SVG, trimmed PNG,
+    schematic copy, check.json, note.md). Returns the paths and the check summary."""
+    return tidy(_snapshot(sch, slug, note, expect, out, zoom))
 
 
 def nets(sch: Path | str) -> dict[str, list]:

@@ -26,9 +26,10 @@ layout.
    `added`, `renamed`, `detached`/`attached`, `removed`, `unresolved` tell you where to look.
 3. **Snapshot**: `kat snapshot SCH --slug NAME --expect design.net --note "what changed"`.
 4. **Review** the PNG it wrote (Read it). Look for: text touching text, symbols or wires;
-   parts parked in the strip below the drawing; signal flow (inputs left, outputs right,
+   parts parked in the import rows below the drawing; signal flow (inputs left, outputs right,
    supplies up, ground down); labels that would read better as wires.
-   `check.json` lists `overlaps`, `body_overlaps`, `off_page`, `unnamed` — hints, not a verdict.
+   `check.json` lists `overlaps`, `body_overlaps`, `off_page`, `duplicates`, `unnamed` —
+   hints, not a verdict.
 5. **Arrange** the drawing with a Python pass, `python passN.py`. It starts with a docstring
    that states what the review found and edits inside `with kat.edit(SCH) as s:`, which
    saves once, or not at all if anything raises. Then back to 3.
@@ -70,10 +71,15 @@ and outward directions while computing coordinates. Try a large pass with
 ## Behaviour worth knowing
 
 - `sync` is idempotent and matches parts by SKiDL tag, then reference. New parts appear in
-  a strip below the drawing with stub + label wiring; power nets get power symbols;
+  rows below the drawing (partners on unnamed two-pin nets side by side, joined by a wire)
+  with stub + label wiring elsewhere; the paper grows if they do not fit; power nets get power symbols;
   PWR_FLAGs are added for undriven supplies.
 - `move` carries what hangs only off the part (stubs, labels, power symbols, flags) and
   drags wires into shared nets. Steps left by dragging: `detach` + `connect`.
+- `move` refuses to put a pin on another pin, a wire or a label (it would join nets). To
+  rearrange many parts, or let parts take each other's places, use one
+  `s.move_many({"R1": {"to": (x, y), "rot": 90}, ...})` — no parking needed.
+- `detach` warns when it removed a PWR_FLAG; `sync` re-adds a missing one.
 - `detach REF.PIN` removes the pin's own wiring up to the next branch point, including labels
   and power symbols on it. Follow it with `connect`/`label`/`power` in the same pass.
 - Coordinates: mm, y down, 1.27 mm grid; parts on multiples of 2.54 mm.

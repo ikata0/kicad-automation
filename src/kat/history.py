@@ -8,6 +8,7 @@ import shutil
 from pathlib import Path
 
 from . import checks, render
+from .env import tidy
 
 
 def snapshot(sch: Path | str, slug: str = "", note: str | None = None,
@@ -21,10 +22,14 @@ def snapshot(sch: Path | str, slug: str = "", note: str | None = None,
     target = Path(out or sch.parent / "history") / f"{stamp}{slug}"
     result = render.snapshot(sch, target, zoom)
     shutil.copy(sch, target / sch.name)
-    res = checks.run(sch, Path(expect) if expect else None)
+    res = tidy(checks.run(sch, Path(expect) if expect else None))
     (target / "check.json").write_text(json.dumps(res, indent=1))
     if note:
         (target / "note.md").write_text(note + "\n")
-    result.update({"dir": str(target), "ok": res["ok"], "erc_errors": res["erc"]["errors"],
-                   "erc_warnings": res["erc"]["warnings"], "overlaps": len(res["overlaps"])})
+    nl = res.get("netlist_vs_expected")
+    result.update({"dir": str(target), "ok": res["ok"], "clean": res["clean"],
+                   "netlist_match": nl["match"] if nl else None,
+                   "erc_errors": res["erc"]["errors"], "erc_warnings": res["erc"]["warnings"],
+                   "findings": {k: len(res[k]) for k in ("overlaps", "body_overlaps", "off_page",
+                                                          "duplicates")}})
     return result

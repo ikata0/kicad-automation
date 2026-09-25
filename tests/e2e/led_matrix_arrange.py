@@ -21,7 +21,6 @@ M_X0 = 48 * G                 # centre of R in column 1
 M_Y0 = 18 * G                 # row 1
 DX = 16 * G                   # column pitch (40.64 mm)
 DY = 8 * G                    # row pitch (20.32 mm)
-PARK = 400 * G                # parking offset, below everything
 CELLS = [(r, c) for r in range(1, 11) for c in range(1, 11)]
 
 
@@ -43,21 +42,18 @@ def pin_y(j: int, k: int) -> float:
 
 def pass1(s: kat.Sheet) -> None:
     """Import -> grid. The import joined each R and LED by a label pair; that becomes a
-    plain wire. Parts are parked first so that no part lands on another part's import
-    position (pin on pin would later drag wires between unrelated nets)."""
+    plain wire. All parts move in one block move, so a part may land on the import position
+    of another part that is itself moving away."""
     for r, c in CELLS:
         n = n_of(r, c)
         for p in (f"R{n}.1", f"R{n}.2", f"D{n}.1", f"D{n}.2"):
             s.detach(p)
-    for r, c in CELLS:
-        for p in "RD":
-            s.move(f"{p}{n_of(r, c)}", by=(0, PARK))
-    for j, y in J_Y.items():
-        s.move(f"J{j}", to=(J_X, y))
+    moves = {f"J{j}": {"to": (J_X, y)} for j, y in J_Y.items()}
     for r, c in CELLS:
         n, (x, y) = n_of(r, c), origin(r, c)
-        s.move(f"R{n}", to=(x, y), rot=90)             # pin 1 left, pin 2 right
-        s.move(f"D{n}", to=(x + 4 * G, y), rot=180)    # anode left, cathode right
+        moves[f"R{n}"] = {"to": (x, y), "rot": 90}             # pin 1 left, pin 2 right
+        moves[f"D{n}"] = {"to": (x + 4 * G, y), "rot": 180}    # anode left, cathode right
+    s.move_many(moves)
     for r, c in CELLS:
         n = n_of(r, c)
         s.label(f"LED_{r}_{c}", f"R{n}.1", stub=(-G, 0), angle=180)

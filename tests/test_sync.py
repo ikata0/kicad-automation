@@ -196,3 +196,77 @@ def test_detach_then_connect_replaces_labels_by_wire(project, tmp_path, capsys):
     assert cli.main(["label", str(project), "LED_A", "R1.2", "--stub", "0,0"]) == 0
     capsys.readouterr()
     assert not kat.sync(project, net)["changed"]
+
+
+SWAP_PARTS = {
+    "J1": ("Connector_Generic", "Conn_01x03", "IN", "tag-j1"),
+    "R1": ("Device", "R", "1k", "tag-r1"),
+    "R2": ("Device", "R", "1k", "tag-r2"),
+}
+
+
+def swap_nets(swapped: bool) -> dict:
+    a, b = (("J1", "2"), ("J1", "1")) if swapped else (("J1", "1"), ("J1", "2"))
+    return {"SIG_A": [a, ("R1", "1")], "SIG_B": [b, ("R2", "1")],
+            "GND": [("J1", "3"), ("R1", "2"), ("R2", "2")]}
+
+
+def drawn_items(sch: Path) -> list:
+    s = Schematic(sch)
+    return sorted([l["text"] for l in s.labels()]) + [len(s.segments())]
+
+
+def test_swap_round_trip_adds_no_duplicates(project, tmp_path):
+    """B2: pins whose net did not change (R1.1, R2.1) must not get another stub + label when
+    their partner pin (J1.1 / J1.2) moves to another net."""
+    base = write_netlist(tmp_path / "a.net", SWAP_PARTS, swap_nets(False))
+    swapped = write_netlist(tmp_path / "b.net", SWAP_PARTS, swap_nets(True))
+    sync_ok(project, base)
+    before = drawn_items(project)
+    report = sync_ok(project, swapped)
+    assert sorted(a["pin"] for a in report["attached"]) == ["J1.1", "J1.2"], report["attached"]
+    assert drawn_items(project) == before
+    sync_ok(project, base)
+    assert drawn_items(project) == before
+    assert not kat.sync(project, base)["changed"]
+
+
+def test_move_refuses_pin_contact_and_move_many_swaps(project, tmp_path):
+    """B1: a pin placed on another part's pin joins the nets silently; a later move of the
+    other part then drags wires between them. `move` refuses; `move_many` lets parts take
+    each other's places without a parking step."""
+    net = write_netlist(tmp_path / "a.net", BASE_PARTS, BASE_NETS)
+    sync_ok(project, net)
+    with kat.edit(project) as s:
+        r1 = s.schematic.pin("R1", "1")
+        d1 = s.schematic.pin("D1", "1")
+        with pytest.raises(kat.KatError, match="would land on .*R1.1"):
+            s.move("D1", by=(r1[0] - d1[0], r1[1] - d1[1]))
+        pr, pd = s.pins("R1")[0], s.pins("D1")[0]
+        s.move_many({"R1": {"to": (pd["x"], pd["y"])}, "D1": {"to": (pr["x"], pr["y"])}})
+    check = kat.check(project, net)
+    assert check["netlist_vs_expected"]["match"], check["netlist_vs_expected"]
+    assert check["erc"]["errors"] == 0
+    assert positions(project)[("R1", 1)] == (pd["x"], pd["y"])
+
+
+def test_import_order_rows_and_paper(project, tmp_path):
+    """B4/B5: natural order with partners side by side (joined by a wire when their net is
+    unnamed), uniform rows, nothing off the page (the paper grows instead)."""
+    n = 40
+    parts = {f"R{i}": ("Device", "R", "1k", f"r{i}") for i in range(1, n + 1)}
+    parts |= {f"C{i}": ("Device", "C", "1n", f"c{i}") for i in range(1, n + 1)}
+    nets = {f"N${i}": [(f"R{i}", "1"), (f"C{i}", "1")] for i in range(1, n + 1)}
+    nets["GND"] = [(f"{p}{i}", "2") for i in range(1, n + 1) for p in "RC"]
+    net = write_netlist(tmp_path / "big.net", parts, nets)
+    report = sync_ok(project, net)
+    order = [a["ref"] for a in report["added"]]
+    assert order[:6] == ["C1", "R1", "C2", "R2", "C3", "R3"]
+    assert len(report["wired"]) == n
+    assert not [l for l in Schematic(project).labels() if l["text"].startswith("N$")]
+    assert report["paper"] == [{"from": "A4", "to": "A3"}]
+    assert not report["check"]["off_page"]
+    ys = {}
+    for a in report["added"]:
+        ys.setdefault(a["y"], []).append(a["ref"])
+    assert all(len(v) > 1 for v in ys.values())  # every part shares its row line

@@ -28,6 +28,21 @@ def xy(text: str) -> tuple[float, float]:
     return x, y
 
 
+def _tidy_results(cls):
+    """Every public method returns rounded, JSON-able data (as the CLI prints it)."""
+    import functools
+    for name, f in list(vars(cls).items()):
+        if callable(f) and not name.startswith("_") and name not in ("save", "point"):
+            def wrap(f=f):
+                @functools.wraps(f)
+                def inner(*a, **k):
+                    return env.tidy(f(*a, **k))
+                return inner
+            setattr(cls, name, wrap())
+    return cls
+
+
+@_tidy_results
 class Sheet:
     def __init__(self, path: Path | str | Schematic):
         self.schematic = path if isinstance(path, Schematic) else Schematic(Path(path))
@@ -137,15 +152,37 @@ class Sheet:
 
     def move(self, ref: str, to: Point | None = None, by: Point | None = None,
              rot: float | None = None, mirror: str | None = None, unit: int | None = None,
-             drag: bool = True) -> list[dict]:
+             drag: bool = True, allow_contact: bool = False) -> list[dict]:
         """Move, rotate or mirror a part. What hangs only off it is carried along; wires
-        into shared nets are dragged (unless ``drag=False``)."""
+        into shared nets are dragged (unless ``drag=False``). Refuses to put a pin onto
+        another part's pin, a wire or a label (that would join nets) unless
+        ``allow_contact``; use :meth:`move_many` to rearrange parts that swap places."""
+        return self.move_many([dict(ref=ref, to=to, by=by, rot=rot, mirror=mirror, unit=unit)],
+                              drag, allow_contact)
+
+    def move_many(self, moves: list[dict] | dict[str, dict], drag: bool = True,
+                  allow_contact: bool = False) -> list[dict]:
+        """Move several parts at once, like a block move: each decision is taken on the
+        drawing before anything moves, so parts may take each other's places.
+
+        ``moves``: ``[{"ref": "R1", "to": (x, y), "rot": 90}, {"ref": "U1", "unit": 2,
+        "by": (0, 5.08)}, ...]`` or ``{"R1": {"to": (x, y)}, ...}``."""
+        if isinstance(moves, dict):
+            moves = [dict(v, ref=k) for k, v in moves.items()]
+        plan = []
+        for m in moves:
+            unknown = set(m) - {"ref", "to", "by", "rot", "mirror", "unit"}
+            if unknown:
+                raise env.KatError(f"move of {m.get('ref')}: unknown keys {sorted(unknown)}")
+            to, by = m.get("to"), m.get("by")
+            tx, ty = self.point(to) if to is not None else (None, None)
+            dx, dy = (xy(by) if isinstance(by, str) else by) if by is not None else (0, 0)
+            plan.append(dict(ref=m["ref"], x=tx, y=ty, dx=dx, dy=dy, rot=m.get("rot"),
+                             mirror=m.get("mirror"), unit=m.get("unit")))
         s = self.schematic
-        tx, ty = self.point(to) if to is not None else (None, None)
-        dx, dy = (xy(by) if isinstance(by, str) else by) if by is not None else (0, 0)
-        s.move_symbol(ref, tx, ty, dx, dy, rot, mirror, unit, drag=drag)
+        s.move_symbols(plan, drag=drag, allow_contact=allow_contact)
         s.fix_junctions()
-        return [self._info(x) for x in s.find_symbols(ref, unit)]
+        return [self._info(x) for m in plan for x in s.find_symbols(m["ref"], m["unit"])]
 
     def set(self, ref: str, field: str, value: str | None = None, at: Point | None = None,
             angle: float | None = None, hide: bool | None = None, unit: int | None = None,

@@ -132,7 +132,7 @@ re-attached pins) and fold them into the arrangement with another pass.
 | value / footprint | field updated in place |
 | reference renamed (same tag) | renamed in place; position and wiring kept |
 | references swapped | handled (two-phase rename) |
-| new part | all units placed in a free strip below the drawing, pins attached by stub + label / power symbol |
+| new part | all units placed in uniform rows below the drawing, in natural order (R2 before R10); parts joined by an unnamed two-pin net sit side by side and get a short wire (`wired`), other pins a stub + label / power symbol. If the rows do not fit, the paper grows to the next ISO size (`paper`) |
 | part removed | symbol deleted; wires, labels, power symbols and flags left dangling are pruned |
 | part's library symbol changed | replaced at the same position and rotation; pins re-attached |
 | pin moved to another net | pin detached (its own wiring up to the next branch point) and attached to the new net |
@@ -161,7 +161,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `check SCH [--expect NETLIST]` | ERC + netlist comparison + drawing findings |
 | `snapshot SCH [--slug] [--note] [--expect]` | SVG + trimmed PNG + check into `history/` |
 | `add`, `wire`, `connect`, `label`, `power`, `nc` | draw |
-| `move`, `set`, `detach`, `rm` | rearrange, edit fields, disconnect, delete |
+| `move`, `move-many`, `set`, `detach`, `rm` | rearrange (one part, or a block move), edit fields, disconnect, delete |
 
 ## 6. Checks and stop criteria
 
@@ -172,7 +172,8 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
   `name_differences` (both names deliberate but different), `unnamed` (named in the design,
   unnamed in the drawing). Generated names (`Net-(...)`, `N$1`) are ignored.
 - `overlaps` — text/text and text/symbol collisions (estimated boxes, 0.3 mm clearance).
-- `body_overlaps` — overlapping part bodies; `off_page` — items outside the frame.
+- `body_overlaps` — overlapping part bodies; `off_page` — items outside the frame;
+  `duplicates` — the same wire, label or power symbol drawn more than once on one spot.
 - `ok` = ERC errors 0 and netlist match. `clean` = `ok` and no drawing finding.
 
 **Stop when** `clean` is true *and* the image review finds nothing. The heuristics do not see
@@ -195,6 +196,10 @@ pin names/numbers or wires running through text, so the image review is mandator
 | SKiDL's own `generate_schematic()` is unreadable for real circuits (overlaps, missing unit body, dangling wires) | SKiDL for connectivity only; `kat` draws |
 | SKiDL random tags / automatic references break identity across revisions | `tag=` (and `ref=`) on every part; `sync` matches tag first |
 | Moving a part whose wires end on shared T-points leaves steps (like KiCad's drag) | `detach` + `connect` the affected pins |
+| A part moved onto another part's pin joined the nets silently; moving the other part later dragged wires between them (LED matrix: rows 9/10 shorted to GND) | `move` refuses pin-on-pin/wire/label contact (`allow_contact` to override); `move_many` moves parts simultaneously, so they can take each other's places without parking |
+| `sync` re-attached pins whose net had not changed when their partner pin left the net: each run stacked another stub + label | a lone pin that already carries the net's name counts as drawn; `check` reports `duplicates` |
+| `detach` on stacked identical wires removed the wires but left the labels floating | stacked identical wires count as one run |
+| The import strip ignored the page height (294 items off an A2 page, invisible in the PNG) | rows wrap within the page; the paper grows when needed |
 | Power symbols / labels on a pin were left behind or bridged by a wire on `move` | `move` carries everything hanging only off the part |
 | Mirroring a part does not re-orient its carried power symbols | `detach` + `power ... --stub` after mirroring |
 | `set --at` on a multi-unit part moved all units' fields to one spot | refuses without `--unit` |

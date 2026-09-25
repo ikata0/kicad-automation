@@ -123,10 +123,33 @@ def off_page(s: Schematic, margin: float = 10.0) -> list[str]:
     return out
 
 
+def duplicates(s: Schematic) -> list[str]:
+    """Items drawn more than once on the same spot: identical wires, labels with the same
+    text and position, power symbols of the same kind on the same pin point."""
+    from collections import Counter
+    from .schematic import key
+    c = Counter()
+    for a, b in s.segments():
+        c[("wire", *sorted((key(a), key(b))))] += 1
+    for l in s.labels():
+        c[(l["kind"], l["text"], key((l["x"], l["y"])))] += 1
+    for sym in s.symbols():
+        if sym.ref.startswith("#"):
+            p = s.pins(sym)[0]
+            c[(sym.lib_id, key((p["x"], p["y"])))] += 1
+    out = []
+    for k, n in sorted(c.items(), key=str):
+        if n > 1:
+            pts = [f"{v[0] / 100:g},{v[1] / 100:g}" for v in k[1:] if isinstance(v, tuple)]
+            name = [v for v in k[1:] if isinstance(v, str)]
+            out.append(f"{n}x {k[0]} {' '.join(name + pts)}")
+    return out
+
+
 def run(sch: Path, expect: Path | None = None) -> dict:
     """``ok``: electrically right (ERC errors 0, netlist matches ``expect``).
     ``clean``: ``ok`` and no drawing findings (text overlaps, body overlaps, off-page items,
-    design net names missing from or different in the drawing)."""
+    duplicated items, design net names missing from or different in the drawing)."""
     s = Schematic(sch)  # parse error -> exception
     result: dict = {"file": str(sch)}
     result["erc"] = erc(sch)  # also proves KiCad can load it
@@ -137,9 +160,11 @@ def run(sch: Path, expect: Path | None = None) -> dict:
     result["overlaps"] = overlaps(s)
     result["body_overlaps"] = body_overlaps(s)
     result["off_page"] = off_page(s)
+    result["duplicates"] = duplicates(s)
     ok = result["erc"]["errors"] == 0 and (not expect or result["netlist_vs_expected"]["match"])
     result["ok"] = ok
     names = result.get("netlist_vs_expected", {})
     result["clean"] = ok and not (result["overlaps"] or result["body_overlaps"] or result["off_page"]
+                                  or result["duplicates"]
                                   or names.get("unnamed") or names.get("name_differences"))
     return result

@@ -52,7 +52,19 @@ def cmd_nc(s, a):
 
 
 def cmd_move(s, a):
-    return s.move(a.ref, a.to, a.by, a.rot, a.mirror, a.unit, drag=not a.no_drag)
+    return s.move(a.ref, a.to, a.by, a.rot, a.mirror, a.unit, drag=not a.no_drag,
+                  allow_contact=a.allow_contact)
+
+
+def cmd_move_many(s, a):
+    text = sys.stdin.read() if a.moves == "-" else a.moves
+    if a.moves.startswith("@"):
+        text = open(a.moves[1:], encoding="utf-8").read()
+    try:
+        moves = json.loads(text)
+    except ValueError as e:
+        raise env.KatError(f"MOVES is not valid JSON: {e}")
+    return s.move_many(moves, drag=not a.no_drag, allow_contact=a.allow_contact)
 
 
 def cmd_set(s, a):
@@ -191,8 +203,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     q = cmd("check", cmd_check, "Verify a schematic.",
             "Loads it with KiCad, runs ERC, compares the netlist with --expect and reports\n"
-            "drawing findings: text overlaps (estimated boxes), overlapping symbol bodies and\n"
-            "items outside the page frame.\n"
+            "drawing findings: text overlaps (estimated boxes), overlapping symbol bodies,\n"
+            "items outside the page frame and items drawn twice on one spot.\n"
             "  ok    = ERC has no errors and the netlist matches\n"
             "  clean = ok and no drawing findings\n"
             "The overlap estimate ignores pin names/numbers: always look at the snapshot too.",
@@ -216,7 +228,9 @@ def build_parser() -> argparse.ArgumentParser:
             "The netlist is the source of truth for parts and connections; the arrangement is kept.\n"
             "  - parts are matched by their SKiDL tag, then by reference\n"
             "  - renamed parts keep their place; value/footprint changes are applied in place\n"
-            "  - new parts go into a free strip below the drawing, wired with stubs + labels\n"
+            "  - new parts go into rows below the drawing, wired with stubs + labels; parts on\n"
+            "    an unnamed two-pin net sit side by side with a short wire; the paper grows to\n"
+            "    the next ISO size if the rows do not fit\n"
             "    (power nets such as GND or +3V3 get power symbols)\n"
             "  - removed parts are deleted together with wires/labels left dangling\n"
             "  - pins on the wrong net are cut loose and re-attached to the right one\n"
@@ -283,7 +297,8 @@ def build_parser() -> argparse.ArgumentParser:
             "Everything that hangs only off the part moves with it: wire stubs, labels, power\n"
             "symbols, PWR_FLAGs. Wires into shared nets are dragged: their end follows with a\n"
             "bend if needed. If that leaves a step next to the part, `detach` the pin and\n"
-            "`connect` it again. Multi-unit parts need --unit.",
+            "`connect` it again. Multi-unit parts need --unit. A pin may not land on another\n"
+            "pin, a wire or a label (that joins nets): use --allow-contact, or `move-many`.",
             ["kat move s.kicad_sch R1 --by 0,-2.54", "kat move s.kicad_sch U1 --unit 3 --to 175.26,101.6",
              "kat move s.kicad_sch Q1 --rot 90 --mirror y"], mutating=True)
     q.add_argument("ref", help="reference")
@@ -293,6 +308,19 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--mirror", choices=["", "x", "y"], help="new mirror state ('' = none)")
     q.add_argument("--unit", type=int, help="unit of a multi-unit part")
     q.add_argument("--no-drag", action="store_true", help="leave all wires where they are")
+    q.add_argument("--allow-contact", action="store_true",
+                   help="allow a pin to land on another pin, a wire or a label (joins nets)")
+
+    q = cmd("move-many", cmd_move_many, "Move several parts at once (block move).",
+            "Every decision is taken on the drawing before anything moves, so parts may take\n"
+            "each other's places without a parking step. MOVES is JSON: a list of\n"
+            '{"ref", "to": [x, y] | "by": [dx, dy], "rot", "mirror", "unit"} objects, or an object\n'
+            "keyed by reference; pass it inline, as @file.json, or - for stdin.",
+            ["kat move-many s.kicad_sch '{\"R1\": {\"to\": [101.6, 76.2]}, \"R2\": {\"to\": [101.6, 88.9]}}'",
+             "kat move-many s.kicad_sch @moves.json"], mutating=True)
+    q.add_argument("moves", metavar="MOVES", help="JSON text, @file or -")
+    q.add_argument("--no-drag", action="store_true", help="leave all wires where they are")
+    q.add_argument("--allow-contact", action="store_true", help="as for `move`")
 
     q = cmd("set", cmd_set, "Change a field: value, position, angle or visibility.",
             "FIELD is Reference, Value, Footprint, Datasheet or any custom field (created if\n"
@@ -339,7 +367,7 @@ def main(argv: list[str] | None = None) -> int:
                 out = args.func(s, args)
         else:
             out = args.func(args)
-        print(json.dumps(out, indent=1, default=list))
+        print(json.dumps(env.tidy(out), indent=1, default=list))
         failed = isinstance(out, dict) and (out.get("ok") is False or
                                             (out.get("check") or {}).get("ok") is False)
         return 1 if failed else 0

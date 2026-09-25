@@ -17,6 +17,17 @@ class KatError(Exception):
     """User-facing error; the CLI prints it as JSON and exits non-zero."""
 
 
+def tidy(obj):
+    """Round floats to 4 decimals (no 506.72999999999996) throughout a JSON-able result."""
+    if isinstance(obj, float):
+        return round(obj, 4) + 0.0
+    if isinstance(obj, dict):
+        return {k: tidy(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple)):
+        return [tidy(v) for v in obj]
+    return obj
+
+
 def kicad_cli() -> str:
     if env := os.environ.get("KICAD_CLI"):
         return env
