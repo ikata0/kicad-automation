@@ -125,7 +125,7 @@ def off_page(s: Schematic, margin: float = 10.0) -> list[str]:
 
 def run(sch: Path, expect: Path | None = None) -> dict:
     """``ok``: electrically right (ERC errors 0, netlist matches ``expect``).
-    ``clean``: ``ok`` and no layout findings (text overlaps, body overlaps, off-page items,
+    ``clean``: ``ok`` and no drawing findings (text overlaps, body overlaps, off-page items,
     design net names missing from or different in the drawing)."""
     s = Schematic(sch)  # parse error -> exception
     result: dict = {"file": str(sch)}

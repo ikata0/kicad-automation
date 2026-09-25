@@ -1,4 +1,4 @@
-"""Bring a design netlist (e.g. from SKiDL) into a schematic without losing the layout.
+"""Bring a design netlist (e.g. from SKiDL) into a schematic without losing the arrangement.
 
 The netlist is the source of truth for parts and connectivity; the schematic keeps
 positions, wiring style and everything else that is only about readability.

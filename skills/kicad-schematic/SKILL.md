@@ -1,6 +1,6 @@
 ---
 name: kicad-schematic
-description: Develop KiCad 10 schematics from the command line with the `kat` tool — circuit defined in SKiDL, brought into the .kicad_sch with `kat sync` (incremental, keeps the layout), laid out for readability with `kat batch`, verified by ERC, netlist comparison and rendered snapshots. Use when asked to create, update after a design change, lay out, tidy or check a KiCad schematic without the KiCad GUI.
+description: Develop KiCad 10 schematics from the command line with the `kat` tool — circuit defined in SKiDL, brought into the .kicad_sch with `kat sync` (incremental, keeps the arrangement), arranged for readability with `kat batch`, verified by ERC, netlist comparison and rendered snapshots. Use when asked to create, update after a design change, arrange, tidy or check a KiCad schematic without the KiCad GUI.
 ---
 
 # KiCad schematics with SKiDL + `kat`
@@ -8,13 +8,16 @@ description: Develop KiCad 10 schematics from the command line with the `kat` to
 Full specification: `SPEC.md` in the kicad-automation repo. `kat --help` and
 `kat <command> --help` explain every command with examples.
 
+"Arrange" / "arrangement" below means placing things on the schematic sheet, never PCB
+layout.
+
 ## Rules
 
 1. **Connectivity lives in the SKiDL design only.** In the drawing you only arrange things;
    `kat check --expect design.net` must keep matching.
 2. Every SKiDL part gets `tag=` and `ref=`; name the nets that matter (`Net("TIA_OUT")`).
 3. KiCad GUI closed while editing.
-4. Snapshot after every sync and every layout pass.
+4. Snapshot after every sync and every arrangement pass.
 
 ## Loop
 
@@ -26,13 +29,13 @@ Full specification: `SPEC.md` in the kicad-automation repo. `kat --help` and
    parts parked in the strip below the drawing; signal flow (inputs left, outputs right,
    supplies up, ground down); labels that would read better as wires.
    `check.json` lists `overlaps`, `body_overlaps`, `off_page`, `unnamed` — hints, not a verdict.
-5. **Layout** with a script, `kat batch SCH passN.kat` (all-or-nothing), starting with a
+5. **Arrange** the drawing with a script, `kat batch SCH passN.kat` (all-or-nothing), starting with a
    comment that states what the review found. Then back to 3.
 
 **Stop when** `check.json` says `"clean": true` and the image shows no problems. Report
 remaining ERC warnings instead of polishing forever.
 
-## Layout recipes
+## Arrangement recipes
 
 ```
 # arrange
@@ -63,7 +66,7 @@ power GND J2.2 --stub -5.08,0
 - Coordinates: mm, y down, 1.27 mm grid; parts on multiples of 2.54 mm.
 - Junctions are maintained automatically.
 - Never fix connectivity in the drawing — if `check` reports `missing`/`extra`, either your
-  layout batch broke something (undo by reverting the file from the last snapshot) or the
+  arrangement pass broke something (undo by reverting the file from the last snapshot) or the
   design is wrong (fix SKiDL and sync).
 
 ## Setup

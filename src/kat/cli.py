@@ -248,10 +248,10 @@ Workflow (see SPEC.md):
   2. kat new DIR/NAME.kicad_sch            empty project, once
   3. kat sync SCH design.net               parts + connectivity from the design
   4. kat snapshot SCH --expect design.net  image + checks into history/
-  5. review the PNG, then fix the layout:  kat batch SCH passN.kat
+  5. review the PNG, then arrange:        kat batch SCH passN.kat
   6. repeat 4-5; after a design change: regenerate design.net and go to 3
 
-Connectivity changes belong in SKiDL only. Layout commands must keep
+Connectivity changes belong in SKiDL only. Arrangement commands must keep
 `kat check --expect design.net` matching.
 
 {POINTS}
@@ -317,10 +317,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     q = cmd("check", cmd_check, "Verify a schematic.",
             "Loads it with KiCad, runs ERC, compares the netlist with --expect and reports\n"
-            "layout findings: text overlaps (estimated boxes), overlapping symbol bodies and\n"
+            "drawing findings: text overlaps (estimated boxes), overlapping symbol bodies and\n"
             "items outside the page frame.\n"
             "  ok    = ERC has no errors and the netlist matches\n"
-            "  clean = ok and no layout findings\n"
+            "  clean = ok and no drawing findings\n"
             "The overlap estimate ignores pin names/numbers: always look at the snapshot too.",
             ["kat check tia.kicad_sch", "kat check tia.kicad_sch --expect tia_design.net"])
     q.add_argument("--expect", metavar="NETLIST",
@@ -339,7 +339,7 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--expect", metavar="NETLIST", help="as for `check`")
 
     q = cmd("sync", cmd_sync, "Bring a design netlist (e.g. from SKiDL) into the schematic.",
-            "The netlist is the source of truth for parts and connections; the layout is kept.\n"
+            "The netlist is the source of truth for parts and connections; the arrangement is kept.\n"
             "  - parts are matched by their SKiDL tag, then by reference\n"
             "  - renamed parts keep their place; value/footprint changes are applied in place\n"
             "  - new parts go into a free strip below the drawing, wired with stubs + labels\n"

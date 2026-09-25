@@ -1,5 +1,5 @@
 """Full iterative workflow: SKiDL design -> sync -> validate -> design change -> sync ->
-validate -> manual layout -> validate -> sync again (layout must survive).
+validate -> manual arrangement -> validate -> sync again (it must survive).
 
 Set KAT_E2E_OUT=/some/dir to keep the project and its snapshot history for review.
 """
@@ -102,12 +102,12 @@ def test_iterative_design_flow(tmp_path, capsys):
     assert after[("r_out", 1)][2] > lowest
     snapshot(capsys, sch, "v2-sync", v2, "Design v2: ROUT added, C1 renamed CF1.")
 
-    # 6. adapt the layout for readability and validate
+    # 6. arrange the drawing for readability and validate
     out = kat(capsys, "batch", sch, HERE / "layout_v2.kat")
     assert out["applied"] > 20
-    snapshot(capsys, sch, "v2-layout", v2, "Manual layout: signal flow left to right.")
+    snapshot(capsys, sch, "v2-arrange", v2, "Manual arrangement: signal flow left to right.")
 
-    # 7. the layout survives a further sync of the unchanged design
+    # 7. the arrangement survives a further sync of the unchanged design
     text = sch.read_text()
     again = sync.run(sch, v2)
     assert not again["changed"], {k: v for k, v in again.items() if v and k != "check"}

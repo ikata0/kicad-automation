@@ -3,21 +3,21 @@
 Tools for letting an agent (or a script) develop KiCad 10 schematics from the command line,
 without MCP and with the KiCad GUI closed.
 
-- `kat` — CLI: sync a SKiDL design into a `.kicad_sch`, edit the layout, check, snapshot (`src/kat/`)
-- `skills/kicad-schematic/` — the agent skill for the design → sync → review → layout loop
+- `kat` — CLI: sync a SKiDL design into a `.kicad_sch`, arrange the drawing, check, snapshot (`src/kat/`)
+- `skills/kicad-schematic/` — the agent skill for the design → sync → review → arrange loop
 - [`SPEC.md`](SPEC.md) — workflow, sync semantics, checks, and the pitfalls found so far
 
 ## In one picture
 
 ```
-SKiDL design ──netlist──► kat sync ──► .kicad_sch ◄── kat batch (layout passes)
+SKiDL design ──netlist──► kat sync ──► .kicad_sch ◄── kat batch (arrangement passes)
                                            │
                                  kat snapshot / check: ERC, netlist == design,
-                                 layout findings, PNG for review
+                                 drawing findings, PNG for review
 ```
 
 The design owns parts and connections; the drawing owns positions. `kat sync` is
-incremental, so a design change touches only the affected spots of an existing layout.
+incremental, so a design change touches only the affected spots of an existing arrangement.
 
 ## Install
 
@@ -37,13 +37,13 @@ kat new tia/tia.kicad_sch
 kat sync tia/tia.kicad_sch v1.net                          # parts + connectivity
 kat snapshot tia/tia.kicad_sch --slug import --expect v1.net
 python tests/e2e/tia_design.py v2 v2.net                  # design change
-kat sync tia/tia.kicad_sch v2.net                          # layout kept, changes reported
-kat batch tia/tia.kicad_sch tests/e2e/layout_v2.kat       # layout pass
-kat snapshot tia/tia.kicad_sch --slug layout --expect v2.net
+kat sync tia/tia.kicad_sch v2.net                          # arrangement kept, changes reported
+kat batch tia/tia.kicad_sch tests/e2e/layout_v2.kat       # arrangement pass
+kat snapshot tia/tia.kicad_sch --slug arrange --expect v2.net
 ```
 
 `tests/test_e2e_skidl.py` runs the full iterative flow (import, design change, re-sync,
-layout, re-sync); set `KAT_E2E_OUT=dir` to keep its snapshots for inspection.
+arrangement, re-sync); set `KAT_E2E_OUT=dir` to keep its snapshots for inspection.
 
 ## Design decisions
 

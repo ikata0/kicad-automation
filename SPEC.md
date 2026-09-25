@@ -9,22 +9,26 @@ with the KiCad GUI closed, such that
 
 - the **circuit** (parts and connections) is defined once, as code, and
 - the **drawing** is readable and provably equivalent to that definition, and
-- **design changes** do not throw away the layout work already done.
+- **design changes** do not throw away the arrangement work already done.
 
 In scope: single-sheet schematics, SKiDL as design language, KiCad 10 files.
 Out of scope for now: hierarchical sheets, buses, PCB layout (see §8).
+
+Terms: **arrangement** is placing parts, labels, wires and fields on the schematic sheet so
+it reads well; an **arrangement pass** is one script doing that. **Layout** always means
+the PCB and is not used for the schematic.
 
 ## 2. Architecture
 
 ```
   design.py (SKiDL)  ──generate_netlist()──►  design.net   (source of truth: parts + nets)
                                                   │
-                                         kat sync │  incremental, keeps layout
+                                         kat sync │  incremental, keeps arrangement
                                                   ▼
-  layout scripts (kat batch) ─────────────►  design.kicad_sch  (the drawing)
+  arrangement passes (kat batch) ────────►  design.kicad_sch  (the drawing)
                                                   │
                             kat check / snapshot  │  ERC, netlist vs design.net,
-                                                  ▼  layout findings, PNG for review
+                                                  ▼  drawing findings, PNG for review
                                         history/<timestamp>/
 ```
 
@@ -43,7 +47,7 @@ Out of scope for now: hierarchical sheets, buses, PCB layout (see §8).
 ## 3. Rules
 
 1. **Connectivity changes only in the design (SKiDL).** Never add, remove or re-wire
-   connections in the drawing by hand. Layout commands may re-route, but
+   connections in the drawing by hand. Arrangement commands may re-route, but
    `kat check --expect design.net` must keep matching.
 2. **Stable part identity.** Give every SKiDL part a `tag=` (and preferably an explicit
    `ref=`). `sync` matches parts by tag first, then by reference. Without tags, SKiDL
@@ -52,7 +56,7 @@ Out of scope for now: hierarchical sheets, buses, PCB layout (see §8).
    named in the drawing (label or power symbol); `check` reports `unnamed` otherwise.
 4. **KiCad GUI closed** while `kat` edits the file (or reopen the sheet afterwards and never
    save from the GUI in between — it would overwrite the file).
-5. **Every step leaves a trace:** `kat snapshot` after each sync and layout pass.
+5. **Every step leaves a trace:** `kat snapshot` after each sync and arrangement pass.
 
 ## 4. Workflow
 
@@ -70,7 +74,7 @@ for power nets (names that exist in KiCad's `power` library, e.g. `GND`, `+3V3`,
 PWR_FLAGs are added where ERC needs a driver. The result is electrically complete and
 passes the checks, but it is grouped by part rather than by signal flow.
 
-### 4.2 Layout passes
+### 4.2 Arrangement passes
 
 1. Look at `history/<latest>/<name>.png` (the trimmed image, meant for review).
 2. Write `passN.kat`: a comment saying what the review found, then commands.
@@ -78,7 +82,7 @@ passes the checks, but it is grouped by part rather than by signal flow.
 4. `kat snapshot board.kicad_sch --slug passN --expect design.net --note "..."`
 5. Repeat until the stop criteria (§6) hold.
 
-Typical layout commands:
+Typical arrangement commands:
 
 | Goal | Commands |
 |---|---|
@@ -96,7 +100,7 @@ kat snapshot board/board.kicad_sch --slug change-x --expect design.net
 ```
 
 Then review only the places the report lists (new parts in the strip below the drawing,
-re-attached pins) and fold them into the layout with another pass.
+re-attached pins) and fold them into the arrangement with another pass.
 
 ### 4.4 Sync semantics
 
@@ -128,7 +132,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `lib search WORDS` / `lib show LIB:NAME` | find symbols; units, pins, body |
 | `list SCH` / `pins SCH REF` / `netlist SCH` | inspect placement, pin positions + outward direction, KiCad's nets |
 | `sync SCH NETLIST [--dry-run]` | bring the design into the drawing (§4.4) |
-| `check SCH [--expect NETLIST]` | ERC + netlist comparison + layout findings |
+| `check SCH [--expect NETLIST]` | ERC + netlist comparison + drawing findings |
 | `snapshot SCH [--slug] [--note] [--expect]` | SVG + trimmed PNG + check into `history/` |
 | `batch SCH SCRIPT` | many editing commands, one save, all-or-nothing |
 | `add`, `wire`, `connect`, `label`, `power`, `nc` | draw |
@@ -144,7 +148,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
   unnamed in the drawing). Generated names (`Net-(...)`, `N$1`) are ignored.
 - `overlaps` — text/text and text/symbol collisions (estimated boxes, 0.3 mm clearance).
 - `body_overlaps` — overlapping part bodies; `off_page` — items outside the frame.
-- `ok` = ERC errors 0 and netlist match. `clean` = `ok` and no layout finding.
+- `ok` = ERC errors 0 and netlist match. `clean` = `ok` and no drawing finding.
 
 **Stop when** `clean` is true *and* the image review finds nothing. The heuristics do not see
 pin names/numbers or wires running through text, so the image review is mandatory.
@@ -180,4 +184,4 @@ pin names/numbers or wires running through text, so the image review is mandator
 - Hierarchical sheets, buses, global labels across sheets in `sync`.
 - Netlist → PCB: KiCad 10 has no command-line "update PCB from schematic".
 - SKiDL `NC` pins → no-connect flags in the drawing.
-- Automatic layout beyond the placement strip (signal-flow placement) is left to the agent.
+- Automatic arrangement beyond the placement strip (signal-flow placement) is left to the agent.
