@@ -34,7 +34,8 @@ def run(sch: Path, expect: Path | None = None, require: tuple[str, ...] = ("MPN"
     """Errors block the layout; warnings are for a human look.
 
     errors:   schematic not ok/clean (ERC, netlist vs ``expect``, drawing findings),
-              unannotated reference, empty value, no footprint, footprint library or file
+              unannotated reference or one without a number (KiCad's BOM shows "ROUT?"),
+              empty value, no footprint, footprint library or file
               not found, symbol pin without a pad, missing ``require`` field (parts
               excluded from the BOM are exempt)
     warnings: no ``expect`` given, numbered pad without a symbol pin, footprint outside the
@@ -87,6 +88,9 @@ def run(sch: Path, expect: Path | None = None, require: tuple[str, ...] = ("MPN"
 
         if ref.endswith("?"):
             err(ref, "unannotated")
+        elif not ref[-1:].isdigit():
+            # KiCad references are prefix + number; "ROUT" counts as unannotated (BOM: "ROUT?")
+            err(ref, "reference_without_number")
         if value in ("", "~"):
             err(ref, "no_value")
         if "exclude_from_bom" not in props:

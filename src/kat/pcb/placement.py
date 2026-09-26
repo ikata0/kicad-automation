@@ -144,13 +144,21 @@ class PlacementMixin:
         else:
             x0, y0 = pad.x - off_x, edge + uy * (back + gap)
         step = max(fb[2] - fb[0], fb[3] - fb[1]) + GAP
+        from .structure import _Copper
+        cu, cl = _Copper(self), self._clearance_fn()
         for k in (0, 1, -1, 2, -2, 3, -3):
             x, y = (x0, y0 + k * step) if ux else (x0 + k * step, y0)
             try:
-                return self.move(ref, to=(round(x, 3), round(y, 3)), rot=f.rot,
-                                 side=host.side, allow_overlap=allow_overlap)
+                res = self.move(ref, to=(round(x, 3), round(y, 3)), rot=f.rot,
+                                side=host.side, allow_overlap=allow_overlap)
             except env.KatError:
                 continue
+            # pads must also clear copper that is already laid (vias, tracks, other pads)
+            moved = self.footprint(ref)
+            if any(cu.conflicts(p.net, {l for l in self.copper_layers() if p.on(l)}, cl,
+                                poly=p.outline, skip=ref) for p in moved.pads() if p.number):
+                continue
+            return res
         f.place(rot=start_rot)
         raise env.KatError(f"no free spot for {ref} next to {target}")
 

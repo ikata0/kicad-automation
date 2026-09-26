@@ -6,7 +6,8 @@ description: Develop KiCad 10 schematics from the command line with the `kat` to
 # KiCad schematics with SKiDL + `kat`
 
 Full specification: `SPEC.md` in the kicad-automation repo. `kat --help` and
-`kat <command> --help` explain every command with examples.
+`kat <command> --help` explain every command with examples. Phases and gates:
+`kicad-design` skill; the PCB: `kicad-layout` skill.
 
 "Arrange" / "arrangement" below means placing things on the schematic sheet, never PCB
 layout.

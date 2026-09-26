@@ -49,6 +49,8 @@ for r in range(1, ROWS + 1):
         res = Part("Device", "R", ref=f"R{n}", value="1k" if PROBE and n == 1 else "680", footprint=R_FP, tag=f"r_{r}_{c}")
         led = Part("Device", "LED", ref=f"D{n}", value="APT1608SGC", footprint=LED_FP,
                    tag=f"d_{r}_{c}")
+        res.fields["MPN"] = "RC0402FR-07680RL" if not (PROBE and n == 1) else "RC0402FR-071KL"
+        led.fields["MPN"] = "APT1608SGC"
         res[1] += sig
         res[2] += mid
         led["A"] += mid
@@ -57,6 +59,7 @@ for r in range(1, ROWS + 1):
 for j, rows in ((1, range(1, 6)), (2, range(6, 11))):
     conn = Part("Connector_Generic", "Conn_02x32_Odd_Even", ref=f"J{j}", value="IDC_2x32",
                 footprint=IDC_FP, tag=f"j_{j}")
+    conn.fields["MPN"] = "61206421621"   # part numbers here are examples for the gates
     order = [signals[r, c] for r in rows for c in range(1, COLS + 1)]
     if PROBE and j == 1:
         order[0], order[1] = order[1], order[0]

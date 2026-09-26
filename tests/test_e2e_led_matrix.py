@@ -1,7 +1,8 @@
 """Large design: 10x10 LED matrix (200 parts, two 64-pin connectors) on an A2 sheet.
 
 Import, two arrangement passes, title block and notes, checks, review tiles, a design
-change and back. Guards the speed of the library (the same passes took 193 s through
+change and back; then the board: four layers with a GND plane, placement by loop,
+cathode vias, autorouting (Freerouting), finishing, fabrication files, release gate. Guards the speed of the library (the same passes took 193 s through
 `kat batch` before the geometry indexing), the arrangement result and sync on a large,
 arranged sheet (no duplicate stubs or labels).
 Set KAT_E2E_OUT=/some/dir to keep the project and its snapshots for review.
@@ -22,6 +23,8 @@ import kat
 HERE = Path(__file__).parent / "e2e"
 sys.path.insert(0, str(HERE))
 import led_matrix_arrange as arrange  # noqa: E402
+import led_matrix_board as board_passes  # noqa: E402
+from kat.pcb import router  # noqa: E402
 
 pytestmark = [pytest.mark.slow, pytest.mark.skipif(
     shutil.which("kicad-cli") is None or importlib.util.find_spec("skidl") is None,
@@ -97,3 +100,30 @@ def test_led_matrix(root):
     text = sch.read_text()
     assert not kat.sync(sch, net)["changed"]
     assert sch.read_text() == text
+
+
+    # the board (needs Freerouting; the schematic part above runs without it)
+    if shutil.which("java") is None or not router.jar_path().exists():
+        pytest.skip("Freerouting not installed (kat pcb route --install)")
+    gate = kat.ready(sch, expect=net)
+    assert gate["ready"], gate["errors"][:5]
+    pcb = sch.with_suffix(".kicad_pcb")
+    r = kat.pcb.sync(pcb)
+    assert r["ok"] and len(r["added"]) == 202
+    for name in ("place", "structure"):
+        with kat.pcb.edit(pcb) as b:
+            board_passes.PASSES[name](b)
+    kat.pcb.snapshot(pcb, slug="structure", note="4 layers, In1 GND plane, cathode vias", three_d=False)
+    t0 = time.time()
+    routed = kat.pcb.route(pcb, passes=25, timeout=1500)
+    c = routed["check"]
+    assert c["unconnected"] == 0 and c["drc_errors"] == 0 and c["islands"] == 0, routed
+    with kat.pcb.edit(pcb) as b:
+        board_passes.finish(b)
+    kat.pcb.refill(pcb)
+    final = kat.pcb.check(pcb)
+    assert final["clean"], final["by_type"]
+    kat.pcb.snapshot(pcb, slug="rev-A", note=f"routed in {time.time() - t0:.0f} s, finished",
+                     three_d=False)
+    kat.pcb.fab(pcb, step=False, three_d=False)
+    assert kat.pcb.ready(pcb)["ready"]

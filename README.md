@@ -1,10 +1,11 @@
 # kicad-automation
 
-Tools for letting an agent (or a script) develop KiCad 10 schematics from the command line,
-without MCP and with the KiCad GUI closed.
+Tools for letting an agent (or a script) develop KiCad 10 schematics and PCBs from the
+command line, without MCP and with the KiCad GUI closed.
 
 - `kat` — Python library and CLI (`kat …`, `python -m kat …`): sync a SKiDL design into a `.kicad_sch`, arrange the drawing, check, snapshot (`src/kat/`)
-- `skills/kicad-schematic/` — the agent skill for the design → sync → review → arrange loop
+- `kat pcb` / `kat.pcb` — the board: build it from the schematic (proven by DRC parity), setup, placement, structure, routing (Freerouting through kat's own Specctra DSN/SES), finishing, fabrication files and a release gate (`src/kat/pcb/`)
+- `skills/kicad-design/` (phases and gates), `skills/kicad-schematic/`, `skills/kicad-layout/` — the agent skills
 - [`SPEC.md`](SPEC.md) — workflow, sync semantics, checks, and the pitfalls found so far
 
 ## In one picture
@@ -19,6 +20,18 @@ SKiDL design ──netlist──► kat sync ──► .kicad_sch ◄── pass
 The design owns parts and connections; the drawing owns positions. `kat sync` is
 incremental, so a design change touches only the affected spots of an existing arrangement.
 
+```
+.kicad_sch ──kat ready (gate)──► kat pcb sync ──► .kicad_pcb ◄── layout passes (import kat)
+                                                     │  setup · placement · structure
+                                   kat pcb route ────┤  (Freerouting, headless)
+                                                     │
+                     kat pcb check / snapshot: DRC, parity, islands, layer pictures
+                     kat pcb fab ──► Gerbers, drill, BOM, pick-and-place ──► kat pcb ready
+```
+
+The board follows the schematic the same way: `kat pcb sync` keeps placement and copper and
+reports what a design change made stale.
+
 ## Install
 
 ```sh
@@ -28,6 +41,9 @@ python -m venv .venv && .venv/bin/pip install -e '.[dev]'     # add ,render on W
 
 Requirements: KiCad 10 (`kicad-cli` on PATH, or `KICAD_CLI=/path/to/kicad-cli`), Python ≥ 3.10.
 PNG snapshots use `rsvg-convert` if present, otherwise PyMuPDF (`[render]` extra; AGPL-3.0).
+Autorouting needs Java 21+ and Freerouting: `kat pcb route --install` downloads the pinned
+release (GPL-3, run as a separate program) once into kat's cache; routing tests are skipped
+without it.
 
 ## Example
 
@@ -44,9 +60,15 @@ python tests/e2e/tia_design.py v3 v3.net                  # + footprints and par
 kat sync tia/tia.kicad_sch v3.net
 kat ready tia/tia.kicad_sch --expect v3.net                # gate before the PCB layout
 kat pcb sync tia/tia.kicad_pcb                             # board: parts + nets, parity-checked
+python tests/e2e/tia_board.py tia/tia.kicad_pcb place      # layout passes (Python)
+python tests/e2e/tia_board.py tia/tia.kicad_pcb structure
+kat pcb route tia/tia.kicad_pcb                            # Freerouting, then DRC
+python tests/e2e/tia_board.py tia/tia.kicad_pcb finish
+kat pcb fab tia/tia.kicad_pcb && kat pcb ready tia/tia.kicad_pcb
 ```
 
-`tests/test_e2e_skidl.py` runs the full iterative flow (import, design change, re-sync,
+`tests/test_e2e_pcb_tia.py` runs the board flow to fabrication files and back through a
+design change (R1 → 0805, an added capacitor). `tests/test_e2e_skidl.py` runs the full iterative flow (import, design change, re-sync,
 arrangement, re-sync); `tests/test_e2e_led_matrix.py` (marker `slow`, about 75 s) does the same
 for a 200-part LED matrix on A2. Set `KAT_E2E_OUT=dir` to keep their snapshots for
 inspection; `pytest -m 'not slow'` skips the large one.

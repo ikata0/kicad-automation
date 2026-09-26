@@ -47,9 +47,13 @@ class _Copper:
         self.index.add((at[0] - r, at[1] - r, at[0] + r, at[1] + r),
                        {"kind": "via", "net": net, "layers": layers, "at": at, "r": r})
 
-    def conflicts(self, net: str, layers: set, clearance, seg=None, circle=None) -> list[dict]:
-        """Other-net copper closer than its clearance to a segment ((a, b), half width) or a
-        circle ((x, y), r) on ``layers``."""
+    def conflicts(self, net: str, layers: set, clearance, seg=None, circle=None, poly=None,
+                  skip: str | None = None) -> list[dict]:
+        """Other-net copper closer than its clearance to a segment ((a, b), half width), a
+        circle ((x, y), r) or a polygon (a pad outline) on ``layers``; ``skip``: ignore
+        the pads of this reference (the part being placed)."""
+        if poly:
+            return self._poly_conflicts(net, layers, clearance, poly, skip)
         if seg:
             (a, b), h = seg
             box = (min(a[0], b[0]) - h, min(a[1], b[1]) - h, max(a[0], b[0]) + h, max(a[1], b[1]) + h)
@@ -71,6 +75,32 @@ class _Copper:
             if d < need - 1e-6:
                 out.append({"kind": it["kind"], "net": it["net"], "gap": round(max(d, 0), 3),
                             "need": need, **({"pad": it["ref"]} if "ref" in it else {})})
+        return out
+
+
+    def _poly_conflicts(self, net, layers, clearance, poly, skip) -> list[dict]:
+        xs, ys = [p[0] for p in poly], [p[1] for p in poly]
+        box = (min(xs), min(ys), max(xs), max(ys))
+        edges = list(zip(poly, poly[1:] + poly[:1]))
+        out = []
+        for it in self.index.query(box, margin=2.0):
+            if (it["net"] == net and net) or not (it["layers"] & layers):
+                continue
+            if it["kind"] == "pad" and skip and it["ref"].split(".")[0] == skip:
+                continue
+            need = clearance(net, it["net"])
+            if it["kind"] == "pad":
+                if inside(poly, it["poly"][0]) or inside(it["poly"], poly[0]):
+                    d = 0.0
+                else:
+                    d = min(seg_seg(a, b, c, e) for a, b in edges for c, e in
+                            zip(it["poly"], it["poly"][1:] + it["poly"][:1]))
+            elif it["kind"] == "track":
+                d = poly_seg(poly, *it["seg"]) - it["half"]
+            else:
+                d = poly_seg(poly, it["at"], it["at"]) - it["r"]
+            if d < need - 1e-6:
+                out.append({"kind": it["kind"], "net": it["net"], "gap": round(max(d, 0), 3), "need": need})
         return out
 
 
@@ -196,8 +226,11 @@ class StructureMixin:
         edge = self.outline_box()
         r = size / 2
         half = max(pad.w, pad.h) / 2
+        # full clearance even to its own pad: no via in the solder area, and Freerouting
+        # counts a closer same-net via as a violation
+        gap = self.net_rules(net)["clearance"] + 0.01
         for dx, dy in dirs:
-            d = half + r + cl(net, "") * 0.5
+            d = half + r + gap
             while d <= half + max_reach:
                 x, y = pad.x + dx * d, pad.y + dy * d
                 d += 0.05

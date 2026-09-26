@@ -193,6 +193,7 @@ Methods of `kat.pcb.Board`, used inside `with kat.pcb.edit(PCB) as b:` (saved on
 |---|---|
 | `outline(rect=(x, y, w, h), radius=r)` / `outline(polygon=[...])` | replaces everything on Edge.Cuts |
 | `set_copper_layers(n)` | 2, 4, 6 … copper layers (inner ones refused for removal while used) |
+| `plane(net, "In1.Cu")`, `set_layer_type(layer, "power")` | a whole-board plane on its own layer; layer type power = the router lays no tracks there |
 | `mounting_hole(at, "M3")`, `add_board_part(lib_id, ref, at)` | footprints without a symbol, marked board-only: sync and parity leave them alone |
 | `zone(net, layers, polygon=None)` | copper pour (default: outline minus 0.5 mm); filled by KiCad on check |
 | `keepout(layers, rect/polygon, tracks=False, vias=True, ...)` | rule area; `False` forbids that item kind |
@@ -236,11 +237,48 @@ the GND pour into islands. So the agent lays the structure first and locks it:
 | `net_rules(net)` | width, clearance, via size of the net's class |
 | `kat.pcb.refill(PCB)` | fill the pours and save them (KiCad's filler) |
 
-Recipe: assign layers (a plane layer gets a track keep-out), place a via per plane pad
-(`fanout`), lay critical nets (supplies, Kelvin, guards) by hand and lock them, then route
-the rest. LED matrix: 100 cathode vias in 0.4 s, DRC without errors or islands.
+Recipe: give each plane its own layer (`plane`), place a via per plane pad (`fanout`), lay
+critical nets (supplies, Kelvin, guards) by hand and lock them, then route the rest.
+LED matrix: 100 cathode vias in 0.4 s. Two-layer attempts failed (islands, unconnected
+pads); four layers with In1 as GND plane routed completely in about 2 minutes.
 
-### 4.10 Board checks and review
+### 4.10 Routing
+
+`kat pcb route PCB` (library `kat.pcb.route`) writes a Specctra DSN with kat's own writer,
+runs Freerouting headless, reads the SES back, adds the new tracks and vias, saves and
+runs `kat pcb check`. No pcbnew involved.
+
+- Every footprint becomes its own DSN image with pins at their board positions and
+  padstacks carrying the rotated pad outline on the pad's copper layers; everything is
+  placed "front, 0". No rotation or mirroring is left for the router to interpret.
+- Layers of type power (`plane()`) are Specctra power layers: no tracks. Pours are
+  `plane`s, keep-outs `wire_keepout`/`via_keepout`, net classes `class` rules;
+  locked copper is `protect`ed, other existing copper may be changed.
+- `--net` limits routing to some nets; the others and their pads stay obstacles.
+- DSN, SES and the Freerouting log go to `history/<stamp>_route/`.
+- Freerouting (Java 21+, GPL-3) is an external program: `kat pcb route --install`
+  downloads the pinned release once into kat's cache, checked by SHA-256
+  (`KAT_FREEROUTING=/path/to.jar` uses another copy).
+- Tracks the router narrowed at fine-pitch pads are widened to the net-class width where
+  the clearance allows (`widened`; the rest in `narrow`).
+- **Judge the result by `check.unconnected` and `check.islands`**, not by the router's
+  own `unrouted`: in the spike Freerouting reported 0 unrouted while KiCad found 29
+  unconnected pads in pour islands.
+
+Loop: structure (§4.9) → route → check and snapshot → adjust structure, keep-outs or net
+classes → `remove_tracks()` (locked copper stays) → route again.
+
+### 4.11 Finishing and fabrication
+
+| Call | Effect |
+|---|---|
+| `b.place_refs(size=0.8)` | reference designators beside each courtyard (above, below, left, right - first spot clear of pads, other references and the edge), upright or 90° for tall parts; unplaceable ones go to the fab layer and are listed |
+| `b.board_text(text, at)`, `b.title_from_schematic()` | board name/revision on the silkscreen; title block copied from the schematic |
+| `b.fiducials(3)` | board-only fiducials near the corners, clear of courtyards |
+| `kat pcb fab PCB` | `fab/<name>-<rev>/`: Gerbers (copper, paste, silk, mask, outline) + drill files and map, zipped; `assembly/` position file and BOM (with MPN, from the schematic); IPC-D-356; STEP; 3D renders. Pours are refilled for the Gerbers |
+| `kat pcb ready PCB` | release gate: board check clean (no DRC errors or warnings, parity 0, nothing unconnected or outside the outline), title and revision set, fabrication set complete and newer than the board |
+
+### 4.12 Board checks and review
 
 `kat pcb check PCB` runs KiCad's DRC with zones refilled in memory and schematic parity,
 plus kat's findings (outline missing, parts outside the outline). `ok` = no DRC errors,
@@ -268,7 +306,8 @@ tested against IPC-D-356 and DRC's library comparison.
 ## 5. Command reference
 
 Library: `kat.new`, `kat.load`, `kat.edit`, `kat.sync`, `kat.check`, `kat.snapshot`, `kat.view`,
-`kat.ready`, `kat.pcb.sync` / `edit` / `check` / `snapshot` / `view` / `drc` (board), `kat.nets`, `kat.lib_search`, `kat.lib_show`, and the `kat.Sheet` methods; each returns what
+`kat.ready`, `kat.pcb.sync` / `edit` / `check` / `snapshot` / `view` / `route` / `refill` / `fab` /
+`ready` / `drc` (board), `kat.nets`, `kat.lib_search`, `kat.lib_show`, and the `kat.Sheet` methods; each returns what
 the matching command prints.
 
 `kat --help` shows the workflow; `kat <command> --help` shows each command's arguments and
@@ -284,7 +323,9 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `check SCH [--expect NETLIST]` | ERC + netlist comparison + drawing findings |
 | `ready SCH [--expect NETLIST] [--require-field NAME]` | gate before the PCB layout (§6.1) |
 | `pcb sync PCB [--sch] [--dry-run] [--force] [--rip-stale]` | parts and nets onto the board (§4.6) |
-| `pcb check PCB` / `pcb snapshot PCB` / `pcb view PCB ...` | board DRC + findings, history step with pictures, zoomed view (§4.10) |
+| `pcb fab PCB` / `pcb ready PCB` | fabrication set / release gate (§4.11) |
+| `pcb route PCB [--passes] [--net NAME] [--install]` | Freerouting through kat's DSN/SES, then the board check (§4.10) |
+| `pcb check PCB` / `pcb snapshot PCB` / `pcb view PCB ...` | board DRC + findings, history step with pictures, zoomed view (§4.12) |
 | `snapshot SCH [--slug] [--note] [--expect] [--tiles] [--finding-crops N]` | SVG + trimmed PNG + check into `history/`; tiles and finding close-ups |
 | `view SCH --around REF / --at X,Y / --region X,Y,W,H` | zoomed PNG of one region into `views/` |
 | `add`, `wire`, `connect`, `label`, `power`, `nc` | draw |
@@ -318,7 +359,7 @@ netlist difference).
 | Errors (block the layout) | Warnings (look, then decide) |
 |---|---|
 | schematic not `ok` / not `clean` (as `kat check`) | no `--expect` given |
-| reference not annotated (`R?`), empty value | numbered pad without a symbol pin (mounting, shield or thermal pads are often fine) |
+| reference not annotated (`R?`) or without a number (`ROUT`: KiCad's BOM prints `ROUT?`), empty value | numbered pad without a symbol pin (mounting, shield or thermal pads are often fine) |
 | no footprint; footprint library not in `fp-lib-table` (global + project); footprint file missing | footprint outside the symbol's footprint filters (`ki_fp_filters`) |
 | a symbol pin without a pad of that number (the part cannot be connected) | footprint has no 3D model file |
 | a required field empty (default `MPN`, `--require-field` repeatable, `--no-require`); parts excluded from the BOM are exempt | |
@@ -358,13 +399,24 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
 | A PWR_FLAG stub crossed a neighbouring pin and shorted two nets | stubs are only drawn where their whole path is free |
 | Overlap heuristics are approximate (misses pin names, underestimated label height) | calibrated boxes; image review stays mandatory |
 | ERC `power_pin_not_driven` for supply nets | PWR_FLAG per power net (added by `sync`) |
+| KiCad 10.0.6 has no command-line "Update PCB from Schematic", kicad-python neither, and pcbnew's Python module is deprecated | file-based board sync in kat, proven by DRC `--schematic-parity` (§4.6) |
+| Board parity fails with SKiDL's net names and missing fields | the board is built from KiCad's own netlist of the schematic, all symbol fields copied (hidden) |
+| Library mounting holes and fiducials are not marked board-only; a sync would delete them | kat adds them board-only; sync and parity skip board-only footprints |
+| An empty `net_settings.classes` list in a template project means "KiCad defaults"; adding one class without `Default` breaks the class | kat writes the full Default class and format version 5 with the first custom class |
+| Freerouting treats a pour as one plane; tracks on the plane layer cut it into islands (spike: "0 unrouted", 29 unconnected) | each plane on its own layer (`plane()`, layer type power: no tracks), a via per plane pad, check `islands` / `unconnected` after routing |
+| DRC lists the zone first for starved thermals, and a zone's position is its first corner | finding close-ups use the non-zone item (the pad) |
+| KiCad draws SVG layers in the given order; a pour listed last hides everything | copper sets are listed bottom-up |
+| Freerouting counts a via closer than the clearance to its *own* pad as a violation (KiCad does not) | `via_to_plane` keeps the full clearance to its pad (also: no via in the solder area) |
+| Freerouting counts every via inside a `wire_keepout` as a violation, even where vias are allowed - a plane layer cannot be protected that way when it carries the plane vias | keep-outs only where no vias are needed; for planes: pours on both layers, stitching vias, check `islands` |
+| Freerouting narrows tracks at fine-pitch pads below the net-class width (DRC `track_width`); `--router.automatic_neckdown=false` is not applied | on import kat widens them to the class width where the clearance allows and reports the rest (`narrow`) |
+| A reference without a number (`ROUT`) passes ERC and parity, but KiCad treats it as unannotated: the BOM prints `ROUT?` | `kat ready` error `reference_without_number` |
 | No `rsvg-convert` on Windows; `kicad-cli` not on PATH there | PyMuPDF fallback (`[render]` extra, AGPL-3.0); `kicad-cli` auto-discovery or `KICAD_CLI` |
 
 ## 8. Open points
 
 - Hierarchical sheets, buses, global labels across sheets in `sync`.
-- PCB layout beyond the board sync (§4.6): outline and rules, board checks and views,
-  placement, structure, routing (Freerouting via own Specctra DSN/SES), finishing and
-  fabrication output. Spike: `kicad-sandbox/experiments/2026-09-25-pcb-spike/`.
+- Teardrops, length tuning, differential pairs and impedance-controlled stack-ups are not
+  automated; set them in KiCad or as custom rules.
+- Live mode with kicad-python (editor open) is not implemented; the pipeline is headless.
 - SKiDL `NC` pins → no-connect flags in the drawing.
 - Automatic arrangement beyond the placement strip (signal-flow placement) is left to the agent.

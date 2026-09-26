@@ -105,6 +105,27 @@ class SetupMixin:
                 layers.insert(idx + i - 1, [Sym(str(2 + 2 * i)), name, Sym("signal")])
         return {"copper_layers": self.copper_layers()}
 
+    def layer_types(self) -> dict[str, str]:
+        """Copper layer -> KiCad layer type (signal, power, mixed, jumper)."""
+        return {str(l[1]): str(l[2]) for l in find(self.tree, "layers")[1:] if str(l[1]).endswith(".Cu")}
+
+    def set_layer_type(self, layer: str, kind: str = "power") -> dict:
+        """``power`` marks a plane layer: the router lays no tracks on it, so the plane
+        stays whole (Specctra layer type power)."""
+        if kind not in ("signal", "power", "mixed", "jumper"):
+            raise env.KatError("layer type: signal, power, mixed or jumper")
+        for l in find(self.tree, "layers")[1:]:
+            if str(l[1]) == layer:
+                l[2] = Sym(kind)
+                return {"layer": layer, "type": kind}
+        raise env.KatError(f"no copper layer {layer!r}; set_copper_layers first")
+
+    def plane(self, net: str, layer: str, clearance: float = 0.3) -> dict:
+        """A whole-board plane of ``net`` on ``layer`` (usually an inner layer): layer type
+        power plus a pour over the outline. SMD pads reach it through ``fanout``."""
+        self.set_layer_type(layer, "power")
+        return self.zone(net, layer, clearance=clearance, name=f"{net} plane")
+
     def _used_layer(self, layer: str) -> bool:
         def walk(n):
             if isinstance(n, list):

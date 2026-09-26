@@ -16,8 +16,8 @@ from ..env import tidy
 from . import checks, syncer, views
 from .board import Board, Footprint, Pad
 
-__all__ = ["Board", "Footprint", "Pad", "check", "drc", "edit", "load", "refill", "snapshot", "sync",
-           "view"]
+__all__ = ["Board", "Footprint", "Pad", "check", "drc", "edit", "fab", "load", "ready", "refill",
+           "route", "snapshot", "sync", "view"]
 
 
 def load(path: Path | str) -> Board:
@@ -71,3 +71,28 @@ def refill(pcb: Path | str) -> dict:
     """Fill all pours and save them into the board (KiCad's zone filler, via DRC)."""
     d = checks.drc(Path(pcb), parity=False, refill=True, save=True)
     return tidy({"file": str(pcb), "drc_errors": d["errors"], "unconnected": len(d["unconnected"])})
+
+
+def route(pcb: Path | str, passes: int = 20, nets: list[str] | None = None, timeout: int = 1800,
+          out: Path | str | None = None, install: bool = False) -> dict:
+    """Autoroute with Freerouting (headless) through kat's Specctra DSN/SES; locked copper
+    stays, ``nets`` limits what is routed. Ends with KiCad's DRC (``check``): trust that,
+    not the router's own count. ``install`` downloads Freerouting first if missing."""
+    from . import router as _route
+    if install:
+        _route.install()
+    return tidy(_route.route(Path(pcb), passes, nets, timeout, out))
+
+
+def fab(pcb: Path | str, out: Path | str | None = None, step: bool = True, three_d: bool = True) -> dict:
+    """Fabrication set into fab/<name>-<rev>/: Gerbers + drill (zipped), position file,
+    IPC-D-356, BOM with part numbers, STEP, 3D renders."""
+    from . import fabrication as _fab
+    return tidy(_fab.fab(Path(pcb), out, step, three_d))
+
+
+def ready(pcb: Path | str, fab_dir: Path | str | None = None) -> dict:
+    """Release gate: board check clean, title and revision set, fabrication set complete
+    and newer than the board."""
+    from . import fabrication as _fab
+    return tidy(_fab.ready(Path(pcb), fab_dir))

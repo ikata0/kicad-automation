@@ -104,3 +104,15 @@ def test_cli_exit_code(project, tmp_path, capsys):
     out = json.loads(capsys.readouterr().out)
     assert out["by_problem"] == {"missing_field": 3}
     assert cli.main(["ready", str(project), "--expect", str(net), "--no-require"]) == 0
+
+
+def test_reference_needs_a_number(project, tmp_path):
+    """KiCad treats "ROUT" as unannotated (its BOM prints "ROUT?")."""
+    parts = {**BASE_PARTS, "ROUT": BASE_PARTS["R1"]}
+    del parts["R1"]
+    nets = {k: [("ROUT" if r == "R1" else r, p) for r, p in v] for k, v in BASE_NETS.items()}
+    fps = {**GOOD_FP, "ROUT": GOOD_FP["R1"]}
+    net = write_netlist(tmp_path / "d.net", parts, nets, fps, {**MPN, "ROUT": MPN["R1"]})
+    assert kat.sync(project, net)["check"]["ok"]
+    r = kat.ready(project, expect=net)
+    assert ("ROUT", "reference_without_number") in problems(r)

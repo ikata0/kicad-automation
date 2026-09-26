@@ -25,7 +25,7 @@ def arrange(s: kat.Sheet) -> None:
     s.move("U1", unit=1, to=(127, 101.6), mirror="x")
     s.move("R1", to=(127, 86.36), rot=90)
     s.move("CF1", to=(127, 73.66), rot=90)
-    s.move("ROUT", to=(157.48, 101.6), rot=90)
+    s.move("R2", to=(157.48, 101.6), rot=90)
     s.move("J2", to=(175.26, 101.6), mirror="y")
     s.move("U1", unit=2, to=(127, 127))
     s.move("U1", unit=3, to=(190.5, 127))
@@ -40,15 +40,15 @@ def arrange(s: kat.Sheet) -> None:
     s.label("PD_ANODE", (101.6, 99.06))
 
     # TIA_OUT: output node -> feedback + series resistor
-    rewire(s, ["U1.1", "R1.2", "CF1.2", "ROUT.1"])
-    s.connect("U1.1", "ROUT.1")
+    rewire(s, ["U1.1", "R1.2", "CF1.2", "R2.1"])
+    s.connect("U1.1", "R2.1")
     s.connect("R1.2", (139.7, 101.6), via=[(139.7, 86.36)])
     s.connect("CF1.2", (139.7, 86.36), via=[(139.7, 73.66)])
     s.label("TIA_OUT", (142.24, 101.6))
 
     # OUT: series resistor -> output connector; its ground downwards
-    rewire(s, ["ROUT.2", "J2.1"])
-    s.connect("ROUT.2", "J2.1")
+    rewire(s, ["R2.2", "J2.1"])
+    s.connect("R2.2", "J2.1")
     s.label("OUT", (162.56, 101.6))
     s.detach("J2.2")
     s.power("GND", "J2.2", stub=(-5.08, 0))

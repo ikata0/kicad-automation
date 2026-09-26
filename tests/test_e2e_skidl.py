@@ -84,13 +84,13 @@ def test_iterative_design_flow(tmp_path, capsys):
     snapshot(capsys, sch, "v1-import", v1, "Initial import of design v1.")
     before = placements(sch)
 
-    # 4. change the design: add ROUT, rename C1 -> CF1
+    # 4. change the design: add R2, rename C1 -> CF1
     v2 = design("v2", root)
 
     # 5. sync and validate
     report = run_kat(capsys, "sync", sch, v2)
     assert report["renamed"] == [{"from": "C1", "to": "CF1"}]
-    assert [a["ref"] for a in report["added"]] == ["ROUT"]
+    assert [a["ref"] for a in report["added"]] == ["R2"]
     assert report["detached"] == ["J2.1"]  # output connector moved from TIA_OUT to OUT
     assert not report["removed"] and not report["unresolved"]
     assert_clean(report["check"])
@@ -101,7 +101,7 @@ def test_iterative_design_flow(tmp_path, capsys):
     assert after[("c_fb", 1)][0] == "CF1"
     lowest = max(y for _, _, y in before.values())
     assert after[("r_out", 1)][2] > lowest
-    snapshot(capsys, sch, "v2-sync", v2, "Design v2: ROUT added, C1 renamed CF1.")
+    snapshot(capsys, sch, "v2-sync", v2, "Design v2: R2 added, C1 renamed CF1.")
 
     # 6. arrange the drawing for readability and validate
     subprocess.run([sys.executable, str(HERE / "arrange_v2.py"), str(sch)], check=True)

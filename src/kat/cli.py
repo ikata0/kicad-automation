@@ -123,6 +123,17 @@ def cmd_pcb(a):
                             () if a.no_require else (a.require_field or ["MPN"]))
     if a.pcb_cmd == "check":
         return kat.pcb.check(a.pcb)
+    if a.pcb_cmd == "fab":
+        return kat.pcb.fab(a.pcb, a.out, not a.no_step, not a.no_3d)
+    if a.pcb_cmd == "ready":
+        return kat.pcb.ready(a.pcb, a.fab)
+    if a.pcb_cmd == "route":
+        if a.install and not a.pcb:
+            from kat.pcb import router as _route
+            return _route.install()
+        if not a.pcb:
+            raise env.KatError("give the board (or only --install)")
+        return kat.pcb.route(a.pcb, a.passes, a.net or None, a.timeout, install=a.install)
     if a.pcb_cmd == "snapshot":
         return kat.pcb.snapshot(a.pcb, a.slug, a.note, a.out, a.tiles, a.finding_crops, not a.no_3d)
     if a.pcb_cmd == "view":
@@ -528,6 +539,33 @@ def build_parser() -> argparse.ArgumentParser:
     s3.add_argument("--no-tiles", action="store_false", dest="tiles", help="never write tiles")
     s3.add_argument("--finding-crops", type=int, default=0, metavar="N", help="close-ups of N findings")
     s3.add_argument("--no-3d", action="store_true", help="skip the 3D renders")
+    s5 = psp.add_parser("route", formatter_class=_Fmt, help="autoroute with Freerouting (headless)",
+                        description="Writes a Specctra DSN (kat's own writer), runs Freerouting without GUI,\n"
+                                    "imports the new tracks and vias, saves and runs the board check.\n"
+                                    "Locked copper stays as it is (lock the structure first). DSN, SES and\n"
+                                    "log go to history/<stamp>_route/. Judge the result by check.unconnected\n"
+                                    "and check.islands, not by router.unrouted.\n"
+                                    "Freerouting (Java 21+, GPL-3) is downloaded once by --install into kat's\n"
+                                    "cache; KAT_FREEROUTING=/path/to.jar uses another copy.")
+    s5.add_argument("pcb", metavar="PCB", nargs="?")
+    s5.add_argument("--passes", type=int, default=20, help="router passes (default 20)")
+    s5.add_argument("--net", action="append", metavar="NAME", help="route only this net (repeatable)")
+    s5.add_argument("--timeout", type=int, default=1800, help="seconds (default 1800)")
+    s5.add_argument("--install", action="store_true", help="download Freerouting first if missing")
+    s6 = psp.add_parser("fab", formatter_class=_Fmt, help="fabrication files",
+                        description="fab/<name>-<rev>/: gerbers/ (copper, paste, silk, mask, outline, drill\n"
+                                    "files and drill map) and a zip of them, assembly/ (position file, BOM\n"
+                                    "with MPN from the schematic), IPC-D-356 netlist, STEP, 3D renders.\n"
+                                    "Pours are refilled for the Gerbers.")
+    s6.add_argument("pcb", metavar="PCB")
+    s6.add_argument("--out", help="output directory")
+    s6.add_argument("--no-step", action="store_true"); s6.add_argument("--no-3d", action="store_true")
+    s7 = psp.add_parser("ready", formatter_class=_Fmt, help="release gate before ordering",
+                        description="ready = board check clean (no DRC errors or warnings, parity 0,\n"
+                                    "nothing unconnected, nothing outside the outline), title and revision\n"
+                                    "set, fabrication set complete and newer than the board.")
+    s7.add_argument("pcb", metavar="PCB")
+    s7.add_argument("--fab", help="fabrication directory (default fab/<name>-<rev>/)")
     s4 = psp.add_parser("view", formatter_class=_Fmt, help="zoomed PNG of one board region",
                         description="Into views/ next to the board; not a history step. Layer sets:\n"
                                     "top, bottom, placement, copper, In1, ... or KiCad layer names.\n"
