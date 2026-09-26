@@ -25,7 +25,7 @@ SETS = {
     "top": ["F.Cu", "F.SilkS", "Edge.Cuts"],
     "bottom": ["B.Cu", "B.SilkS", "Edge.Cuts"],
     "placement": ["F.CrtYd", "F.Fab", "B.CrtYd", "B.Fab", "Edge.Cuts"],
-    "copper": ["F.Cu", "B.Cu", "Edge.Cuts"],
+    "copper": ["B.Cu", "F.Cu", "Edge.Cuts"],   # bottom-up: later layers are drawn on top
 }
 OVERVIEW_PX = 2000   # longest side of an overview picture
 TILE_PPM = 30.0      # px/mm of tiles: a 0.2 mm track is 6 px wide
@@ -36,7 +36,7 @@ def layer_sets(b: Board) -> dict[str, list[str]]:
     for name in b.copper_layers():
         if name.startswith("In"):
             sets[name.split(".")[0]] = [name, "Edge.Cuts"]
-    sets["copper"] = b.copper_layers() + ["Edge.Cuts"]
+    sets["copper"] = list(reversed(b.copper_layers())) + ["Edge.Cuts"]
     return sets
 
 
@@ -59,9 +59,11 @@ def export_svg(pcb: Path, layers: list[str], out: Path) -> Path:
 
 def _svg(pcb: Path, name: str, layers: list[str]) -> Path:
     """Cached SVG of a layer set, per board modification time."""
+    import hashlib
     cache = pcb.parent / "views" / ".cache"
     stamp = pcb.stat().st_mtime_ns
-    svg = cache / f"{pcb.stem}.{name}.{stamp}.svg"
+    key = hashlib.sha1(",".join(layers).encode()).hexdigest()[:8]  # same name, other layers
+    svg = cache / f"{pcb.stem}.{name}.{stamp}.{key}.svg"
     if not svg.exists():
         for old in cache.glob(f"{pcb.stem}.{name}.*.svg"):
             old.unlink()

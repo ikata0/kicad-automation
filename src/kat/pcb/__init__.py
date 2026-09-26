@@ -16,7 +16,8 @@ from ..env import tidy
 from . import checks, syncer, views
 from .board import Board, Footprint, Pad
 
-__all__ = ["Board", "Footprint", "Pad", "check", "drc", "edit", "load", "snapshot", "sync", "view"]
+__all__ = ["Board", "Footprint", "Pad", "check", "drc", "edit", "load", "refill", "snapshot", "sync",
+           "view"]
 
 
 def load(path: Path | str) -> Board:
@@ -64,3 +65,9 @@ def view(pcb: Path | str, around: str | None = None, at: tuple[float, float] | N
          margin: float | None = None, ppm: float | None = None, out: Path | str | None = None) -> dict:
     """Zoomed PNG of one board region (see ``kat.pcb.views.view``)."""
     return views.view(pcb, around, at, region, layers, margin, ppm, out)
+
+
+def refill(pcb: Path | str) -> dict:
+    """Fill all pours and save them into the board (KiCad's zone filler, via DRC)."""
+    d = checks.drc(Path(pcb), parity=False, refill=True, save=True)
+    return tidy({"file": str(pcb), "drc_errors": d["errors"], "unconnected": len(d["unconnected"])})

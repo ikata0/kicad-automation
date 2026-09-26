@@ -41,7 +41,7 @@ def test_snapshot_pictures_tiles_crops(board):
 
 def test_view_around_part_and_cache(board, capsys):
     v = kat.pcb.view(board, around="R1", layers="copper")
-    assert Path(v["png"]).exists() and v["layers"][:2] == ["F.Cu", "B.Cu"]
+    assert Path(v["png"]).exists() and v["layers"][:2] == ["B.Cu", "F.Cu"]
     # small parts: the scale is capped at 120 px/mm, so the picture stays below 1600 px
     assert v["px_per_mm"] <= 120 and max(v["width"], v["height"]) <= 1601
     kat.pcb.view(board, at=(v["region"][0] + 1, v["region"][1] + 1), layers="copper")

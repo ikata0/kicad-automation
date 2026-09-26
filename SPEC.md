@@ -221,7 +221,26 @@ Order in a placement pass: mechanical and fixed parts, connectors, critical anal
 heat sources, decoupling (`place_near`), then the rest; repeated blocks once, then
 `replicate` (or a loop).
 
-### 4.9 Board checks and review
+### 4.9 Structure before routing
+
+The spike showed the autorouter optimises "connected", not "good": with a free hand it cut
+the GND pour into islands. So the agent lays the structure first and locks it:
+
+| Method | Effect |
+|---|---|
+| `track(["R1.2", "D1.2"], layer, width)` | net from the pads it touches; refused if they disagree (connections come from the schematic) or if it comes closer than the net-class clearance to other-net copper |
+| `via(at, net)` | through via; on a pad (`"U1.9"`) it takes the pad's net |
+| `via_to_plane("D1.1")`, `fanout(refs, nets=["GND"])` | short stub + via next to an SMD pad (outward first, then sideways), so it reaches its plane |
+| `stitch("GND", pitch)` | stitching vias on a grid where they clear copper and courtyards (after the structure) |
+| `lock(net)`, `remove_tracks(net, layer)` | locked copper stays for the router and for rip-up |
+| `net_rules(net)` | width, clearance, via size of the net's class |
+| `kat.pcb.refill(PCB)` | fill the pours and save them (KiCad's filler) |
+
+Recipe: assign layers (a plane layer gets a track keep-out), place a via per plane pad
+(`fanout`), lay critical nets (supplies, Kelvin, guards) by hand and lock them, then route
+the rest. LED matrix: 100 cathode vias in 0.4 s, DRC without errors or islands.
+
+### 4.10 Board checks and review
 
 `kat pcb check PCB` runs KiCad's DRC with zones refilled in memory and schematic parity,
 plus kat's findings (outline missing, parts outside the outline). `ok` = no DRC errors,
@@ -265,7 +284,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `check SCH [--expect NETLIST]` | ERC + netlist comparison + drawing findings |
 | `ready SCH [--expect NETLIST] [--require-field NAME]` | gate before the PCB layout (§6.1) |
 | `pcb sync PCB [--sch] [--dry-run] [--force] [--rip-stale]` | parts and nets onto the board (§4.6) |
-| `pcb check PCB` / `pcb snapshot PCB` / `pcb view PCB ...` | board DRC + findings, history step with pictures, zoomed view (§4.9) |
+| `pcb check PCB` / `pcb snapshot PCB` / `pcb view PCB ...` | board DRC + findings, history step with pictures, zoomed view (§4.10) |
 | `snapshot SCH [--slug] [--note] [--expect] [--tiles] [--finding-crops N]` | SVG + trimmed PNG + check into `history/`; tiles and finding close-ups |
 | `view SCH --around REF / --at X,Y / --region X,Y,W,H` | zoomed PNG of one region into `views/` |
 | `add`, `wire`, `connect`, `label`, `power`, `nc` | draw |

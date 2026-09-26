@@ -100,3 +100,46 @@ class Index:
                     seen.add(id(item))
                     out.append(item)
         return out
+
+
+# --- distances (clearance checks) --------------------------------------------------------
+
+Point = tuple[float, float]
+
+
+def point_seg(p: Point, a: Point, b: Point) -> float:
+    (px, py), (ax, ay), (bx, by) = p, a, b
+    L2 = (bx - ax) ** 2 + (by - ay) ** 2
+    u = 0.0 if L2 == 0 else max(0.0, min(1.0, ((px - ax) * (bx - ax) + (py - ay) * (by - ay)) / L2))
+    return math.hypot(ax + u * (bx - ax) - px, ay + u * (by - ay) - py)
+
+
+def _cross(o: Point, a: Point, b: Point) -> float:
+    return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+
+def segs_cross(a: Point, b: Point, c: Point, d: Point) -> bool:
+    d1, d2, d3, d4 = _cross(c, d, a), _cross(c, d, b), _cross(a, b, c), _cross(a, b, d)
+    return ((d1 > 0) != (d2 > 0)) and ((d3 > 0) != (d4 > 0))
+
+
+def seg_seg(a: Point, b: Point, c: Point, d: Point) -> float:
+    if segs_cross(a, b, c, d):
+        return 0.0
+    return min(point_seg(a, c, d), point_seg(b, c, d), point_seg(c, a, b), point_seg(d, a, b))
+
+
+def inside(poly: list[Point], p: Point) -> bool:
+    x, y = p
+    hit = False
+    for (x1, y1), (x2, y2) in zip(poly, poly[1:] + poly[:1]):
+        if (y1 > y) != (y2 > y) and x < (x2 - x1) * (y - y1) / (y2 - y1) + x1:
+            hit = not hit
+    return hit
+
+
+def poly_seg(poly: list[Point], a: Point, b: Point) -> float:
+    """Distance between a polygon (area) and a segment; 0 if they touch or overlap."""
+    if inside(poly, a) or inside(poly, b):
+        return 0.0
+    return min(seg_seg(a, b, p, q) for p, q in zip(poly, poly[1:] + poly[:1]))
