@@ -12,7 +12,12 @@ in `src/kat/pcb/`), skills in `skills/` (kicad-design, kicad-schematic, kicad-la
   (`tests/test_pcb_geometry.py`).
 - Library first: logic lives in the library (`kat.Sheet`, `kat.*` functions); `cli.py` only
   parses arguments and calls it. New commands get a library function or method first.
-- CLI output is JSON only; errors are `{"error": ...}` with exit code 2.
+- CLI output is JSON only (exception: `kat api` prints text unless `--json`); errors are
+  `{"error": ...}` with exit code 2.
+- Every CLI command on a project is journaled in `<NAME>_REPORT.md` (`src/kat/report.py`);
+  new commands that make pictures pass them to `report.snapshot_images`, library functions
+  that take a project file call `report.touch(path)`. New public functions need a docstring
+  (units, return value): `kat api` shows them and `tests/test_api.py` checks them.
 - The workflow and sync semantics are specified in `SPEC.md`; keep it, the skill and
   `kat --help` texts in sync when behaviour changes. New pitfalls go into SPEC.md §7.
 - Board changes are judged by KiCad's DRC (`kat pcb check`), never by our own geometry or

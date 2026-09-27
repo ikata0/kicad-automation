@@ -28,6 +28,9 @@ def _f(node, key, i=1, default=0.0) -> float:
 
 @dataclass
 class Pad:
+    """A pad in board coordinates (mm, degrees): ``ref``, ``number``, ``net``, centre ``x``,
+    ``y``, absolute ``angle``, ``shape``, size ``w`` x ``h``, ``kind`` (smd, thru_hole, ...),
+    copper ``layers`` and ``drill``."""
     ref: str
     number: str
     net: str
@@ -44,10 +47,12 @@ class Pad:
 
     @property
     def outline(self) -> list[tuple[float, float]]:
+        """The pad's copper outline as a polygon in board mm (circles and ovals as 16-gons)."""
         return pad_outline(self.shape, self.x, self.y, self.w, self.h, self.angle)
 
     @property
     def box(self) -> Box:
+        """Bounding box (x0, y0, x1, y1) of the pad's copper in board mm."""
         return box_of(self.outline)
 
     def on(self, layer: str) -> bool:
@@ -57,25 +62,31 @@ class Pad:
 
 
 class Footprint:
+    """A footprint on the board. Position ``x``, ``y`` in mm, ``rot`` in degrees, ``side``
+    "F" or "B"; ``ref``, ``value``, ``lib_id``, ``path`` (link to the schematic symbol)."""
+
     def __init__(self, node: list):
         self.node = node
 
-    lib_id = property(lambda self: str(self.node[1]))
-    uuid = property(lambda self: str(find(self.node, "uuid")[1]))
-    x = property(lambda self: _f(self.node, "at", 1))
-    y = property(lambda self: _f(self.node, "at", 2))
-    rot = property(lambda self: _f(self.node, "at", 3))
-    side = property(lambda self: "B" if str(find(self.node, "layer")[1]).startswith("B.") else "F")
-    ref = property(lambda self: self.field("Reference") or "")
-    value = property(lambda self: self.field("Value") or "")
+    lib_id = property(lambda self: str(self.node[1]), doc="Library id, ``Library:Footprint``.")
+    uuid = property(lambda self: str(find(self.node, "uuid")[1]), doc="The footprint's uuid.")
+    x = property(lambda self: _f(self.node, "at", 1), doc="Origin x in board mm.")
+    y = property(lambda self: _f(self.node, "at", 2), doc="Origin y in board mm (y grows downwards).")
+    rot = property(lambda self: _f(self.node, "at", 3), doc="Rotation in degrees (counter-clockwise).")
+    side = property(lambda self: "B" if str(find(self.node, "layer")[1]).startswith("B.") else "F",
+                    doc='"F" (top) or "B" (bottom).')
+    ref = property(lambda self: self.field("Reference") or "", doc="Reference designator.")
+    value = property(lambda self: self.field("Value") or "", doc="Value field.")
 
     @property
     def board_only(self) -> bool:
+        """True for parts without a schematic symbol (holes, fiducials); sync ignores them."""
         attr = find(self.node, "attr")
         return attr is not None and any(str(t) == "board_only" for t in attr[1:])
 
     @property
     def path(self) -> str:
+        """``/<symbol uuid>``: KiCad's link from the footprint to its schematic symbol."""
         p = find(self.node, "path")
         return str(p[1]) if p else ""
 
@@ -83,10 +94,12 @@ class Footprint:
         return next((p for p in find_all(self.node, "property") if str(p[1]) == name), None)
 
     def field(self, name: str) -> str | None:
+        """Value of the property ``name``, or None."""
         p = self._prop(name)
         return str(p[2]) if p is not None else None
 
     def fields(self) -> dict[str, str]:
+        """All properties, name -> value."""
         return {str(p[1]): str(p[2]) for p in find_all(self.node, "property")}
 
     def set_field(self, name: str, value: str, hide: bool = True) -> None:
@@ -110,14 +123,17 @@ class Footprint:
         self.node.insert(idx, new)
 
     def remove_field(self, name: str) -> None:
+        """Delete the property ``name`` if present."""
         p = self._prop(name)
         if p is not None:
             self.node.remove(p)
 
     def to_board(self, lx: float, ly: float) -> tuple[float, float]:
+        """Footprint-local point (mm) -> board coordinates (rotation applied)."""
         return to_board(self.x, self.y, self.rot, lx, ly)
 
     def pads(self) -> list[Pad]:
+        """All pads in board coordinates."""
         out = []
         for p in find_all(self.node, "pad"):
             at, size = find(p, "at"), find(p, "size")
@@ -135,6 +151,7 @@ class Footprint:
         return out
 
     def pad(self, number: str) -> Pad:
+        """The pad ``number`` (a string: "1", "A3", "EP"); KatError if missing."""
         for p in self.pads():
             if p.number == number:
                 return p
@@ -167,6 +184,7 @@ class Footprint:
         return box_of(pts) if pts else None
 
     def courtyard(self) -> Box | None:
+        """Courtyard bounding box in board mm, or None without a courtyard."""
         return self.graphics_box("CrtYd")
 
     def box(self) -> Box | None:
@@ -174,6 +192,8 @@ class Footprint:
         return self.courtyard() or union(p.box for p in self.pads())
 
     def place(self, x: float | None = None, y: float | None = None, rot: float | None = None) -> None:
+        """Set position (mm) and/or rotation (degrees) without any check; the checked way
+        is ``Board.move``."""
         at = find(self.node, "at")
         if x is not None:
             at[1] = num(x)
@@ -190,12 +210,21 @@ class Footprint:
         fps.set_rotation(self.node, rot)
 
     def info(self) -> dict:
+        """ref, value, footprint, x, y, rot, side, box as a dict."""
         return {"ref": self.ref, "value": self.value, "footprint": self.lib_id,
                 "x": self.x, "y": self.y, "rot": self.rot, "side": self.side,
                 "box": list(b) if (b := self.box()) else None}
 
 
 class Board(SetupMixin, PlacementMixin, StructureMixin, FinishMixin):
+    """A KiCad 10 board file, edited in memory and saved once through ``kicad-cli pcb
+    upgrade``. Use it inside ``with kat.pcb.edit(PCB) as b:``. Coordinates in mm, y grows
+    downwards, angles in degrees. Pads are named ``"REF.NUMBER"`` (``"U1.8"``).
+    Methods by phase: setup (outline, layers, plane, zone, keepout, netclass, rules,
+    mounting_hole), placement (move, move_many, place_near, align, distribute, blocks,
+    replicate), structure (track, via, fanout, stitch, lock, remove_tracks), finishing
+    (place_refs, board_text, title_from_schematic, fiducials)."""
+
     def __init__(self, path: Path | str):
         self.path = Path(path)
         self.tree = loads(self.path.read_text(encoding="utf-8"))
@@ -214,6 +243,8 @@ class Board(SetupMixin, PlacementMixin, StructureMixin, FinishMixin):
         return Board(path)
 
     def save(self) -> None:
+        """Write the board (and changed .kicad_pro / .kicad_dru) and normalise it through
+        ``kicad-cli pcb upgrade``; ``kat.pcb.edit`` calls this for you."""
         self._write_project_files()
         self.path.write_text(dumps(self.tree) + "\n", encoding="utf-8")
         normalize(self.path)
@@ -221,14 +252,17 @@ class Board(SetupMixin, PlacementMixin, StructureMixin, FinishMixin):
 
     @property
     def project_dir(self) -> Path:
+        """The directory holding the board (and its project files)."""
         return self.path.parent
 
     # --- footprints -----------------------------------------------------------------
 
     def footprints(self) -> list[Footprint]:
+        """All footprints on the board."""
         return [Footprint(n) for n in find_all(self.tree, "footprint")]
 
     def footprint(self, ref: str) -> Footprint:
+        """The footprint with reference ``ref``; KatError if missing."""
         for f in self.footprints():
             if f.ref == ref:
                 return f
@@ -236,6 +270,9 @@ class Board(SetupMixin, PlacementMixin, StructureMixin, FinishMixin):
 
     def add_footprint(self, lib_id: str, ref: str, x: float, y: float, rot: float = 0.0,
                       side: str = "F", value: str | None = None) -> Footprint:
+        """Place a library footprint at ``x``, ``y`` (mm) without any link to the schematic.
+        Normally parts come from ``kat.pcb.sync``; parts without a symbol use
+        ``add_board_part``."""
         node = fps.instantiate(lib_id, x, y, rot, side, self.project_dir)
         f = Footprint(node)
         f.set_field("Reference", ref)
@@ -245,14 +282,17 @@ class Board(SetupMixin, PlacementMixin, StructureMixin, FinishMixin):
         return f
 
     def remove_footprint(self, ref: str) -> None:
+        """Delete the footprint ``ref`` (tracks on its pads stay)."""
         self.tree.remove(self.footprint(ref).node)
 
     def pads(self) -> list[Pad]:
+        """All pads of all footprints, in board coordinates."""
         return [p for f in self.footprints() for p in f.pads()]
 
     # --- copper and drawings ----------------------------------------------------------
 
     def tracks(self) -> list[dict]:
+        """Track segments and arcs: kind, start, end, width, layer, net, locked, uuid, node."""
         out = []
         for n in self.tree:
             if head(n) in ("segment", "arc"):
@@ -267,6 +307,7 @@ class Board(SetupMixin, PlacementMixin, StructureMixin, FinishMixin):
         return out
 
     def vias(self) -> list[dict]:
+        """Vias: at, size, drill, net, layers, locked, uuid, node."""
         out = []
         for n in find_all(self.tree, "via"):
             at, net = find(n, "at"), find(n, "net")
@@ -279,6 +320,8 @@ class Board(SetupMixin, PlacementMixin, StructureMixin, FinishMixin):
 
     def add_track(self, start: tuple[float, float], end: tuple[float, float], width: float,
                   layer: str, net: str) -> dict:
+        """One raw track segment, unchecked. Prefer ``track``, which takes the net from the
+        pads and checks clearances."""
         from ..schematic import new_uuid
         node = [Sym("segment"), [Sym("start"), num(start[0]), num(start[1])],
                 [Sym("end"), num(end[0]), num(end[1])], [Sym("width"), num(width)],
@@ -287,6 +330,7 @@ class Board(SetupMixin, PlacementMixin, StructureMixin, FinishMixin):
         return {"uuid": str(node[-1][1])}
 
     def zones(self) -> list[list]:
+        """Zone nodes (pours and keep-outs) as s-expressions."""
         return find_all(self.tree, "zone")
 
     def outline_box(self) -> Box | None:

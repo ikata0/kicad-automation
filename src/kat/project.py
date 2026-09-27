@@ -5,13 +5,13 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from . import env
+from . import env, report
 from .schematic import Schematic
 
 
 def new(path: Path | str, paper: str = "A4", force: bool = False) -> dict:
     """``DIR`` (project named after it) or ``DIR/NAME.kicad_sch``: KiCad's default project
-    template plus an empty schematic."""
+    template plus an empty schematic, and the design report ``NAME_REPORT.md``."""
     target = Path(path)
     d, name = (target, target.name) if target.suffix == "" else (target.parent, target.stem)
     d.mkdir(parents=True, exist_ok=True)
@@ -24,4 +24,7 @@ def new(path: Path | str, paper: str = "A4", force: bool = False) -> dict:
     elif not pro.exists():
         pro.write_text('{"meta": {"filename": "%s.kicad_pro", "version": 3}}\n' % name)
     Schematic.create(sch, paper)
-    return {"project": str(pro), "schematic": str(sch)}
+    out = {"project": str(pro), "schematic": str(sch)}
+    if report.enabled():
+        out["report"] = str(report.ensure(d.resolve(), name))
+    return out

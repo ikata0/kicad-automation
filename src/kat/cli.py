@@ -13,7 +13,7 @@ import sys
 
 import kat
 
-from . import env
+from . import env, report
 from .sheet import xy as _xy
 
 
@@ -149,6 +149,21 @@ def cmd_pcb(a):
     raise env.KatError(f"unknown pcb action {a.pcb_cmd!r}")
 
 
+def cmd_api(a):
+    from . import api
+    return api.lookup(a.name)
+
+
+def cmd_comment(a):
+    text = sys.stdin.read() if a.text == ["-"] else " ".join(a.text)
+    return kat.comment(text, a.kind, a.project)
+
+
+def cmd_batch_exec(a):
+    args = a.args[1:] if a.args[:1] == ["--"] else a.args
+    return kat.batch_exec(a.file, a.project, args)
+
+
 def cmd_netlist(a):
     return kat.nets(a.sch)
 
@@ -225,6 +240,8 @@ def build_parser() -> argparse.ArgumentParser:
         prog="kat", formatter_class=_Fmt,
         description="kat - edit and verify KiCad 10 schematics from the command line.",
         epilog=WORKFLOW)
+    p.add_argument("--no-report", action="store_true",
+                   help="do not journal this command in NAME_REPORT.md (also: KAT_REPORT=0)")
     sp = p.add_subparsers(dest="cmd", required=True, metavar="COMMAND")
 
     def cmd(name, func, summary, description, examples, *, sch=True, mutating=False):
@@ -255,6 +272,40 @@ def build_parser() -> argparse.ArgumentParser:
     s1.add_argument("--limit", type=int, default=30, help="max results (default 30)")
     s2 = lsp.add_parser("show", help="units, pins and fields of one symbol")
     s2.add_argument("lib_id", help="Library:Symbol")
+
+    q = cmd("api", cmd_api, "Look up kat's Python API: signatures and docstrings from the code.",
+            "Without NAME: the functions of kat and kat.pcb and their classes. NAME may be\n"
+            "full (kat.pcb.Board.keepout) or short (pcb.Board.keepout, Board.keepout, keepout);\n"
+            "a function shows its signature, docstring and source line, a class or module its\n"
+            "members with one line each. Plain text; --json for the data.",
+            ["kat api", "kat api Board", "kat api Board.keepout", "kat api kat.pcb.route"], sch=False)
+    q.add_argument("name", nargs="?", help="what to look up")
+    q.add_argument("--json", action="store_true", help="print JSON instead of text")
+
+    # --- journal ---
+    q = cmd("batch-exec", cmd_batch_exec, "Run a Python pass and journal it with its code.",
+            "Runs FILE.py as __main__ (like `python FILE.py`) and appends a batch entry to the\n"
+            "project's NAME_REPORT.md: the script's docstring, its original source, its output,\n"
+            "the error if it failed, and the images of snapshots/views it made. kat calls\n"
+            "inside the script add no entries of their own. The project is --project, else\n"
+            "KAT_PROJECT, else found from the files the script edits, else the working directory.\n"
+            "Exit code 1 when the script failed (its failing edit block saved nothing).",
+            ["kat batch-exec place1.py", "kat batch-exec route_pass.py --project board -- --fast"],
+            sch=False)
+    q.add_argument("file", metavar="FILE.py")
+    q.add_argument("--project", metavar="DIR", help="project directory or file")
+    q.add_argument("args", nargs=argparse.REMAINDER, help="arguments for the script (after --)")
+
+    q = cmd("comment", cmd_comment, "Add a markdown comment to the design report.",
+            "For the agent's own entries: plan (what comes next and why), milestone (what was\n"
+            "reached), problem (a failed check or a design error that needs another iteration),\n"
+            "note. TEXT is markdown; `-` reads it from stdin (for several lines).",
+            ["kat comment --kind plan 'Place the connectors first, then the op-amp.'",
+             "kat comment --kind problem - < findings.md"], sch=False)
+    q.add_argument("text", nargs="+", metavar="TEXT", help="markdown, or - for stdin")
+    q.add_argument("--kind", default="note", choices=["plan", "milestone", "problem", "note"])
+    q.add_argument("--project", metavar="DIR", help="project directory or file (default: found "
+                                                     "from KAT_PROJECT or the working directory)")
 
     q = cmd("list", cmd_list, "List placed symbols, labels, wires and junctions.",
             "Symbols include position, rotation, mirror, value, footprint and body box.\n"
@@ -578,19 +629,43 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
+# commands that write no journal entry: lookups, and those that write their own
+NOT_JOURNALED = ("api", "lib", "comment", "batch-exec")
+
+
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else list(argv)
     args = build_parser().parse_args(argv)
+    report._disabled = args.no_report
+    if args.cmd in NOT_JOURNALED:
+        return _run(args)
+    hint = getattr(args, "sch", None) or getattr(args, "pcb", None) or getattr(args, "path", None)
+    with report.command([a for a in argv if a != "--no-report"], hint) as entry:
+        code = _run(args, entry)
+        entry.exit = code
+    return code
+
+
+def _run(args, entry=None) -> int:
     try:
         if args.mutating:
             with kat.edit(args.sch) as s:
                 out = args.func(s, args)
         else:
             out = args.func(args)
+        if entry is not None:
+            entry.result = out
+        if args.cmd == "api" and not args.json:
+            from . import api
+            print(api.text(out))
+            return 0
         print(json.dumps(env.tidy(out), indent=1, default=list))
         failed = isinstance(out, dict) and (out.get("ok") is False or out.get("ready") is False or
                                             (out.get("check") or {}).get("ok") is False)
         return 1 if failed else 0
     except (env.KatError, ValueError, OSError) as e:
+        if entry is not None:
+            entry.result = {"error": str(e)}
         print(json.dumps({"error": str(e)}))
         return 2
 

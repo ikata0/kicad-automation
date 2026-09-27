@@ -21,20 +21,22 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from . import checks, gate, library, netlist, pcb, syncer
+from . import checks, gate, library, netlist, pcb, report, syncer
 from .env import KatError, tidy
 from .history import restore as _restore
 from .history import snapshot as _snapshot
 from .project import new
+from .report import batch_exec, comment
 from .sheet import Sheet
 from .views import view as _view
 
-__all__ = ["KatError", "Sheet", "check", "edit", "lib_search", "lib_show", "load", "nets",
-           "new", "pcb", "ready", "restore", "snapshot", "sync", "view"]
+__all__ = ["KatError", "Sheet", "batch_exec", "check", "comment", "edit", "lib_search", "lib_show",
+           "load", "nets", "new", "pcb", "ready", "restore", "snapshot", "sync", "view"]
 
 
 def load(path: Path | str) -> Sheet:
     """Open a sheet for inspection (or for editing with an explicit ``save()``)."""
+    report.touch(path)
     return Sheet(path)
 
 
@@ -42,6 +44,7 @@ def load(path: Path | str) -> Sheet:
 def edit(path: Path | str, dry_run: bool = False) -> Iterator[Sheet]:
     """Edit a sheet: all changes are saved once when the block ends without an exception.
     On an exception, or with ``dry_run=True``, the file is left untouched."""
+    report.touch(path)
     s = Sheet(path)
     yield s
     if not dry_run:
@@ -50,11 +53,13 @@ def edit(path: Path | str, dry_run: bool = False) -> Iterator[Sheet]:
 
 def sync(sch: Path | str, design: Path | str, dry_run: bool = False) -> dict:
     """Bring a design netlist (e.g. from SKiDL) into the schematic, keeping the arrangement."""
+    report.touch(sch)
     return tidy(syncer.run(Path(sch), Path(design), dry_run))
 
 
 def check(sch: Path | str, expect: Path | str | None = None) -> dict:
     """ERC, netlist comparison with ``expect`` and drawing findings (``ok`` / ``clean``)."""
+    report.touch(sch)
     return tidy(checks.run(Path(sch), Path(expect) if expect else None))
 
 
@@ -64,6 +69,7 @@ def ready(sch: Path | str, expect: Path | str | None = None,
     part has a value, a footprint that exists and has a pad for every symbol pin, and the
     ``require`` fields (parts excluded from the BOM are exempt). ``errors`` block the
     layout; ``warnings`` (extra pads, footprint filters, 3D models) want a human look."""
+    report.touch(sch)
     return tidy(gate.run(Path(sch), Path(expect) if expect else None, tuple(require)))
 
 
@@ -74,11 +80,14 @@ def snapshot(sch: Path | str, slug: str = "", note: str | None = None,
     schematic copy, check.json, note.md). Large sheets (PNG > 2000 px) also get readable
     ``tiles/`` unless ``tiles=False``; ``finding_crops=N`` adds close-ups of the first N
     findings. Returns the paths and the check summary."""
-    return tidy(_snapshot(sch, slug, note, expect, out, zoom, tiles, finding_crops))
+    res = tidy(_snapshot(sch, slug, note, expect, out, zoom, tiles, finding_crops))
+    report.snapshot_images(sch, res, f"kat.snapshot({str(sch)!r}, slug={slug!r})", slug or "sch")
+    return res
 
 
 def restore(sch: Path | str, step: Path | str, expect: Path | str | None = None) -> dict:
     """Put the schematic back to a history step (its saved copy) and check it."""
+    report.touch(sch)
     return _restore(sch, step, expect)
 
 
@@ -87,7 +96,10 @@ def view(sch: Path | str, around: str | None = None, at: tuple[float, float] | N
          zoom: float | None = None, out: Path | str | None = None) -> dict:
     """Zoomed PNG of one region: ``around`` a part, ``at`` a point (x, y) or a ``region``
     (x, y, w, h) in sheet mm. Written to ``views/``; not a history step."""
-    return tidy(_view(sch, around, at, region, margin, zoom, out))
+    res = tidy(_view(sch, around, at, region, margin, zoom, out))
+    what = around or (f"at {at[0]:g},{at[1]:g}" if at else f"region {region}")
+    report.snapshot_images(sch, res, f"kat.view({str(sch)!r}, {what})", "view")
+    return res
 
 
 def nets(sch: Path | str) -> dict[str, list]:

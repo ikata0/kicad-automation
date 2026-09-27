@@ -44,11 +44,16 @@ def _tidy_results(cls):
 
 @_tidy_results
 class Sheet:
+    """A schematic sheet with the editing verbs (add, wire, connect, move, ...). Use it
+    inside ``with kat.edit(SCH) as s:``; saved once through ``kicad-cli sch upgrade``.
+    Points are ``"REF.PIN"`` or ``(x, y)`` in mm, y grows downwards."""
+
     def __init__(self, path: Path | str | Schematic):
         self.schematic = path if isinstance(path, Schematic) else Schematic(Path(path))
 
     @property
     def path(self) -> Path:
+        """The .kicad_sch file."""
         return self.schematic.path
 
     def save(self) -> None:

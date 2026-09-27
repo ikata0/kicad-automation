@@ -49,6 +49,7 @@ class PlacementMixin:
         return sorted(found, key=lambda f: (round(f["dist"], 3), f["kind"] != "pad"))
 
     def point(self, at) -> tuple[float, float]:
+        """``"REF.PAD"`` -> the pad centre; ``(x, y)`` unchanged (mm)."""
         if isinstance(at, str):
             ref, _, num = at.partition(".")
             p = self.footprint(ref).pad(num)
@@ -84,6 +85,8 @@ class PlacementMixin:
         return {"moved": [self.footprint(r).info() for r in moves], "overlaps": hits}
 
     def flip(self, ref: str, allow_overlap: bool = False) -> dict:
+        """Move ``ref`` to the other side at the same position; refused on a courtyard
+        overlap unless ``allow_overlap``. Returns like ``move``."""
         f = self.footprint(ref)
         return self.move(ref, side="B" if f.side == "F" else "F", allow_overlap=allow_overlap)
 
@@ -174,6 +177,7 @@ class PlacementMixin:
         return out
 
     def block_box(self, name: str) -> Box:
+        """Bounding box (mm) of the courtyards of the block ``name``."""
         refs = self.blocks().get(name)
         if not refs:
             raise env.KatError(f"no footprints with {BLOCK} = {name!r}")
