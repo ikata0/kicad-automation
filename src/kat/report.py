@@ -162,21 +162,36 @@ SUMMARY_FIRST = ("ok", "clean", "ready", "match", "netlist_match", "parity", "un
                  "warnings", "added", "updated", "replaced", "removed", "renamed", "status")
 
 
+def rel(text: str, root: Path | None) -> str:
+    """An absolute path as the report shows it: relative to the project root when it lies
+    inside it or at most two levels up, else unchanged."""
+    if not root or not text.startswith("/"):
+        return text
+    r = os.path.relpath(text, root)
+    return r if not r.startswith("../../../") else text
+
+
+def _cmdline(args: list[str], root: Path | None) -> str:
+    return shlex.join([rel(str(a), root) for a in args])
+
+
 def _short(v, root: Path | None) -> str | None:
     if isinstance(v, bool) or v is None:
         return json.dumps(v)
     if isinstance(v, (int, float)):
         return f"{v:g}" if isinstance(v, float) else str(v)
     if isinstance(v, str):
-        if root and v.startswith(str(root)):
-            v = os.path.relpath(v, root)
+        v = rel(v, root)
         return (f"`{v}`" if v else '""') if len(v) <= 80 else None
     if isinstance(v, (list, tuple)):
         if not v:
             return "none"
         if all(isinstance(x, (int, float)) for x in v) and len(v) <= 4:
             return "[" + ", ".join(_short(x, root) for x in v) + "]"
-        return f"{len(v)} items" if v else "none"
+        refs = [x.get("ref") for x in v if isinstance(x, dict)]
+        if refs and all(isinstance(r, str) for r in refs):
+            return ", ".join(refs[:12]) + (f" (+{len(refs) - 12})" if len(refs) > 12 else "")
+        return f"{len(v)} item{'s' if len(v) != 1 else ''}"
     if isinstance(v, dict):
         if v and len(v) <= 8 and all(isinstance(x, (bool, int, float, str)) or x is None for x in v.values()):
             return ", ".join(f"{k} {_short(x, root)}" for k, x in v.items())
@@ -189,10 +204,13 @@ def summarize(result, root: Path | None = None, limit: int = 14) -> list[str]:
     list lengths; a nested ``check`` is summarised with a ``check.`` prefix."""
     if not isinstance(result, dict):
         return [f"{len(result)} items"] if isinstance(result, list) else []
-    keys = [k for k in SUMMARY_FIRST if k in result] + [k for k in result if k not in SUMMARY_FIRST]
+    keys = [k for k in SUMMARY_FIRST if k in result] + (["check"] if "check" in result else []) + \
+        [k for k in result if k not in SUMMARY_FIRST and k != "check"]
     lines = []
     for k in keys:
         v = result[k]
+        if k not in SUMMARY_FIRST and (v in (None, False, "") or (isinstance(v, (list, dict)) and not v)):
+            continue                               # nothing to say
         if k == "check" and isinstance(v, dict):
             lines += [f"check.{line}" for line in summarize(v, root, limit=8)]
             continue
@@ -329,8 +347,7 @@ def command(argv: list[str], hint: Path | str | None = None) -> Iterator[Entry]:
         found = e.project()
         if found is not None:
             root = found[0]
-            line = shlex.join(argv).replace(str(root) + "/", "")
-            head = f"`kat {line}` · {time.time() - t0:.1f} s · exit {e.exit}"
+            head = f"`kat {_cmdline(argv, root)}` · {time.time() - t0:.1f} s · exit {e.exit}"
             lines = summarize(e.result, root)
             body = head + ("\n\n" + "\n".join(f"- {l}" for l in lines) if lines else "")
             if e.result is not None:
@@ -393,10 +410,11 @@ def batch_exec(file: Path | str, project: Path | str | None = None, argv: list[s
         doc = ast.get_docstring(ast.parse(source)) or ""
     except SyntaxError:
         doc = ""
-    title = doc.splitlines()[0] if doc else ""
+    title = " ".join(doc.split("\n\n")[0].split()) if doc else ""
     e.slug = e.slug or file.stem
     found = e.project()
-    head = (f"`kat batch-exec {shlex.join([str(file), *argv])}` · {seconds} s · "
+    root = found[0] if found else None
+    head = (f"`kat batch-exec {_cmdline([str(file.resolve()), *argv], root)}` · {seconds} s · "
             f"{'ok' if error is None else 'FAILED (the edit block that raised saved nothing)'}")
     body = (f"**{title}**\n\n" if title else "") + head + f"\n\n```python\n{source.rstrip()}\n```"
     output = (out.buf.getvalue() + err.buf.getvalue()).strip()

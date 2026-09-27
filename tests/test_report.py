@@ -130,7 +130,8 @@ def test_disabled_writes_nothing(project, monkeypatch):
 
 def test_summary_lines():
     lines = report.summarize({"ok": False, "check": {"ok": True, "parity": 0, "by_type": {"x": 2}},
-                              "added": ["R1", "R2"], "removed": [], "file": "/a/b.kicad_pcb"},
-                             Path("/a"))
-    assert lines[:3] == ["ok: false", "added: 2 items", "removed: none"]
+                              "added": [{"ref": "R1"}, {"ref": "C4"}], "removed": [], "file": "/a/b.kicad_pcb",
+                              "stale": [], "vias": ["V1"]}, Path("/a"))
+    assert lines[:3] == ["ok: false", "added: R1, C4", "removed: none"]
+    assert "vias: 1 item" in lines and not any(l.startswith("stale") for l in lines)
     assert "check.ok: true" in lines and "check.by_type: x 2" in lines and "file: `b.kicad_pcb`" in lines

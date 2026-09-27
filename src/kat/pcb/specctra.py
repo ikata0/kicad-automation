@@ -14,6 +14,7 @@ import re
 from pathlib import Path
 
 from .. import env
+from ..syncer import natural_key
 from ..sexpr import find, find_all, head, loads
 from .board import Board
 
@@ -97,8 +98,10 @@ def write_dsn(b: Board, path: Path, nets: list[str] | None = None) -> dict:
                  f" (clearance 50 (type smd_smd)))")
     lines.append("  )")
 
-    # placement: one image per footprint, placed front at 0 degrees
-    fps = b.footprints()
+    # placement: one image per footprint, placed front at 0 degrees. Everything in reference
+    # order: the board file orders items by random uuids, and Freerouting's result depends
+    # on the input order, so an unsorted DSN routes differently on every sync.
+    fps = sorted(b.footprints(), key=lambda f: natural_key(f.ref))
     lines.append("  (placement")
     for f in fps:
         lines.append(f"    (component {_q('img_' + f.ref)} (place {_q(f.ref)} {_xy(f.x, f.y)} front 0))")
@@ -145,13 +148,13 @@ def write_dsn(b: Board, path: Path, nets: list[str] | None = None) -> dict:
 
     # existing copper: locked = protected, the rest may be changed by the router
     lines.append("  (wiring")
-    for t in b.tracks():
+    for t in sorted(b.tracks(), key=lambda t: (t["net"], t["layer"], t["start"], t["end"])):
         if t["kind"] != "segment" or not t["net"]:
             continue
         kind = "protect" if t["locked"] or (nets is not None and t["net"] not in nets) else "route"
         lines.append(f"    (wire (path {_q(t['layer'])} {_um(t['width'])} {_xy(*t['start'])} {_xy(*t['end'])})"
                      f" (net {_q(t['net'])}) (type {kind}))")
-    for v in b.vias():
+    for v in sorted(b.vias(), key=lambda v: (v["net"], v["at"])):
         if not v["net"]:
             continue
         kind = "protect" if v["locked"] or (nets is not None and v["net"] not in nets) else "route"

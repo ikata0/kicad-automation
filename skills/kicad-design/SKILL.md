@@ -10,7 +10,7 @@ description: Overview of agent-driven KiCad 10 hardware design with `kat` - the 
 | 1. Circuit | SKiDL (`tag=`, `ref=`, named nets, `footprint=`, `part.fields["MPN"]`) | kicad-schematic | netlist generates, ERC-worthy |
 | 2. Schematic | `kat sync`, arrangement passes, `kat snapshot` | kicad-schematic | `kat ready SCH --expect design.net` → `ready` |
 | 3. Layout | `kat pcb sync/…/route`, layout passes, `kat pcb snapshot` | kicad-layout | `kat pcb check` clean |
-| 4. Fabrication | `kat pcb fab` | kicad-layout | `kat pcb ready PCB` → `ready` |
+| 4. Fabrication | `kat pcb fab`, `kat open PCB --verify` | kicad-layout | `kat pcb ready PCB` → `ready` |
 
 **One source of truth.** Connectivity lives in the SKiDL design. Whatever phase you are in,
 a circuit change goes: SKiDL → `kat sync` (schematic, then arrange + snapshot) →
@@ -21,5 +21,13 @@ the schematic drawing or on the board; `check --expect` and DRC schematic parity
 part is better. Make the change in SKiDL, pass the gates again, and continue the layout
 where it was; `kat pcb sync` reports what moved or became stale.
 
-**Record the work.** Every sync and pass gets a snapshot with a note; history steps are the
-undo (`kat restore` for the schematic; board copies in `history/<stamp>_pcb_*/`).
+**Record the work.** The project's `NAME_REPORT.md` is the design journal the user reviews
+step by step: kat records every command on the project with its result, `kat batch-exec`
+records each pass with its code, snapshots add their pictures. Add your own reasoning with
+`kat comment --kind plan|problem|milestone "..."`: the plan before a phase, each problem
+that sends you back, each milestone reached. History steps are the undo (`kat restore` for
+the schematic; board copies in `history/<stamp>_pcb_*/`).
+
+**Look it up, and let KiCad look.** `kat api NAME` shows any call's signature and
+documentation. Before handing over, `kat open FILE --verify` opens the schematic and the
+board in KiCad's own editors; then ask the user to open them too.

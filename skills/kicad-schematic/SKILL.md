@@ -17,8 +17,11 @@ layout.
 1. **Connectivity lives in the SKiDL design only.** In the drawing you only arrange things;
    `kat check --expect design.net` must keep matching.
 2. Every SKiDL part gets `tag=` and `ref=`; name the nets that matter (`Net("TIA_OUT")`).
-3. KiCad GUI closed while editing.
+3. KiCad GUI closed while editing (kat refuses while KiCad's lock file says it is open).
 4. Snapshot after every sync and every arrangement pass.
+5. Keep the design report readable: passes run with `kat batch-exec`, your plans, problems
+   and milestones go in with `kat comment --kind plan|problem|milestone "..."` (markdown).
+   Every kat command on the project is recorded in `NAME_REPORT.md` by itself.
 
 ## Loop
 
@@ -31,15 +34,18 @@ layout.
    (inputs left, outputs right, supplies up, ground down); labels that would read better
    as wires. `check.json` lists `overlaps`, `body_overlaps`, `off_page`, `duplicates`,
    `unnamed` — hints, not a verdict.
-5. **Arrange** the drawing with a Python pass, `python passN.py`. It starts with a docstring
-   that states what the review found and edits inside `with kat.edit(SCH) as s:`, which
-   saves once, or not at all if anything raises. Then back to 3.
+5. **Arrange** the drawing with a Python pass, `kat batch-exec passN.py` (runs it like
+   `python passN.py` and records its code in the report). It starts with a docstring that
+   states what the review found and edits inside `with kat.edit(SCH) as s:`, which saves
+   once, or not at all if anything raises. Then back to 3. `kat api Sheet` lists the editing
+   verbs, `kat api Sheet.move` explains one.
 
 **Stop when** `check.json` says `"clean": true` and the review — at readable resolution,
 over the whole sheet — shows no problems. Report remaining ERC warnings instead of
 polishing forever.
 
-**Before PCB layout**: `kat ready SCH --expect design.net` must say `"ready": true`.
+**Before PCB layout**: `kat ready SCH --expect design.net` must say `"ready": true`;
+`kat open SCH --verify` shows that KiCad's schematic editor opens the file.
 Fix its errors in SKiDL, then sync (step 1–2): `footprint="Lib:Name"` on every part
 (`kat ready` names the library/file it cannot find and pins without a pad),
 `part.fields["MPN"] = "..."` for the chosen part. Look at each warning and say in the

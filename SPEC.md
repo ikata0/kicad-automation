@@ -283,6 +283,7 @@ classes → `remove_tracks()` (locked copper stays) → route again.
 | `b.place_refs(size=0.8)` | reference designators beside each courtyard (above, below, left, right - first spot clear of pads, other references and the edge), upright or 90° for tall parts; unplaceable ones go to the fab layer and are listed |
 | `b.board_text(text, at)`, `b.title_from_schematic()` | board name/revision on the silkscreen; title block copied from the schematic |
 | `b.fiducials(3)` | board-only fiducials near the corners, clear of courtyards |
+| `kat pcb refill PCB` | KiCad's zone filler fills every pour and saves the board |
 | `kat pcb fab PCB` | `fab/<name>-<rev>/`: Gerbers (copper, paste, silk, mask, outline) + drill files and map, zipped; `assembly/` position file and BOM (with MPN, from the schematic); IPC-D-356; STEP; 3D renders. Pours are refilled for the Gerbers |
 | `kat pcb ready PCB` | release gate: board check clean (no DRC errors or warnings, parity 0, nothing unconnected or outside the outline), title and revision set, fabrication set complete and newer than the board |
 
@@ -311,12 +312,58 @@ Board geometry (pad positions, courtyards) follows KiCad's storage convention �
 in footprint coordinates, bottom side mirrored in y, pad and text angles absolute — and is
 tested against IPC-D-356 and DRC's library comparison.
 
+### 4.13 Design journal
+
+Every project has a design report `NAME_REPORT.md` in its root (next to `NAME.kicad_pro`),
+created by `kat new` or by the first entry. The user reads it to review, step by step, what
+the agent did. Entries are only appended (under a file lock); each has a running number,
+date, time and kind: `## 12 · 2026-09-27 14:03:11 · command`.
+
+| Kind | Written by | Content |
+|---|---|---|
+| `command` | every `kat` CLI command on a project (not `lib`, `api`) | the command line, time, exit code, key result lines, the full JSON result collapsed (`<details>`, cut after 150 lines) |
+| `batch` | `kat batch-exec FILE.py [--project DIR] [-- ARGS]` / `kat.batch_exec` | the script's docstring, its source as written, its output, the error and traceback if it failed, the images of snapshots/views it made; kat calls inside add no entries of their own |
+| `plan`, `milestone`, `problem`, `note` | `kat comment --kind K TEXT` (`-` = stdin) / `kat.comment` | the agent's markdown: what comes next, what was reached, what failed and needs another iteration |
+| `snapshot`, `view` | `kat.snapshot`, `kat.pcb.snapshot`, `kat.view`, `kat.pcb.view` called from plain Python | the call, the check summary, the images |
+
+Images are copied to `NAME_REPORT/<NNN>_<slug>/` (overview pictures only: the sheet PNG;
+board `placement`, `top`, `bottom`, `In*`, `3d_top`) and linked relatively. Paths in entries
+are relative to the project root. The project of a batch is `--project`, else
+`KAT_PROJECT`, else the files the script opens, else the working directory (a project there
+or in its only project subdirectory). `KAT_REPORT=0` or `kat --no-report` turns it off.
+
+### 4.14 API lookup
+
+`kat api` prints the library's calls from the code itself: without a name an overview of
+`kat` and `kat.pcb`; `kat api Board` a class with one line per method (mixins included);
+`kat api Board.keepout` (or `keepout`, `pcb.Board.keepout`, `kat.pcb.Board.keepout`) the
+signature, the full docstring and the source line - the same text as Python's `help()` for
+a function. Ambiguous short names list their matches. Text output (`--json` for data).
+Every public call has a docstring stating units and return value (`tests/test_api.py`).
+
+### 4.15 Opening in KiCad
+
+- **Guard:** kat refuses to save a schematic or board while KiCad's lock file
+  (`~NAME.kicad_pcb.lck`) says the file is open: from another host, or while a KiCad
+  process of this user runs. A lock without any KiCad process is stale and ignored.
+- `kat open FILE` starts the matching editor (pcbnew, eeschema, kicad for a `.kicad_pro`)
+  for a person.
+- `kat open FILE --verify` starts it with a private copy of the KiCad settings (IPC API on)
+  and a private `TMPDIR` (own API socket and instance check - a KiCad the user has open is
+  not touched), then compares what the editor loaded with kat's reading and closes it
+  without saving. Board (kicad-python, `pip install 'kat[gui]'`): footprints, nets,
+  track/via counts, zone names, outline. Schematic: KiCad 10.0.6 has no schematic API, so
+  "verified" means the editor opened it (lock file written) and kept running. Without a
+  display or kicad-python the answer is `verified: null` with the reason.
+- Tests: marker `kicad_gui`, only with `-m kicad_gui` (they open windows).
+
 ## 5. Command reference
 
 Library: `kat.new`, `kat.load`, `kat.edit`, `kat.sync`, `kat.check`, `kat.snapshot`, `kat.view`,
 `kat.ready`, `kat.pcb.sync` / `edit` / `check` / `snapshot` / `view` / `route` / `refill` / `fab` /
-`ready` / `drc` (board), `kat.nets`, `kat.lib_search`, `kat.lib_show`, and the `kat.Sheet` methods; each returns what
-the matching command prints.
+`ready` / `drc` (board), `kat.nets`, `kat.lib_search`, `kat.lib_show`, `kat.comment`,
+`kat.batch_exec`, `kat.open_kicad`, and the `kat.Sheet` / `kat.pcb.Board` methods; each returns
+what the matching command prints. `kat api NAME` shows any of them (§4.14).
 
 `kat --help` shows the workflow; `kat <command> --help` shows each command's arguments and
 examples. Points are `REF.PIN` (number, or a unique pin name) or `X,Y` in mm; y grows
@@ -331,6 +378,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `check SCH [--expect NETLIST]` | ERC + netlist comparison + drawing findings |
 | `ready SCH [--expect NETLIST] [--require-field NAME]` | gate before the PCB layout (§6.1) |
 | `pcb sync PCB [--sch] [--dry-run] [--force] [--rip-stale]` | parts and nets onto the board (§4.6) |
+| `pcb refill PCB` | fill all pours and save them (after finishing) |
 | `pcb fab PCB` / `pcb ready PCB` | fabrication set / release gate (§4.11) |
 | `pcb route PCB [--passes] [--net NAME] [--install]` | Freerouting through kat's DSN/SES, then the board check (§4.10) |
 | `pcb check PCB` / `pcb snapshot PCB` / `pcb view PCB ...` | board DRC + findings, history step with pictures, zoomed view (§4.12) |
@@ -340,6 +388,12 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `move`, `move-many`, `set`, `detach`, `rm` | rearrange (one part, or a block move), edit fields, disconnect (a pin or a whole part), delete |
 | `page`, `title`, `text` | paper size, title block, free text (notes, headings) |
 | `restore SCH STEP` | put the schematic back to a history step (undo a pass) |
+| `batch-exec FILE.py [--project DIR] [-- ARGS]` | run a pass and journal it with its code (§4.13) |
+| `comment [--kind plan/milestone/problem/note] TEXT` | the agent's markdown into the design report |
+| `api [NAME] [--json]` | signatures and docstrings of the library (§4.14) |
+| `open FILE [--verify]` | open in KiCad's editor; `--verify` compares what it loaded and closes it (§4.15) |
+
+Global option `--no-report`: do not journal this command.
 
 ## 6. Checks and stop criteria
 
@@ -416,6 +470,11 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
 | KiCad draws SVG layers in the given order; a pour listed last hides everything | copper sets are listed bottom-up |
 | Freerouting counts a via closer than the clearance to its *own* pad as a violation (KiCad does not) | `via_to_plane` keeps the full clearance to its pad (also: no via in the solder area) |
 | Freerouting counts every via inside a `wire_keepout` as a violation, even where vias are allowed - a plane layer cannot be protected that way when it carries the plane vias | keep-outs only where no vias are needed; for planes: pours on both layers, stitching vias, check `islands` |
+| Freerouting's result depends on the order of components, pins and wires in the DSN; KiCad orders board items by their random uuids, so the same LED matrix routed with 0 unrouted in one run and 3 in the next | kat writes the DSN in reference order (tracks and vias sorted by net and position) |
+| KiCad's IPC API socket is shared: with the user's KiCad open, a second editor would find `/tmp/kicad/api.sock` taken and the running instance might take over the file | `--verify` starts the editor with its own `TMPDIR` (short path under /tmp - Unix socket paths are limited to ~108 characters) and its own settings copy with the API enabled |
+| kicad-python 0.8: `kipy.schematic` does not import (`PageSettings` missing); KiCad 10.0.6 answers schematic requests with "no handler" | schematic verification = the editor opens the file (lock file) and keeps running |
+| Quitting the editor through the API (`common.Control.quit`) does nothing; SIGTERM closes it but leaves `~NAME.*.lck` behind | kat terminates only the editor it started and removes the lock files that appeared during the run |
+| KiCad's lock file holds hostname and user, no process id | a lock counts as live when it is from another host or a KiCad process of this user runs; otherwise stale |
 | Freerouting narrows tracks at fine-pitch pads below the net-class width (DRC `track_width`); `--router.automatic_neckdown=false` is not applied | on import kat widens them to the class width where the clearance allows and reports the rest (`narrow`) |
 | A reference without a number (`ROUT`) passes ERC and parity, but KiCad treats it as unannotated: the BOM prints `ROUT?` | `kat ready` error `reference_without_number` |
 | No `rsvg-convert` on Windows; `kicad-cli` not on PATH there | PyMuPDF fallback (`[render]` extra, AGPL-3.0); `kicad-cli` auto-discovery or `KICAD_CLI` |
@@ -426,5 +485,6 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
 - Teardrops, length tuning, differential pairs and impedance-controlled stack-ups are not
   automated; set them in KiCad or as custom rules.
 - Live mode with kicad-python (editor open) is not implemented; the pipeline is headless.
+  kicad-python is used only to verify a finished board (`kat open --verify`).
 - SKiDL `NC` pins → no-connect flags in the drawing.
 - Automatic arrangement beyond the placement strip (signal-flow placement) is left to the agent.

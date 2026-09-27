@@ -123,6 +123,8 @@ def cmd_pcb(a):
                             () if a.no_require else (a.require_field or ["MPN"]))
     if a.pcb_cmd == "check":
         return kat.pcb.check(a.pcb)
+    if a.pcb_cmd == "refill":
+        return kat.pcb.refill(a.pcb)
     if a.pcb_cmd == "fab":
         return kat.pcb.fab(a.pcb, a.out, not a.no_step, not a.no_3d)
     if a.pcb_cmd == "ready":
@@ -213,9 +215,15 @@ Workflow (see SPEC.md):
   3. kat sync SCH design.net               parts + connectivity from the design
   4. kat snapshot SCH --expect design.net  image + checks into history/ (+ tiles if large)
      kat view SCH --around U1             zoom into details the overview cannot show
-  5. review the PNG, then arrange:       python passN.py  (uses `import kat`)
+  5. review the PNG, then arrange:       kat batch-exec passN.py  (uses `import kat`)
   6. repeat 4-5; after a design change: regenerate design.net and go to 3
   7. kat ready SCH --expect design.net     gate before the PCB layout starts
+  8. board: kat pcb sync / batch-exec passes / route / fab / ready (kat pcb --help)
+
+Design report: every command on a project, every batch-exec pass (with its code) and every
+snapshot (with its pictures) is recorded in NAME_REPORT.md next to NAME.kicad_pro;
+add your own plans, problems and milestones with `kat comment --kind ... TEXT`.
+Look up the Python API with `kat api [NAME]`.
 
 An arrangement pass is a Python script; it is saved once, or not at all on an error:
     import kat
@@ -595,6 +603,10 @@ def build_parser() -> argparse.ArgumentParser:
                                     "islands counts copper cut off from its net (starved thermals,\n"
                                     "isolated copper): the router's own \"all routed\" does not see them.")
     s2.add_argument("pcb", metavar="PCB")
+    s8 = psp.add_parser("refill", formatter_class=_Fmt, help="fill all pours and save them",
+                        description="KiCad's zone filler (through DRC) fills every pour and the result\n"
+                                    "is saved into the board. Run it after the finish pass.")
+    s8.add_argument("pcb", metavar="PCB")
     s3 = psp.add_parser("snapshot", formatter_class=_Fmt, help="pictures + check into history/",
                         description="history/<stamp>_pcb_<slug>/: top.png, bottom.png, placement.png,\n"
                                     "In<n>.png (whole board, ~2000 px), tiles/top|bottom/ at 30 px/mm when\n"

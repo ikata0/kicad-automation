@@ -2,7 +2,8 @@
 
 Import, two arrangement passes, title block and notes, checks, review tiles, a design
 change and back; then the board: four layers with a GND plane, placement by loop,
-cathode vias, autorouting (Freerouting), finishing, fabrication files, release gate. Guards the speed of the library (the same passes took 193 s through
+cathode vias, autorouting (Freerouting), finishing, fabrication files, release gate; the board passes run through
+`kat.batch_exec`, so the design report holds their code. Guards the speed of the library (the same passes took 193 s through
 `kat batch` before the geometry indexing), the arrangement result and sync on a large,
 arranged sheet (no duplicate stubs or labels).
 Set KAT_E2E_OUT=/some/dir to keep the project and its snapshots for review.
@@ -110,9 +111,9 @@ def test_led_matrix(root):
     pcb = sch.with_suffix(".kicad_pcb")
     r = kat.pcb.sync(pcb)
     assert r["ok"] and len(r["added"]) == 202
-    for name in ("place", "structure"):
-        with kat.pcb.edit(pcb) as b:
-            board_passes.PASSES[name](b)
+    for name in ("place", "structure"):          # journaled with their code
+        res = kat.batch_exec(HERE / "led_matrix_board.py", argv=[str(pcb), name])
+        assert res["ok"], res["error"]
     kat.pcb.snapshot(pcb, slug="structure", note="4 layers, In1 GND plane, cathode vias", three_d=False)
     t0 = time.time()
     routed = kat.pcb.route(pcb, passes=25, timeout=1500)
@@ -127,3 +128,6 @@ def test_led_matrix(root):
                      three_d=False)
     kat.pcb.fab(pcb, step=False, three_d=False)
     assert kat.pcb.ready(pcb)["ready"]
+    text = (sch.parent / f"{sch.stem}_REPORT.md").read_text()
+    assert text.count(" · batch\n") == 2 and "def structure(b: kat.pcb.Board)" in text
+    assert "_structure/top.png" in text and "_rev-A/In1.png" in text
