@@ -119,6 +119,8 @@ class Schematic:
         return Schematic(path)
 
     def save(self) -> None:
+        from .gui import guard
+        guard(self.path)
         self.path.write_text(dumps(self.tree) + "\n", encoding="utf-8")
         normalize(self.path)
         self.tree = loads(self.path.read_text(encoding="utf-8"))

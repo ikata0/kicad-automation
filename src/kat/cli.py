@@ -164,6 +164,10 @@ def cmd_batch_exec(a):
     return kat.batch_exec(a.file, a.project, args)
 
 
+def cmd_open(a):
+    return kat.open_kicad(a.file, a.verify, a.timeout)
+
+
 def cmd_netlist(a):
     return kat.nets(a.sch)
 
@@ -306,6 +310,19 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--kind", default="note", choices=["plan", "milestone", "problem", "note"])
     q.add_argument("--project", metavar="DIR", help="project directory or file (default: found "
                                                      "from KAT_PROJECT or the working directory)")
+
+    q = cmd("open", cmd_open, "Open a file in KiCad's editor; --verify checks what it loaded.",
+            "Without --verify the editor stays open for you (close it before kat edits the file:\n"
+            "kat refuses to save a file KiCad has open). --verify starts the editor with a\n"
+            "private copy of the settings (IPC API on), compares what it loaded with kat's own\n"
+            "reading and closes it without saving: board (needs kicad-python, kat[gui]) -\n"
+            "footprints, nets, tracks, vias, zones, outline; schematic - opened and running\n"
+            "(KiCad 10.0.6 has no schematic API). Exit code 1 on a mismatch.",
+            ["kat open board/board.kicad_pcb", "kat open board/board.kicad_pcb --verify",
+             "kat open board/board.kicad_sch --verify"], sch=False)
+    q.add_argument("file", metavar="FILE", help=".kicad_sch, .kicad_pcb or .kicad_pro")
+    q.add_argument("--verify", action="store_true", help="compare and close again")
+    q.add_argument("--timeout", type=float, default=90.0, help="seconds to wait for the editor")
 
     q = cmd("list", cmd_list, "List placed symbols, labels, wires and junctions.",
             "Symbols include position, rotation, mirror, value, footprint and body box.\n"
@@ -639,7 +656,8 @@ def main(argv: list[str] | None = None) -> int:
     report._disabled = args.no_report
     if args.cmd in NOT_JOURNALED:
         return _run(args)
-    hint = getattr(args, "sch", None) or getattr(args, "pcb", None) or getattr(args, "path", None)
+    hint = (getattr(args, "sch", None) or getattr(args, "pcb", None) or getattr(args, "path", None)
+            or getattr(args, "file", None))
     with report.command([a for a in argv if a != "--no-report"], hint) as entry:
         code = _run(args, entry)
         entry.exit = code

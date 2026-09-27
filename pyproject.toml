@@ -13,6 +13,8 @@ dependencies = ["pillow>=10"]
 # SVG rasteriser for systems without rsvg-convert (e.g. Windows). AGPL-3.0 licensed.
 render = ["pymupdf>=1.24"]
 dev = ["pytest>=8", "skidl>=2.3"]
+# `kat open --verify` for boards: talks to the running editor through KiCad's IPC API. MIT.
+gui = ["kicad-python>=0.8"]
 
 [project.scripts]
 kat = "kat.cli:main"
@@ -22,4 +24,5 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["slow: large end-to-end designs (LED matrix); deselect with -m 'not slow'"]
+markers = ["slow: large end-to-end designs (LED matrix); deselect with -m 'not slow'",
+           "kicad_gui: opens KiCad's editors (needs a display and kicad-python); only with -m kicad_gui"]

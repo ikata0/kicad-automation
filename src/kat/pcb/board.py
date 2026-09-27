@@ -244,7 +244,10 @@ class Board(SetupMixin, PlacementMixin, StructureMixin, FinishMixin):
 
     def save(self) -> None:
         """Write the board (and changed .kicad_pro / .kicad_dru) and normalise it through
-        ``kicad-cli pcb upgrade``; ``kat.pcb.edit`` calls this for you."""
+        ``kicad-cli pcb upgrade``; ``kat.pcb.edit`` calls this for you. Refused while the
+        board is open in KiCad."""
+        from ..gui import guard
+        guard(self.path)
         self._write_project_files()
         self.path.write_text(dumps(self.tree) + "\n", encoding="utf-8")
         normalize(self.path)

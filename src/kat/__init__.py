@@ -31,7 +31,8 @@ from .sheet import Sheet
 from .views import view as _view
 
 __all__ = ["KatError", "Sheet", "batch_exec", "check", "comment", "edit", "lib_search", "lib_show",
-           "load", "nets", "new", "pcb", "ready", "restore", "snapshot", "sync", "view"]
+           "load", "nets", "new", "open_kicad", "pcb", "ready", "restore", "snapshot", "sync",
+           "view"]
 
 
 def load(path: Path | str) -> Sheet:
@@ -100,6 +101,18 @@ def view(sch: Path | str, around: str | None = None, at: tuple[float, float] | N
     what = around or (f"at {at[0]:g},{at[1]:g}" if at else f"region {region}")
     report.snapshot_images(sch, res, f"kat.view({str(sch)!r}, {what})", "view")
     return res
+
+
+def open_kicad(path: Path | str, verify: bool = False, timeout: float = 90.0) -> dict:
+    """Open a .kicad_sch, .kicad_pcb or .kicad_pro in KiCad's editor. Without ``verify`` it
+    stays open for a person (close it before kat edits the file again). With ``verify`` kat
+    compares what the editor loaded with its own reading (board: footprints, nets,
+    tracks, vias, zones, outline; schematic: opened and running) and closes it without
+    saving; returns ``verified`` (None without a display or kicad-python), ``ok``,
+    ``mismatches``, ``kicad``."""
+    from . import gui
+    report.touch(path)
+    return gui.verify(path, timeout) if verify else gui.open_file(path)
 
 
 def nets(sch: Path | str) -> dict[str, list]:
