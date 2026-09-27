@@ -22,6 +22,18 @@ def _text_box(x: float, y: float, text: str, size: float, angle: float):
     return x - w / 2, y - h / 2, x + w / 2, y + h / 2
 
 
+def _text_spec(node: list) -> tuple:
+    """Position, angle, font size and mirroring of a gr_text, independent of formatting."""
+    r = lambda t: round(float(str(t)), 4)
+    font = find(find(node, "effects"), "font")
+    size = find(font, "size") if font is not None else None
+    just = find(find(node, "effects"), "justify")
+    at = [r(t) for t in find(node, "at")[1:]]
+    return (tuple(at + [0.0] * (3 - len(at))),
+            tuple(r(t) for t in size[1:]) if size is not None else None,
+            just is not None and "mirror" in [str(t) for t in just[1:]])
+
+
 class FinishMixin:
     def place_refs(self, refs: list[str] | None = None, size: float = 0.8, gap: float = 0.25) -> dict:
         """Put each reference designator on the silkscreen next to its part: above, below,
@@ -98,15 +110,28 @@ class FinishMixin:
 
     def board_text(self, text: str, at: tuple[float, float], size: float = 1.5,
                    layer: str = "F.SilkS", angle: float = 0) -> dict:
-        """Free text on the board (name, revision, notes); ``B.SilkS`` is mirrored."""
+        """Free text on the board (name, revision, notes) centred at ``at`` (mm), ``size`` in
+        mm; ``B.SilkS`` is mirrored. Safe to run again: the same text on the same layer is
+        moved and resized instead of added twice. Returns ``text``, ``layer``, ``box``,
+        ``status``."""
+        old = next((n for n in find_all(self.tree, "gr_text") if str(n[1]) == text
+                    and str(find(n, "layer")[1]) == layer), None)
         effects = [Sym("effects"), [Sym("font"), [Sym("size"), num(size), num(size)],
                                     [Sym("thickness"), num(round(size * 0.15, 3))]]]
         if layer.startswith("B."):
             effects.append([Sym("justify"), Sym("mirror")])
         node = [Sym("gr_text"), text, [Sym("at"), num(at[0]), num(at[1])] + ([num(angle)] if angle else []),
                 [Sym("layer"), layer], [Sym("uuid"), new_uuid()], effects]
-        self._insert(node)
-        return {"text": text, "layer": layer, "box": list(_text_box(at[0], at[1], text, size, angle))}
+        if old is None:
+            self._insert(node)
+            status = "created"
+        else:
+            find(node, "uuid")[1] = find(old, "uuid")[1]
+            status = "unchanged" if _text_spec(old) == _text_spec(node) else "replaced"
+            if status == "replaced":
+                self.tree[self.tree.index(old)] = node
+        return {"text": text, "layer": layer, "box": list(_text_box(at[0], at[1], text, size, angle)),
+                "status": status}
 
     def title_from_schematic(self, sch: Path | str | None = None) -> dict:
         """Copy the schematic's title block (title, date, revision, company, comments)."""
@@ -123,11 +148,16 @@ class FinishMixin:
                 for c in tb[1:] if isinstance(c, list)}
 
     def fiducials(self, count: int = 3, side: str = "F", margin: float = 3.0) -> dict:
-        """Global fiducials (board-only) near ``count`` corners of the outline, each on the
-        nearest spot that clears every courtyard."""
+        """Global fiducials (board-only) near ``count`` corners of the outline (``margin`` mm
+        inside), each on the nearest spot that clears every courtyard. Safe to run again:
+        existing fiducials are placed anew (unchanged ones keep their identity). Returns
+        ``fiducials`` [{ref, at}]."""
         edge = self.outline_box()
         if not edge:
             raise env.KatError("fiducials need a board outline")
+        old = {f.ref: f for f in self.footprints() if f.board_only and f.lib_id == FIDUCIAL}
+        for ref in old:
+            self.remove_footprint(ref)
         corners = [(edge[0] + margin, edge[1] + margin), (edge[2] - margin, edge[3] - margin),
                    (edge[0] + margin, edge[3] - margin), (edge[2] - margin, edge[1] + margin)][:count]
         used = {f.ref for f in self.footprints()}
@@ -147,5 +177,8 @@ class FinishMixin:
                 self.remove_footprint(ref)
                 continue
             used.add(ref)
+            prev = old.get(ref)
+            if prev is not None and (prev.x, prev.y, prev.side) == (f.x, f.y, f.side):
+                self.tree[self.tree.index(f.node)] = prev.node     # same spot: keep the old one
             placed.append({"ref": ref, "at": [f.x, f.y]})
         return {"fiducials": placed}

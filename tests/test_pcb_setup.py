@@ -88,3 +88,32 @@ def test_keepout_forbids_tracks(board):
         b.add_track((box[0] + 1, y), (box[0] + 8, y), 0.25, "F.Cu", "GND")
         b.keepout("F.Cu", rect=(box[0] + 2, y - 1, 3, 2), name="no tracks")
     assert "items_not_allowed" in kinds(board)
+
+
+def test_setup_pass_is_safe_to_run_twice(board):
+    """The same setup pass run again changes nothing: zones, keep-outs, holes, texts and
+    fiducials are replaced or kept, not added a second time."""
+    def setup():
+        with kat.pcb.edit(board) as b:
+            box = b.outline_box()
+            b.set_copper_layers(4)
+            b.plane("GND", "In1.Cu")
+            b.zone("GND", "B.Cu")
+            b.keepout("F.Cu", rect=(box[0] + 1, box[1] + 1, 2, 2))
+            b.mounting_hole((box[0] + 2.5, box[3] - 2.5), "M2")
+            b.netclass("POWER", track=0.4, clearance=0.25, nets=["GND"])
+            b.board_text("rev A", (box[0] + 8, box[3] - 1.5), size=1.0)
+            b.fiducials(count=2)
+            return {"zones": b.zone("GND", "B.Cu")["status"]}
+
+    assert setup()["zones"] == "unchanged"      # second call inside the same pass
+    first = board.read_text()
+    counts = lambda b: (len(b.zones()), sum(f.board_only for f in b.footprints()))
+    assert counts(Board(board)) == (3, 3)       # plane, pour, keep-out; hole + 2 fiducials
+    setup()
+    assert board.read_text() == first
+    with kat.pcb.edit(board) as b:              # a changed setting replaces, keeps the count
+        assert b.zone("GND", "B.Cu", clearance=0.5)["status"] == "replaced"
+        assert b.mounting_hole((b.outline_box()[0] + 2.5, b.outline_box()[3] - 2.5), "M2.5")["status"] == "replaced"
+        assert b.board_text("rev A", (b.outline_box()[0] + 9, b.outline_box()[3] - 1.5), size=1.0)["status"] == "replaced"
+    assert counts(Board(board)) == (3, 3)

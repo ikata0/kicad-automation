@@ -200,6 +200,14 @@ Methods of `kat.pcb.Board`, used inside `with kat.pcb.edit(PCB) as b:` (saved on
 | `netclass(name, track, clearance, via, via_drill, nets=[patterns])` | `.kicad_pro` net class + pattern assignment |
 | `rules(text)` | `.kicad_dru` custom rules (KiCad rule language) |
 
+A setup pass is safe to run again, so it is edited and re-run when the specification
+changes: the outline, layers, net classes and rules are replaced; a zone or keep-out
+replaces the one of the same name (default `"{net} {layers}"`, `"keepout {layers} {box}"`;
+kept with its fill when unchanged - several pours of one net on one layer need distinct
+names); a mounting hole at the same spot is kept or replaced; board text with the same text
+and layer is moved; fiducials are placed anew. These calls report `status`: created,
+replaced or unchanged.
+
 Net classes and rules are what DRC and the router use; derive them from the specification
 (current → width, voltage → clearance/creepage) before placing parts.
 

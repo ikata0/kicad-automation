@@ -39,6 +39,30 @@ def _edge(kind: str, **pts) -> list:
                    [Sym("layer"), "Edge.Cuts"], [Sym("uuid"), new_uuid()]]
 
 
+def _zone_spec(node: list) -> tuple:
+    """What a zone was asked for (net, layers, rules, outline), in comparable form -
+    independent of the uuid, the fill and KiCad's reformatting."""
+    def val(n, *path):
+        for p in path:
+            n = find(n, p) if n is not None else None
+        return None if n is None else tuple(_norm(t) for t in n[1:] if not isinstance(t, list))
+    lay = find(node, "layers") or find(node, "layer")
+    ko = find(node, "keepout")
+    pts = find(find(node, "polygon"), "pts")
+    return (val(node, "net"), tuple(str(t) for t in lay[1:]), val(node, "priority"),
+            val(node, "connect_pads", "clearance"), val(node, "min_thickness"),
+            val(node, "fill", "thermal_gap"), val(node, "fill", "thermal_bridge_width"),
+            tuple((str(k[0]), str(k[1])) for k in ko[1:]) if ko is not None else None,
+            tuple((_norm(p[1]), _norm(p[2])) for p in pts[1:]))
+
+
+def _norm(t):
+    try:
+        return round(float(str(t)), 4)
+    except ValueError:
+        return str(t)
+
+
 class SetupMixin:
     # --- outline -----------------------------------------------------------------------
 
@@ -83,6 +107,7 @@ class SetupMixin:
     # --- layers ------------------------------------------------------------------------
 
     def copper_layers(self) -> list[str]:
+        """Copper layer names, top to bottom (F.Cu, In1.Cu, ..., B.Cu)."""
         return [str(l[1]) for l in find(self.tree, "layers")[1:] if str(l[1]).endswith(".Cu")]
 
     def set_copper_layers(self, n: int) -> dict:
@@ -151,14 +176,43 @@ class SetupMixin:
                 attr.append(Sym(flag))
         return f
 
-    def mounting_hole(self, at: Point, size: str = "M3", ref: str | None = None):
+    def mounting_hole(self, at: Point, size: str = "M3", ref: str | None = None) -> dict:
+        """A board-only mounting hole (``M2``, ``M2.5``, ``M3``, ``M4``) centred at ``at``
+        (mm). Safe to run again: a hole already at that spot (or with that ``ref``) is kept
+        when its size matches, else replaced. Returns ``ref``, ``at``, ``size`` and
+        ``status`` (created / replaced / unchanged)."""
         if size not in HOLES:
             raise env.KatError(f"size one of {', '.join(HOLES)}")
+        holes = [f for f in self.footprints() if f.board_only and f.lib_id in HOLES.values()]
+        old = next((f for f in holes if (ref and f.ref == ref) or
+                    (abs(f.x - at[0]) < 0.01 and abs(f.y - at[1]) < 0.01)), None)
+        status = "created"
+        if old is not None:
+            if old.lib_id == HOLES[size] and abs(old.x - at[0]) < 0.01 and abs(old.y - at[1]) < 0.01:
+                return {"ref": old.ref, "at": [old.x, old.y], "size": size, "status": "unchanged"}
+            ref = old.ref
+            self.remove_footprint(ref)
+            status = "replaced"
         used = {f.ref for f in self.footprints()}
         ref = ref or next(f"H{i}" for i in range(1, 1000) if f"H{i}" not in used)
-        return self.add_board_part(HOLES[size], ref, at, value=f"{size} hole")
+        f = self.add_board_part(HOLES[size], ref, at, value=f"{size} hole")
+        return {"ref": f.ref, "at": [f.x, f.y], "size": size, "status": status}
 
     # --- zones ---------------------------------------------------------------------------
+
+    def _put_zone(self, node: list, name: str) -> str:
+        """Insert a zone, or replace the zone of the same name (kept as it is, fill
+        included, when its settings and polygon are unchanged)."""
+        old = next((z for z in self.zones() if find(z, "name") is not None
+                    and str(find(z, "name")[1]) == name), None)
+        if old is None:
+            self._insert(node)
+            return "created"
+        if _zone_spec(old) == _zone_spec(node):
+            return "unchanged"
+        find(node, "uuid")[1] = find(old, "uuid")[1]
+        self.tree[self.tree.index(old)] = node
+        return "replaced"
 
     def _zone(self, layers: list[str], polygon: list[Point], name: str = "") -> list:
         lay = [Sym("layer"), layers[0]] if len(layers) == 1 else [Sym("layers")] + layers
@@ -171,9 +225,15 @@ class SetupMixin:
     def zone(self, net: str, layers: str | list[str], polygon: list[Point] | None = None,
              clearance: float = 0.3, min_width: float = 0.25, thermal_gap: float = 0.5,
              spoke: float = 0.5, priority: int = 0, name: str = "") -> dict:
-        """A copper pour of ``net``; ``polygon`` defaults to the outline shrunk by 0.5 mm.
-        Filled by KiCad (``refill``/``kat pcb check``)."""
+        """A copper pour of ``net`` on ``layers``; ``polygon`` (mm) defaults to the outline
+        shrunk by 0.5 mm. ``clearance``, ``min_width``, ``thermal_gap`` and ``spoke`` (thermal
+        spoke width) in mm; a higher ``priority`` pours first where zones overlap. Filled by
+        KiCad (``refill``/``kat pcb check``). Safe to run again: a zone of the same ``name``
+        (default ``"{net} {layers}"``) is replaced, or kept when unchanged. Several pours of one
+        net on one layer need distinct names. Returns ``zone`` (name), ``net``, ``layers``,
+        ``status``."""
         layers = [layers] if isinstance(layers, str) else list(layers)
+        name = name or f"{net} {'+'.join(layers)}"
         if polygon is None:
             b = self.outline_box()
             if not b:
@@ -188,18 +248,25 @@ class SetupMixin:
                  [Sym("fill"), Sym("yes"), [Sym("thermal_gap"), num(thermal_gap)],
                   [Sym("thermal_bridge_width"), num(spoke)], [Sym("island_removal_mode"), Sym("0")]],
                  [Sym("polygon"), _pts(polygon)]]
-        self._insert(node)
-        return {"zone": str(node[node.index(find(node, "uuid"))][1]), "net": net, "layers": layers}
+        status = self._put_zone(node, name)
+        return {"zone": name, "net": net, "layers": layers, "status": status}
 
     def keepout(self, layers: str | list[str], polygon: list[Point] | None = None,
                 rect: tuple[float, float, float, float] | None = None, tracks: bool = False,
                 vias: bool = True, pads: bool = True, pour: bool = True, footprints: bool = True,
                 name: str = "") -> dict:
-        """A rule area: ``False`` forbids that kind of item inside (default: tracks only)."""
+        """A rule area on ``layers``, given as ``polygon`` or ``rect`` (x, y, w, h in mm):
+        ``False`` forbids that kind of item inside (default: tracks only). Note: Freerouting
+        counts every via inside a track keep-out as a violation. Safe to run again: a keep-out
+        of the same ``name`` (default ``"keepout {layers} {box}"``) is replaced, or kept when
+        unchanged. Returns ``keepout`` (name), ``layers``, ``status``."""
         layers = [layers] if isinstance(layers, str) else list(layers)
         polygon = polygon or (_rect(*rect) if rect else None)
         if not polygon:
             raise env.KatError("keepout needs polygon or rect")
+        if not name:
+            xs, ys = [p[0] for p in polygon], [p[1] for p in polygon]
+            name = (f"keepout {'+'.join(layers)} {min(xs):g},{min(ys):g}-{max(xs):g},{max(ys):g}")
         node = self._zone(layers, polygon, name)
         ok = lambda v: Sym("allowed" if v else "not_allowed")
         node += [[Sym("connect_pads"), [Sym("clearance"), Sym("0")]],
@@ -209,8 +276,8 @@ class SetupMixin:
                   [Sym("footprints"), ok(footprints)]],
                  [Sym("fill"), [Sym("thermal_gap"), Sym("0.5")], [Sym("thermal_bridge_width"), Sym("0.5")]],
                  [Sym("polygon"), _pts(polygon)]]
-        self._insert(node)
-        return {"keepout": name or str(find(node, "uuid")[1]), "layers": layers}
+        status = self._put_zone(node, name)
+        return {"keepout": name, "layers": layers, "status": status}
 
     # --- net classes and rules (project files, written on save) ---------------------------
 
