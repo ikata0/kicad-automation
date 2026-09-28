@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Union
 
-from . import env, library
+from . import env, hierarchy, library
 from .schematic import Placement, Schematic
 from .sexpr import find, find_all
 from .syncer import _power_dir
@@ -63,15 +63,22 @@ class Sheet:
     # --- helpers --------------------------------------------------------------
 
     def point(self, p: Point) -> tuple[float, float]:
-        """Resolve ``"REF.PIN"``, ``"X,Y"`` or ``(x, y)`` to sheet coordinates."""
+        """Resolve ``"REF.PIN"``, ``"SHEETNAME.PIN"`` (a sheet box's pin), ``"X,Y"`` or
+        ``(x, y)`` to sheet coordinates."""
         if not isinstance(p, str):
             x, y = p
             return float(x), float(y)
         if "," in p:
             return xy(p)
         if "." not in p:
-            raise env.KatError(f"expected REF.PIN or X,Y, got {p!r}")
+            raise env.KatError(f"expected REF.PIN, SHEET.PIN or X,Y, got {p!r}")
         ref, pin = p.split(".", 1)
+        if not any(s.ref == ref for s in self.schematic.symbols()):
+            for sh in hierarchy.sheets(self.schematic):
+                if sh["name"] == ref:
+                    if pin not in sh["pins"]:
+                        raise env.KatError(f"sheet {ref} has no pin {pin!r} ({', '.join(sh['pins'])})")
+                    return sh["pins"][pin]["x"], sh["pins"][pin]["y"]
         return self.schematic.pin(ref, pin)
 
     def _info(self, sym) -> dict:
@@ -223,6 +230,34 @@ class Sheet:
         s.place_power_text(sym, _power_dir(s, sym))
         s.fix_junctions()
         return {"ref": sym.ref, "lib_id": lib_id, "x": end[0], "y": end[1]}
+
+    def sheet(self, name: str, file: str, at: Point, size: Point | None = None,
+              left: list[str] | dict[str, str] = (), right: list[str] | dict[str, str] = (),
+              fields: dict[str, str] | None = None) -> dict:
+        """Sheet box (a hierarchical instance) named ``name`` with its top-left corner at
+        ``at``, pointing to ``file`` (relative to this sheet's folder; created empty if
+        missing). Pins on the left/right edge, 2.54 mm apart: a list of names or
+        {name: shape}; each must match a ``port`` inside. ``fields`` are the instance's
+        parameters, used inside as ``${NAME}``. ``size`` (w, h) mm defaults to fit the pins.
+        Returns the pin points; wire them with ``"NAME.PIN"``. Run
+        ``kat.hierarchy.annotate(root)`` after changing the hierarchy."""
+        x, y = self.point(at)
+        w, h = (self.point(size) if size else (None, None))
+        return hierarchy.add_sheet(self.schematic, name, file, x, y, w, h, left, right, fields)
+
+    def port(self, name: str, at: Point, angle: float = 180, shape: str = "passive") -> dict:
+        """Hierarchical label: a connection point of this sheet, seen as the pin ``name``
+        on the sheet boxes that use this file. ``angle`` 180: text to the left of the
+        point, 0: to the right. ``shape``: input, output, bidirectional, tri_state, passive."""
+        x, y = self.point(at)
+        node = hierarchy.add_port(self.schematic, name, x, y, angle, shape)
+        self.schematic.fix_junctions()
+        return {"port": name, "x": float(find(node, "at")[1]), "y": float(find(node, "at")[2])}
+
+    def sheets(self) -> list[dict]:
+        """Sheet boxes on this sheet: name, file, position, size, parameters and pins."""
+        return [{k: (str(v) if k == "path" else v) for k, v in sh.items() if k != "node"}
+                for sh in hierarchy.sheets(self.schematic)]
 
     def nc(self, at: Point) -> dict:
         """No-connect flag."""

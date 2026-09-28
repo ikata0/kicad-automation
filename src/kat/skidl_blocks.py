@@ -26,6 +26,8 @@ from pathlib import Path
 
 from .netlist import blocks_file
 
+__all__ = ["record", "write"]
+
 _OWN = {"func", "tag", "description", "purpose", "name", "circuit", "parent", "children",
         "parts", "nets", "buses", "skidl_trace", "fields", "pins", "__wrapped__"}
 

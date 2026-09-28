@@ -21,7 +21,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from . import checks, gate, library, netlist, pcb, report, skidl_blocks, syncer
+from . import checks, gate, hierarchy, library, netlist, pcb, report, skidl_blocks, syncer
 from .env import KatError, tidy
 from .history import restore as _restore
 from .history import snapshot as _snapshot
@@ -30,7 +30,7 @@ from .report import batch_exec, comment
 from .sheet import Sheet
 from .views import view as _view
 
-__all__ = ["KatError", "Sheet", "batch_exec", "check", "comment", "edit", "lib_search", "lib_show",
+__all__ = ["KatError", "Sheet", "batch_exec", "check", "comment", "edit", "hierarchy", "lib_search", "lib_show",
            "load", "nets", "new", "open_kicad", "pcb", "ready", "restore", "skidl_blocks", "snapshot", "sync",
            "view"]
 

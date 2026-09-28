@@ -1,8 +1,9 @@
 """API lookup for agents: ``kat api [NAME]`` prints signatures and docstrings straight
 from the code, so the documentation cannot drift from it.
 
-The public surface is ``kat.__all__`` and ``kat.pcb.__all__``; for classes, their public
-methods and properties (mixins included)."""
+The public surface is ``kat.__all__`` and ``kat.pcb.__all__``, the ``__all__`` of the
+submodules listed there; for classes, their public methods and properties (mixins
+included)."""
 
 from __future__ import annotations
 
@@ -49,9 +50,9 @@ def surface() -> dict[str, object]:
             if full in found:
                 continue
             found[full] = obj
-            if inspect.isclass(obj):
+            if inspect.isclass(obj) or (inspect.ismodule(obj) and full not in ROOTS):
                 for m, attr in _members(obj):
-                    found[f"{full}.{m}"] = attr
+                    found.setdefault(f"{full}.{m}", attr)
     return found
 
 

@@ -12,7 +12,8 @@ with the KiCad GUI closed, such that
 - **design changes** do not throw away the arrangement work already done.
 
 In scope: single-sheet schematics, SKiDL as design language, KiCad 10 files.
-Out of scope for now: hierarchical sheets, buses; PCB layout is being added (§4.6, §8).
+Out of scope for now: buses, and `sync` into hierarchical sheets (sheets can be drawn and
+annotated, §4.17); PCB layout is being added (§4.6, §8).
 
 Terms: **arrangement** is placing parts, labels, wires and fields on the schematic sheet so
 it reads well; an **arrangement pass** is one script doing that. **Layout** always means
@@ -390,7 +391,35 @@ kat.skidl_blocks.write("design.net")          # -> design.blocks.json
 - A `Block` field set by hand (`part.fields["Block"] = "ch1"`) still works for parts outside
   subcircuits.
 
-## 5. Command reference
+### 4.17 Hierarchical sheets
+
+A sheet box on a parent sheet points to a child file; the child's ports (hierarchical
+labels) are the box's pins. One child file can serve several boxes and several projects.
+
+```python
+with kat.edit("block1.kicad_sch") as s:
+    s.port("IN", (60.96, 60.96), shape="input")
+    s.sheet("RC1", "../blocks/RC/RC.kicad_sch", (71.12, 58.42), left={"IN": "input"},
+            right={"OUT": "output"}, fields={"R_VAL": "${RA}"})
+    s.connect((60.96, 60.96), "RC1.IN")                # SHEETNAME.PIN like REF.PIN
+kat.hierarchy.annotate("top/top.kicad_sch")            # after every change of the tree
+```
+
+- **File paths** are relative to the file that holds the box (KiCad's rule, also when
+  nested).
+- **Parameters:** a sheet box's own fields are text variables inside the child
+  (`${R_VAL}`), passed down to deeper levels; the child project's `text_variables` give
+  the default when it is opened on its own. KiCad's netlist, BOM and PDF resolve them per
+  instance.
+- **`kat.hierarchy.tree(root)`**: every instance in page order with its name path
+  (`/CH_A/RC1`), uuid path, file and parameters. A board footprint's path is
+  `<uuid path>/<symbol uuid>`.
+- **`kat.hierarchy.annotate(root, per_page=100)`**: pages in reading order, references
+  `prefix + page × 100 + n` (R301 = first R on page 3), written into each symbol's
+  `instances` for the root's project. Other projects' entries are kept, so a block keeps
+  its own numbering; annotate the block as its own root with `per_page=0`.
+
+
 
 Library: `kat.new`, `kat.load`, `kat.edit`, `kat.sync`, `kat.check`, `kat.snapshot`, `kat.view`,
 `kat.ready`, `kat.pcb.sync` / `edit` / `check` / `snapshot` / `view` / `route` / `refill` / `fab` /
@@ -479,6 +508,8 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
 | Files saved on Windows have CRLF; `upgrade` writes LF → whole-file diffs | add a `.gitattributes` (`*.kicad_sch text eol=lf`) |
 | SKiDL's own `generate_schematic()` is unreadable for real circuits (overlaps, missing unit body, dangling wires) | SKiDL for connectivity only; `kat` draws |
 | SKiDL random tags / automatic references break identity across revisions | `tag=` (and `ref=`) on every part; `sync` matches tag first |
+| `kicad-cli sch upgrade` silently drops a sheet's instance entry whose path is not the parent's real path (e.g. `/` in a sub-sheet) | `annotate` writes `/<root uuid>/<parent sheet uuids>` |
+| KiCad re-saves sheet boxes in its own order | pages are numbered from the boxes' positions (reading order), not the file order |
 | SKiDL tags are local to a `@subcircuit`: two instances both have tag `r`, and matching by the bare tag pairs the wrong parts | the tag is qualified by the instance path (`CH_A/RC1/r`) from the netlist's sheet path |
 | Moving a part whose wires end on shared T-points leaves steps (like KiCad's drag) | `detach` + `connect` the affected pins |
 | A part moved onto another part's pin joined the nets silently; moving the other part later dragged wires between them (LED matrix: rows 9/10 shorted to GND) | `move` refuses pin-on-pin/wire/label contact (`allow_contact` to override); `move_many` moves parts simultaneously, so they can take each other's places without parking |
