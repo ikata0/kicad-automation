@@ -17,6 +17,8 @@ layout.
 1. **Connectivity lives in the SKiDL design only.** In the drawing you only arrange things;
    `kat check --expect design.net` must keep matching.
 2. Every SKiDL part gets `tag=` and `ref=`; name the nets that matter (`Net("TIA_OUT")`).
+   Every `@subcircuit` call gets keyword arguments and `tag=` (the instance name); after
+   `generate_netlist`, call `kat.skidl_blocks.write("design.net")` (SPEC §4.16).
 3. KiCad GUI closed while editing (kat refuses while KiCad's lock file says it is open).
 4. Snapshot after every sync and every arrangement pass.
 5. Keep the design report readable: passes run with `kat batch-exec`, your plans, problems

@@ -7,7 +7,7 @@ description: Overview of agent-driven KiCad 10 hardware design with `kat` - the 
 
 | Phase | Tool | Skill | Gate to leave it |
 |---|---|---|---|
-| 1. Circuit | SKiDL (`tag=`, `ref=`, named nets, `footprint=`, `part.fields["MPN"]`) | kicad-schematic | netlist generates, ERC-worthy |
+| 1. Circuit | SKiDL (`tag=`, `ref=`, named nets, `footprint=`, `part.fields["MPN"]`; repeated circuits as `@subcircuit` blocks) | kicad-schematic | netlist generates, ERC-worthy |
 | 2. Schematic | `kat sync`, arrangement passes, `kat snapshot` | kicad-schematic | `kat ready SCH --expect design.net` → `ready` |
 | 3. Layout | `kat pcb sync/…/route`, layout passes, `kat pcb snapshot` | kicad-layout | `kat pcb check` clean |
 | 4. Fabrication | `kat pcb fab`, `kat open PCB --verify` | kicad-layout | `kat pcb ready PCB` → `ready` |
@@ -27,6 +27,11 @@ records each pass with its code, snapshots add their pictures. Add your own reas
 `kat comment --kind plan|problem|milestone "..."`: the plan before a phase, each problem
 that sends you back, each milestone reached. History steps are the undo (`kat restore` for
 the schematic; board copies in `history/<stamp>_pcb_*/`).
+
+**Repeated circuits are blocks.** Write a circuit that appears several times as a SKiDL
+`@subcircuit`, call it with keyword arguments and `tag="CH_A"`, and end the script with
+`kat.skidl_blocks.write("design.net")`. Parts then carry `Block = CH_A/...`, and the
+board can move and arrange whole instances (SPEC §4.16).
 
 **Look it up, and let KiCad look.** `kat api NAME` shows any call's signature and
 documentation. Before handing over, `kat open FILE --verify` opens the schematic and the

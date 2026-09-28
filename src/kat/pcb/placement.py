@@ -168,12 +168,17 @@ class PlacementMixin:
     # --- blocks ----------------------------------------------------------------------------
 
     def blocks(self) -> dict[str, list[str]]:
-        """Block name -> references (the ``Block`` field, set in SKiDL)."""
+        """Block name -> references (the ``Block`` field: a SKiDL subcircuit's instance
+        path such as ``CH_A/RC1``, or set by hand in SKiDL). A nested block's parts also
+        belong to every block above it: ``CH_A`` includes ``CH_A/RC1``."""
         out: dict[str, list[str]] = {}
         for f in self.footprints():
             name = f.field(BLOCK)
-            if name:
-                out.setdefault(name, []).append(f.ref)
+            if not name:
+                continue
+            levels = name.split("/")
+            for i in range(1, len(levels) + 1):
+                out.setdefault("/".join(levels[:i]), []).append(f.ref)
         return out
 
     def block_box(self, name: str) -> Box:
@@ -194,9 +199,11 @@ class PlacementMixin:
 
     def _block_key(self, ref: str, block: str) -> str:
         """Identity of a part inside its block: its SKiDL tag with the block name taken
-        out (ch2_r_in -> *_r_in), else footprint + order."""
+        out (CH_B/RC1/r -> */RC1/r, ch2_r_in -> *_r_in), else footprint + order."""
         f = self.footprint(ref)
         tag = f.field(TAG) or ""
+        if tag.startswith(block + "/"):  # tag qualified by the instance path (CH_A/RC1/r)
+            return f"tag:*{tag[len(block):]}"
         if tag and block in tag:
             return f"tag:{tag.replace(block, '*')}"
         return ""

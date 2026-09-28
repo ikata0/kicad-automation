@@ -130,9 +130,10 @@ with kat.pcb.edit(PCB) as b:
   `False`: `tracks` (default), `vias`, `pads`, `pour`, `footprints`.
 - Order: fan out an IC's plane pads first, then `place_near` its decoupling (it keeps
   clear of copper already laid), then fan out the capacitors.
-- Functional blocks: set `part.fields["Block"] = "ch1"` in SKiDL; then `b.blocks()`,
-  `b.move_block("ch1", to=(x, y))`, and `b.replicate("ch1", {"ch2": (x, y)})` arranges the
-  other blocks like the first (parts pair by SKiDL tag without the block name).
+- Functional blocks: SKiDL `@subcircuit` instances (`Block = CH_A/RC1`, nested levels
+  included), or `part.fields["Block"] = "ch1"` set by hand; then `b.blocks()`,
+  `b.move_block("CH_A", to=(x, y))`, and `b.replicate("CH_A", {"CH_B": (x, y)})` arranges
+  the other blocks like the first (parts pair by SKiDL tag without the block name).
 - Placement order: mechanical/fixed, connectors, critical analog parts and heat sources,
   decoupling, the rest. Keep sensitive nodes short and away from switching nets; give
   analog returns their own path to the plane.

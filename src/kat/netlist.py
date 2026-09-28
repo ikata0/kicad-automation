@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -29,17 +30,37 @@ class Component:
     lib_id: str
     value: str
     footprint: str
-    tag: str  # SKiDL tag ("" if absent); stable identity across design changes
+    tag: str  # SKiDL tag qualified by the block instance ("CH_A/RC1/r"), "" if absent
     fields: dict[str, str] = field(default_factory=dict)  # custom fields, e.g. MPN
+    block: str = ""  # block instance path ("CH_A/RC1"), "" at the top level
 
 
 # netlist fields that are not custom part data
 _STANDARD = {"Reference", "Value", "Footprint", "Description", "SKiDL Tag", "SKiDL Line"}
+BLOCK, BLOCK_TYPE = "Block", "Block Type"
+
+
+def blocks_file(path: Path) -> Path:
+    """The block record written next to a netlist by ``kat.skidl_blocks.write``."""
+    return Path(path).with_suffix(".blocks.json")
+
+
+def _block_types(path: Path) -> dict[str, str]:
+    f = blocks_file(path)
+    if not f.exists():
+        return {}
+    return {name: i["type"] for name, i in json.loads(f.read_text()).get("instances", {}).items()}
 
 
 def read_design(path: Path) -> tuple[dict[str, Component], dict[str, Net]]:
-    """Components (by ref) and nets of a KiCad s-expression netlist, e.g. from SKiDL."""
+    """Components (by ref) and nets of a KiCad s-expression netlist, e.g. from SKiDL.
+
+    A part inside a SKiDL subcircuit gets its instance path as ``block`` (from the
+    netlist's sheet path, e.g. ``CH_A/RC1``), the ``Block`` field, ``Block Type`` (when the
+    block record exists) and a tag qualified by the path (``CH_A/RC1/r``): SKiDL tags are
+    local to a block, so they repeat across instances."""
     tree = loads(Path(path).read_text(encoding="utf-8"))
+    types = _block_types(path)
     comps = {}
     for c in find_all(find(tree, "components") or [], "comp"):
         src = find(c, "libsource")
@@ -47,13 +68,20 @@ def read_design(path: Path) -> tuple[dict[str, Component], dict[str, Net]]:
                   for f in find_all(find(c, "fields") or [], "field")}
         val, fp = find(c, "value"), find(c, "footprint")
         ref = str(find(c, "ref")[1])
+        sheet = find(c, "sheetpath")
+        block = str(find(sheet, "names")[1]).strip("/") if sheet and find(sheet, "names") else ""
+        tag = fields.get("SKiDL Tag", "")
+        custom = {k: v for k, v in fields.items()
+                  if k not in _STANDARD and not (k == "Datasheet" and not v)}
+        if block:
+            custom[BLOCK] = block
+            if block in types:
+                custom[BLOCK_TYPE] = types[block]
         comps[ref] = Component(
             ref=ref, lib_id=f'{find(src, "lib")[1]}:{find(src, "part")[1]}',
             value=str(val[1]) if val and len(val) > 1 else "",
             footprint=str(fp[1]) if fp and len(fp) > 1 else "",
-            tag=fields.get("SKiDL Tag", ""),
-            fields={k: v for k, v in fields.items()
-                    if k not in _STANDARD and not (k == "Datasheet" and not v)})
+            tag=f"{block}/{tag}" if block and tag else tag, fields=custom, block=block)
     return comps, read(path)
 
 

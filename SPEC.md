@@ -55,7 +55,9 @@ the PCB and is not used for the schematic.
    `kat check --expect design.net` must keep matching.
 2. **Stable part identity.** Give every SKiDL part a `tag=` (and preferably an explicit
    `ref=`). `sync` matches parts by tag first, then by reference. Without tags, SKiDL
-   generates random ones and renumbered references look like replaced parts.
+   generates random ones and renumbered references look like replaced parts. Inside a
+   `@subcircuit` a tag only needs to be unique within the block; give each block call a
+   `tag=` too (§4.16).
 3. **Name the nets that matter** in SKiDL (`Net("TIA_OUT")`). Named nets must stay visibly
    named in the drawing (label or power symbol); `check` reports `unnamed` otherwise.
 4. **KiCad GUI closed** while `kat` edits the file (or reopen the sheet afterwards and never
@@ -145,6 +147,10 @@ re-attached pins) and fold them into the arrangement with another pass.
 A pin that directly touches another part's pin and must change net cannot be fixed
 automatically; it is listed under `unresolved`.
 
+A part inside a SKiDL `@subcircuit` is identified by its tag qualified with the instance
+path: `sync` writes `SKiDL Tag = CH_A/RC1/r` and the fields `Block = CH_A/RC1` and
+`Block Type = rc` (§4.16).
+
 ### 4.5 Reviewing large sheets
 
 An agent's image viewer downscales pictures to about 2000 px, so the overview PNG of an A2
@@ -224,7 +230,7 @@ like arrangement passes:
 | `place_near(ref, "U1.8")` | a two-pad part beside a pin: outside the host's courtyard, on the side the pin faces, its pad on the pin's net nearest; steps sideways until free |
 | `near(point, radius)`, `collisions(refs)` | what is around a point / courtyard overlaps |
 | `blocks()`, `block_box(name)`, `move_block(name, to/by)` | functional blocks: the `Block` field set in SKiDL (`part.fields["Block"] = "ch1"`) |
-| `replicate("ch1", {"ch2": (x, y), ...})` | arrange other blocks like the template; parts pair up by SKiDL tag with the block name removed (`ch1_r` ↔ `ch2_r`), else by footprint and reference order |
+| `replicate("ch1", {"ch2": (x, y), ...})` | arrange other blocks like the template; parts pair up by SKiDL tag with the block name removed (`CH_A/RC1/r` ↔ `CH_B/RC1/r`, `ch1_r` ↔ `ch2_r`), else by footprint and reference order |
 
 Order in a placement pass: mechanical and fixed parts, connectors, critical analog parts and
 heat sources, decoupling (`place_near`), then the rest; repeated blocks once, then
@@ -357,6 +363,33 @@ Every public call has a docstring stating units and return value (`tests/test_ap
   display or kicad-python the answer is `verified: null` with the reason.
 - Tests: marker `kicad_gui`, only with `-m kicad_gui` (they open windows).
 
+### 4.16 Blocks (SKiDL subcircuits)
+
+A block is a SKiDL `@subcircuit` function; each call is an instance. Call blocks with
+keyword arguments and a `tag=`, which names the instance:
+
+```python
+ch(io=Interface(inp=a, out=b, gnd=gnd), ra="1k", tag="CH_A")    # inside: rc(..., tag="RC1")
+generate_netlist(file_="design.net")
+kat.skidl_blocks.write("design.net")          # -> design.blocks.json
+```
+
+- **Instance path** (`CH_A/RC1`): from the netlist's sheet path. Every part inside gets the
+  fields `Block` (the path) and `Block Type` (the function name, from the block record),
+  and its tag is qualified by the path (`CH_A/RC1/r`). Tags may therefore repeat between
+  blocks.
+- **Block record** `design.blocks.json`, written by `kat.skidl_blocks.write` from SKiDL's
+  node tree (the netlist does not carry it): per instance `type`, `ports` (arguments that
+  are nets, named by the argument, or `arg.key` for an `Interface`), `params` (number and
+  string arguments, plus the defaults left unset) and `parts`.
+- **Warnings** in the record: a call without `tag=` (SKiDL's automatic name changes when
+  calls are reordered) and arguments passed by position (SKiDL records keyword arguments
+  only; that call's defaults are then left out).
+- **Board:** `blocks()` lists nested blocks at every level (`CH_A` includes `CH_A/RC1`),
+  so `move_block` and `replicate` move whole instances.
+- A `Block` field set by hand (`part.fields["Block"] = "ch1"`) still works for parts outside
+  subcircuits.
+
 ## 5. Command reference
 
 Library: `kat.new`, `kat.load`, `kat.edit`, `kat.sync`, `kat.check`, `kat.snapshot`, `kat.view`,
@@ -446,6 +479,7 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
 | Files saved on Windows have CRLF; `upgrade` writes LF → whole-file diffs | add a `.gitattributes` (`*.kicad_sch text eol=lf`) |
 | SKiDL's own `generate_schematic()` is unreadable for real circuits (overlaps, missing unit body, dangling wires) | SKiDL for connectivity only; `kat` draws |
 | SKiDL random tags / automatic references break identity across revisions | `tag=` (and `ref=`) on every part; `sync` matches tag first |
+| SKiDL tags are local to a `@subcircuit`: two instances both have tag `r`, and matching by the bare tag pairs the wrong parts | the tag is qualified by the instance path (`CH_A/RC1/r`) from the netlist's sheet path |
 | Moving a part whose wires end on shared T-points leaves steps (like KiCad's drag) | `detach` + `connect` the affected pins |
 | A part moved onto another part's pin joined the nets silently; moving the other part later dragged wires between them (LED matrix: rows 9/10 shorted to GND) | `move` refuses pin-on-pin/wire/label contact (`allow_contact` to override); `move_many` moves parts simultaneously, so they can take each other's places without parking |
 | `sync` re-attached pins whose net had not changed when their partner pin left the net: each run stacked another stub + label | a lone pin that already carries the net's name counts as drawn; `check` reports `duplicates` |
