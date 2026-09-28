@@ -130,5 +130,35 @@ Correct?
 
 ---
 
+DONE
+
+Let us discuss.
+
+## Feature: Modular schematics and layouts
+
+I have a scenario in mind, where development of a schematic & layout happens as a tree-structure of sub-schematics and sub-layouts.
+Assume we start with a specification for a sub-component BLOCK1, exercising our workflow from the SKiDL BLOCK1.py via BLOCK1.kicad_sch, to BLOCK1.kicad_pcb. 
+In the final design. BLOCK1 would then - like in the LED matrix example - instantiated e.g. 100 times, each instance places according to some specification. From my point of view, this would mean:
+- If the block carries some need for optimization (for minimum area, or signal integrity, or HF performance) it could be optimized once, then copied over many times.
+- In the final design, its schematic would be represented as a block - is that possible? Or instantiated with component indices counting up?
+- Thinking about the layout - I guess it would (as a validated sub-layout) then be placed like a component, then routed from a set of connection points.
+- Quite interesting: Such a sub-layout could exist across multiple layers, so it might be a placeable 'set of modifiers', with components, sub-routing, vias, cutting away from a powerplane or ground plane etc. 
+
+Does KiCAD offer functionality for this? How would we automate it?
+
+---
+
+(1) I have seen one-sheet schematics that contained many instances of the same small block, and those were actually *more* readable as flat schematics than they would have been as hierarchies. I would recommend to test both.
+
+(2) That would be the natural next concept, even though, at the moment I have no use case for that. If it would block the rest of the investigation, leave it away. If it can be tested with little extra effort - test it, like 3x BLOCK2 inside one BLOCK1, then 2x BLOCK1 in the final, so we get 2x3 = 6x BLOCK2 inside the top-level.
+
+(3) Sounds fine.
+
+(4) Depends on how powerful the 'repeat layout' is. If the layout instance can be copied anywhere, and will then start claiming layers like 'to work, I will occupy my layer - 2 for traces, then the next GND layer, then my layer - 3 for VCC' and check for correct environment - then I think it would visibly fail on the bottom layer (if the layer structure is not symmetric). Bottom side could work if the repeat-layouts would adaptively use the layer situation they find. 
+However all of this appears quite brittle to me if the layers are not 100% symmetric. Leave it away for now and just make the layout once for top, once for bottom if needed?
+
+(5) Hm, interesting. Could possibly happen; that would mean 'schematic sub-sheet with parameters', right? 
+
+---
 
 
