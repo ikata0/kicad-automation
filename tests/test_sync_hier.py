@@ -198,3 +198,29 @@ def test_a_block_changed_after_its_build_is_caught(lib, tmp_path):
     assert not rep["check"]["ok"]
     assert {p["problem"] for p in rep["check"]["parts"]} == {"value"}
     assert all(p["drawn"] == "100n" and p["design"] == "220n" for p in rep["check"]["parts"])
+
+
+def test_boxes_are_arranged_and_keep_hand_changes(lib, tmp_path):
+    blocks.build("RC", force=True)
+    d = tmp_path / "design"
+    d.mkdir()
+    (d / "design.py").write_text(DESIGN_PY)
+    subprocess.run([sys.executable, "design.py"], cwd=d, check=True, capture_output=True)
+    sch = d / "top" / "top.kicad_sch"
+    assert cli.main(["new", str(sch)]) == 0
+    assert kat.sync(sch, d / "design.net", sheets=["rc"])["check"]["ok"]
+    a, b = hierarchy.sheets(Schematic(sch))
+    assert a["at"][1] == b["at"][1] and a["at"][0] < b["at"][0]      # one row, not a column
+    for box in (a, b):                                               # inp left, out right
+        assert box["pins"]["inp"]["x"] == box["at"][0]
+        assert box["pins"]["out"]["x"] == box["at"][0] + box["size"][0]
+    # by hand: CH_B elsewhere, bigger, its pins swapped; a re-sync keeps all of it
+    with kat.edit(sch) as s:
+        s.move("CH_B", to=(152.4, 101.6))
+        s.sheet_box("CH_B", size=(25.4, 12.7), left=["out"], right=["inp"])
+    before = {sh["name"]: sh for sh in hierarchy.sheets(Schematic(sch))}["CH_B"]
+    again = kat.sync(sch, d / "design.net")
+    assert again["check"]["ok"] and not again["added"] and not again["updated"], again
+    after = {sh["name"]: sh for sh in hierarchy.sheets(Schematic(sch))}["CH_B"]
+    assert {k: after[k] for k in ("uuid", "at", "size", "pins")} == {k: before[k] for k in ("uuid", "at", "size", "pins")}
+    assert kat.check(sch, d / "design.net")["netlist_vs_expected"]["match"]

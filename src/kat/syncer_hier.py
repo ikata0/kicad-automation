@@ -164,10 +164,6 @@ def _flat(s: Schematic, design: Design, parts: list, rename: dict[str, str], pow
     return sync.report
 
 
-def _pin_side(shape: str) -> str:
-    return "right" if shape == "output" else "left"
-
-
 def _boxes(s: Schematic, design: Design, within: str, rename: dict[str, str], near: Path,
            report: dict, generate: dict | None = None) -> None:
     """Sheet boxes for the child instances of ``within`` on sheet ``s``, their pins wired
@@ -180,32 +176,45 @@ def _boxes(s: Schematic, design: Design, within: str, rename: dict[str, str], ne
             report["removed"].append(f"sheet {sh['name']}")
     have = {sh["name"]: sh for sh in hierarchy.sheets(s)}
     labelled: set[str] = set()
+    row: list = []                     # boxes placed in this run (see _next_spot)
     for name, path in sorted(want.items()):
         inst = design.rec[path]
         child = (generate or {}).get(path) or block_sheet(inst["type"], near)
         ports = hierarchy.ports(Schematic(child))
         rel = str(Path(_relpath(child, s.path.parent)))
-        left = {p: v["shape"] for p, v in sorted(ports.items()) if _pin_side(v["shape"]) == "left"}
-        right = {p: v["shape"] for p, v in sorted(ports.items()) if _pin_side(v["shape"]) == "right"}
+        left, right = hierarchy.pin_sides(ports)
         fields = {k: str(v) for k, v in inst["params"].items()}
         old = have.get(name)
-        if old is not None and old["fields"] != fields and old["file"] == rel \
-                and set(old["pins"]) == set(ports):
-            _set_box_fields(old["node"], fields)       # in place: the box keeps its uuid
-            report["updated"].append(f"sheet {name} fields")
-        if old is not None and (old["file"] != rel or set(old["pins"]) != set(ports)):
-            at = old["at"]
-            s.tree.remove(old["node"])
-            old = None
-            report["updated"].append(f"sheet {name}")
+        if old is not None:
+            # in place, so the box keeps its uuid (board paths), position, size and pin order
+            changes = []
+            if old["file"] != rel:
+                next(p for p in find_all(old["node"], "property") if str(p[1]) == "Sheetfile")[2] = rel
+                changes.append("file")
+            gone = [p for p in old["pins"] if p not in ports]
+            added = {p: (v["shape"], "left" if p in left else "right") for p, v in ports.items()
+                     if p not in old["pins"]}
+            if gone or added:
+                hierarchy.set_box(s, name, add=added, remove=gone)
+                changes.append("pins")
+            for pn in find_all(old["node"], "pin"):
+                if str(pn[1]) in ports and str(pn[2]) != ports[str(pn[1])]["shape"]:
+                    pn[2] = Sym(ports[str(pn[1])]["shape"])
+                    changes.append("pin shapes")
+            if old["fields"] != fields:
+                _set_box_fields(old["node"], fields)
+                changes.append("fields")
+            if changes:
+                report["updated"].append(f"sheet {name} {', '.join(dict.fromkeys(changes))}")
         else:
-            at = None
-        if old is None:
-            if at is None:
-                at = _free_spot(s, len(left), len(right))
+            nets = {p: _clean(n) if isinstance(n, str) else "" for p, n in inst["ports"].items()}
+            at, size, bottom = _next_spot(s, row, left, right, nets, fields)
             hierarchy.add_sheet(s, name, child, at[0], at[1], left=left, right=right, fields=fields)
-            if name not in [a.split(" ", 1)[-1] for a in report["updated"]]:
-                report["added"].append(f"sheet {name}")
+            texts = [f"File: {rel}"] + [f"{k}: {v}" for k, v in fields.items()]
+            reach = max(size[0] + max([text_width(nets.get(p, "")) + 5.08 for p in right] or [0]),
+                        max(text_width(x) for x in texts))
+            row.append((at[0] + reach, at[1], bottom))
+            report["added"].append(f"sheet {name}")
         box = next(sh for sh in hierarchy.sheets(s) if sh["name"] == name)
         for pin, v in box["pins"].items():
             net = inst["ports"].get(pin)
@@ -215,7 +224,7 @@ def _boxes(s: Schematic, design: Design, within: str, rename: dict[str, str], ne
             if isinstance(net, list):
                 raise env.KatError(f"port {pin} of {path} is a bus; buses are not supported")
             net = rename.get(_clean(net), _clean(net))
-            _label_at(s, (v["x"], v["y"]), -1 if pin in left else 1, net)
+            _label_at(s, (v["x"], v["y"]), -1 if abs(v["x"] - box["at"][0]) < 1e-6 else 1, net)
             labelled.add(net)
     _attach_lone(s, design, within, rename, labelled, report)
 
@@ -272,13 +281,29 @@ def _relpath(target: Path, base: Path) -> str:
     return os.path.relpath(Path(target).resolve(), Path(base).resolve())
 
 
-def _free_spot(s: Schematic, nl: int, nr: int) -> tuple[float, float]:
-    boxes = [b for sym in s.symbols() if (b := s.body_box(sym))]
-    boxes += [(sh["at"][0], sh["at"][1], sh["at"][0] + sh["size"][0], sh["at"][1] + sh["size"][1])
-              for sh in hierarchy.sheets(s)]
-    if not boxes:
-        return 50.8, 50.8
-    return snap(max(25.4, min(b[0] for b in boxes)) + 12.7), snap(max(b[3] for b in boxes) + 12.7)
+def _next_spot(s: Schematic, row: list, left: dict, right: dict, nets: dict[str, str],
+               fields: dict) -> tuple[tuple[float, float], tuple[float, float], float]:
+    """Where a new box goes: right of the last box placed in this run, with room for both
+    boxes' labels, wrapping to a new row at the page edge; the first one below everything
+    drawn. ``row``: the boxes placed so far as (right end of box, labels and fields, top,
+    bottom of the fields). Returns the corner, the box size and the bottom of its fields."""
+    from .syncer import paper_size
+    widest = max([text_width(p) for p in (*left, *right)] or [0])
+    w = snap(max(15.24, 2 * widest + 7.62))
+    h = snap(2.54 * (max(len(left), len(right), 1) + 1))
+    below = h + 2.54 * (len(fields) + 2)                     # the fields under the box
+    margin = max([text_width(nets.get(p, "")) for p in left] or [0]) + 7.62
+    x0 = snap(max(25.4, margin + 12.7))
+    if row:
+        x2, top, _ = row[-1]
+        x = snap(x2 + 5.08 + margin)
+        if x + w <= paper_size(s)[0] - 25.4:
+            return (x, top), (w, h), top + below
+        y = snap(max(r[2] for r in row) + 12.7)
+        return (x0, y), (w, h), y + below
+    boxes = [b for sym in s.symbols() if (b := s.body_box(sym))] + [b.box() for b in s.sheet_boxes()]
+    y = snap(max(b[3] for b in boxes) + 12.7) if boxes else 50.8
+    return (x0, y), (w, h), y + below
 
 
 def _label_at(s: Schematic, pin: tuple[float, float], side: int, net: str) -> None:

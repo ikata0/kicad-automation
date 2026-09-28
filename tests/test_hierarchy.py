@@ -139,3 +139,72 @@ def test_sheet_pins_and_refusals(design):
         s.point("CH_A.NOPE")
     with pytest.raises(kat.KatError, match="exists"):
         s.sheet("CH_A", "../blocks/BLOCK1/BLOCK1.kicad_sch", (0, 0))
+
+
+def test_moving_a_sheet_box_brings_its_wiring(design):
+    before = read_design(design["top"])[1]
+    uuid = next(sh["uuid"] for sh in kat.load(design["top"]).sheets() if sh["name"] == "CH_B")
+    with kat.edit(design["top"]) as s:
+        res = s.move("CH_B", by=(50.8, 0))
+    assert res[0]["sheet"] == "CH_B" and res[0]["x"] == 142.24
+    s = kat.load(design["top"])
+    box = next(sh for sh in s.sheets() if sh["name"] == "CH_B")
+    assert box["uuid"] == uuid                                 # board paths depend on it
+    labels = {(l["text"], l["x"], l["y"]) for l in s.list()["labels"]}
+    assert ("IN_B", 137.16, 93.98) in labels and ("OUT_B", 167.64, 93.98) in labels
+    assert read_design(design["top"])[1] == before
+    # a part wired straight to a box pin: the wire stays on the pin, it is dragged
+    with kat.edit(design["block1"]) as s:
+        s.move("R1", by=(0, 10.16))
+    assert read_design(design["top"])[1] == before
+    assert checks.erc(design["top"])["errors"] == 0
+
+
+def test_sheet_box_refusals(design):
+    with pytest.raises(kat.KatError, match="sheet pin CH_A.IN"):
+        with kat.edit(design["top"]) as s:
+            s.move("CH_B", to=(91.44, 60.96))
+    with pytest.raises(kat.KatError, match="cannot rotate"):
+        with kat.edit(design["top"]) as s:
+            s.move("CH_B", by=(0, 0), rot=90)
+    with pytest.raises(kat.KatError, match="too small"):
+        with kat.edit(design["top"]) as s:
+            s.sheet_box("CH_A", size=(20.32, 2.54))
+
+
+def test_reshaping_a_box_moves_and_mirrors_its_pin_wiring(design):
+    before = read_design(design["top"])[1]
+    with kat.edit(design["top"]) as s:
+        res = s.sheet_box("CH_A", size=(30.48, 12.7), left=["OUT"], right=["IN"])
+    assert res["pins"] == {"OUT": {"x": 91.44, "y": 63.5}, "IN": {"x": 121.92, "y": 63.5}}
+    s = kat.load(design["top"])
+    box = next(sh for sh in s.sheets() if sh["name"] == "CH_A")
+    assert box["size"] == [30.48, 12.7]
+    labels = {l["text"]: l for l in s.list()["labels"] if l["y"] == 63.5}
+    # both pins changed sides: stub and label mirrored (the fixture's labels have angle 0)
+    assert (labels["IN_A"]["x"], labels["IN_A"]["angle"]) == (127.0, 180)
+    assert (labels["OUT_A"]["x"], labels["OUT_A"]["angle"]) == (86.36, 180)
+    assert read_design(design["top"])[1] == before
+    assert checks.erc(design["top"])["errors"] == 0
+
+
+def test_pin_sides_follow_the_child_drawing():
+    ports = {"a": {"x": 10, "y": 5, "angle": 180, "shape": "passive"},     # drawn at the left edge
+             "b": {"x": 90, "y": 9, "angle": 0, "shape": "input"},         # drawn at the right edge
+             "out": {"x": 50, "y": 1, "angle": 90, "shape": "passive"},
+             "clk": {"x": 50, "y": 2, "angle": 270, "shape": "passive"},
+             "q": {"x": 50, "y": 3, "angle": 90, "shape": "output"}}
+    left, right = hierarchy.pin_sides(ports)
+    assert list(left) == ["clk", "a"] and list(right) == ["out", "q", "b"]
+
+
+def test_pins_added_and_removed_in_place(design):
+    uuid = next(sh["uuid"] for sh in kat.load(design["top"]).sheets() if sh["name"] == "CH_B")
+    with kat.edit(design["top"]) as s:
+        hierarchy.set_box(s.schematic, "CH_B", add={"EN": ("input", "left")}, remove=["OUT"])
+    s = kat.load(design["top"])
+    box = next(sh for sh in s.sheets() if sh["name"] == "CH_B")
+    assert box["uuid"] == uuid and set(box["pins"]) == {"IN", "EN"}
+    assert box["pins"]["EN"]["x"] == box["at"][0] and box["pins"]["EN"]["y"] == pytest.approx(box["pins"]["IN"]["y"] + 2.54)
+    # the removed pin's stub and label went with it; the connector's OUT_B label stays
+    assert [(l["x"], l["y"]) for l in s.list()["labels"] if l["text"] == "OUT_B"] == [(63.5, 78.74)]

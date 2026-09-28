@@ -93,6 +93,37 @@ class PlacedSymbol:
         return str(p[2]) if p else None
 
 
+class SheetBox:
+    """A sheet box (hierarchical instance) on a sheet, as moving and drawing see it."""
+
+    def __init__(self, node: list):
+        self.node = node
+        self.ref = next((str(p[2]) for p in find_all(node, "property") if str(p[1]) == "Sheetname"), "")
+
+    @property
+    def at(self) -> tuple[float, float]:
+        a = find(self.node, "at")
+        return float(a[1]), float(a[2])
+
+    @property
+    def size(self) -> tuple[float, float]:
+        s = find(self.node, "size")
+        return float(s[1]), float(s[2])
+
+    def box(self) -> tuple[float, float, float, float]:
+        (x, y), (w, h) = self.at, self.size
+        return x, y, x + w, y + h
+
+    def pins(self) -> dict[str, tuple[float, float]]:
+        return {str(p[1]): (float(find(p, "at")[1]), float(find(p, "at")[2])) for p in find_all(self.node, "pin")}
+
+    def shift(self, dx: float, dy: float) -> None:
+        """Move the box with its fields and pins (the uuid stays)."""
+        for n in [self.node] + find_all(self.node, "property") + find_all(self.node, "pin"):
+            a = find(n, "at")
+            a[1], a[2] = num(float(a[1]) + dx), num(float(a[2]) + dy)
+
+
 def _sexp(text: str) -> list:
     return loads(text)
 
@@ -177,6 +208,12 @@ class Schematic:
                 place=Placement(float(at[1]), float(at[2]), float(at[3]) if len(at) > 3 else 0,
                                 str(mir[1]) if mir else "")))
         return out
+
+    def sheet_boxes(self) -> list[SheetBox]:
+        return [SheetBox(n) for n in find_all(self.tree, "sheet")]
+
+    def sheet_box(self, name: str) -> SheetBox | None:
+        return next((b for b in self.sheet_boxes() if b.ref == name), None)
 
     def find_symbols(self, ref: str, unit: int | None = None) -> list[PlacedSymbol]:
         found = [s for s in self.symbols() if s.ref == ref and (unit is None or s.unit == unit)]
@@ -403,6 +440,17 @@ class Schematic:
         silently (and a later move would drag wires between them)."""
         todo = []
         for m in moves:
+            if not any(x.ref == m["ref"] for x in self.symbols()) and (box := self.sheet_box(m["ref"])) is not None:
+                if m.get("rot") is not None or m.get("mirror"):
+                    raise env.KatError(f"sheet box {m['ref']}: KiCad cannot rotate or mirror a sheet box")
+                bx, by = box.at
+                x, y = m.get("x"), m.get("y")
+                d = (snap(x if x is not None else bx + (m.get("dx") or 0)) - bx,
+                     snap(y if y is not None else by + (m.get("dy") or 0)) - by)
+                old_pins = box.pins()
+                todo.append((box, d, old_pins, {n: (p[0] + d[0], p[1] + d[1]) for n, p in old_pins.items()},
+                             False))
+                continue
             syms = self.find_symbols(m["ref"], m.get("unit"))
             if len(syms) > 1:
                 raise env.KatError(f"{m['ref']} has several units placed; pass unit")
@@ -429,6 +477,7 @@ class Schematic:
         if drag:
             others = {key((p["x"], p["y"])) for o in self.symbols()
                       if id(o.node) not in moving and not o.ref.startswith("#") for p in self.pins(o)}
+            others |= {key(p) for b in self.sheet_boxes() if id(b.node) not in moving for p in b.pins().values()}
             moving_old = defaultdict(list)
             for s, _, old_pins, new_pins, _ in todo:
                 for n, old in old_pins.items():
@@ -463,6 +512,9 @@ class Schematic:
 
         # --- apply ---
         for s, new, _, _, reorient in todo:
+            if isinstance(s, SheetBox):
+                s.shift(*new)
+                continue
             old_fields = {id(p): (float(find(p, "at")[1]) - s.place.x, float(find(p, "at")[2]) - s.place.y)
                           for p in find_all(s.node, "property")}
             pl = new.place
@@ -500,6 +552,10 @@ class Schematic:
                 continue
             for p in self.pins(o):
                 taken.setdefault(key((p["x"], p["y"])), (id(o.node), f"pin {o.ref}.{p['number']}"))
+        for b in self.sheet_boxes():
+            if id(b.node) not in moving:
+                for n, p in b.pins().items():
+                    taken.setdefault(key(p), (id(b.node), f"sheet pin {b.ref}.{n}"))
         for s, _, _, new_pins, _ in todo:
             for n, q in new_pins.items():
                 taken.setdefault(key(q), (id(s.node), f"pin {s.ref}.{n}"))
@@ -539,6 +595,7 @@ class Schematic:
                 groups.setdefault(tuple(sorted((key(seg[0]), key(seg[1])))), [seg, []])[1].append(w)
         anchors = {key((p["x"], p["y"])) for o in self.symbols()
                    if o.node is not owner and not o.ref.startswith("#") for p in self.pins(o)}
+        anchors |= {key(p) for b in self.sheet_boxes() if b.node is not owner for p in b.pins().values()}
         ends = Counter(pk for gk in groups for pk in gk)
         at_end = defaultdict(list)
         for g in groups.values():

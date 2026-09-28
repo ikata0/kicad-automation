@@ -137,7 +137,11 @@ and outward directions while computing coordinates. Try a large pass with
   `kat.hierarchy.annotate(root)` after each change of the tree (SPEC §4.17).
 - Library blocks as sheets instead of flat: `kat sync SCH design.net --sheets ch,rc` (SPEC
   §4.21). The sheets are the library's drawings: arrange and fix them in the block
-  (`blocks/NAME/NAME_block.kicad_sch`, then `kat block check`), not in the design.
+  (`blocks/NAME/NAME_block.kicad_sch`, then `kat block check`), not in the design. Draw
+  a block's ports at its left and right edges: the boxes take their pin sides from there.
+- Arrange a hierarchical page like parts: `s.move("CH_B", to=(x, y))` moves a sheet box
+  (top-left corner) with its pin wiring; `s.sheet_box("CH_A", size=(w, h), right=["out"])`
+  resizes it or moves pins to another edge. Re-syncs keep both.
 
 ## Setup
 

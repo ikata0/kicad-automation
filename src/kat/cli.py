@@ -57,6 +57,11 @@ def cmd_move(s, a):
                   allow_contact=a.allow_contact)
 
 
+def cmd_sheet_box(s, a):
+    names = lambda v: [n for n in v.split(",") if n] if v is not None else None  # noqa: E731
+    return s.sheet_box(a.name, a.size, names(a.left), names(a.right))
+
+
 def cmd_move_many(s, a):
     text = sys.stdin.read() if a.moves == "-" else a.moves
     if a.moves.startswith("@"):
@@ -522,15 +527,18 @@ def build_parser() -> argparse.ArgumentParser:
             "", ["kat nc s.kicad_sch U2.5"], mutating=True)
     q.add_argument("at", help="REF.PIN or X,Y")
 
-    q = cmd("move", cmd_move, "Move, rotate or mirror a placed part.",
+    q = cmd("move", cmd_move, "Move, rotate or mirror a placed part, or move a sheet box.",
             "Everything that hangs only off the part moves with it: wire stubs, labels, power\n"
             "symbols, PWR_FLAGs. Wires into shared nets are dragged: their end follows with a\n"
             "bend if needed. If that leaves a step next to the part, `detach` the pin and\n"
             "`connect` it again. Multi-unit parts need --unit. A pin may not land on another\n"
-            "pin, a wire or a label (that joins nets): use --allow-contact, or `move-many`.",
+            "pin, a wire or a label (that joins nets): use --allow-contact, or `move-many`.\n"
+            "REF may name a sheet box (its Sheetname): the box moves with its pins, fields and\n"
+            "pin wiring and keeps its uuid; --to is its top-left corner; no --rot/--mirror.",
             ["kat move s.kicad_sch R1 --by 0,-2.54", "kat move s.kicad_sch U1 --unit 3 --to 175.26,101.6",
-             "kat move s.kicad_sch Q1 --rot 90 --mirror y"], mutating=True)
-    q.add_argument("ref", help="reference")
+             "kat move s.kicad_sch Q1 --rot 90 --mirror y", "kat move top.kicad_sch CH_B --to 127,82.55"],
+            mutating=True)
+    q.add_argument("ref", help="reference, or a sheet box name")
     q.add_argument("--to", type=xy, metavar="X,Y", help="new absolute position")
     q.add_argument("--by", type=xy, metavar="DX,DY", help="relative displacement")
     q.add_argument("--rot", type=float, choices=[0, 90, 180, 270], help="new rotation")
@@ -539,6 +547,18 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--no-drag", action="store_true", help="leave all wires where they are")
     q.add_argument("--allow-contact", action="store_true",
                    help="allow a pin to land on another pin, a wire or a label (joins nets)")
+
+    q = cmd("sheet-box", cmd_sheet_box, "Resize a sheet box or put its pins on other edges.",
+            "The box keeps its uuid (board footprint paths depend on it). Pins named in --left /\n"
+            "--right go to that edge in that order; unlisted pins keep their side, below them.\n"
+            "A pin's own wiring (stub, label) comes along, mirrored when it changes sides; wires\n"
+            "into shared nets are dragged. Move the box with `move NAME`.",
+            ["kat sheet-box top.kicad_sch CH_A --right out", "kat sheet-box top.kicad_sch CH_A --size 25.4,12.7"],
+            mutating=True)
+    q.add_argument("name", help="sheet box name (Sheetname)")
+    q.add_argument("--size", type=xy, metavar="W,H", help="new size in mm")
+    q.add_argument("--left", metavar="PIN,..", help="pins on the left edge, top to bottom")
+    q.add_argument("--right", metavar="PIN,..", help="pins on the right edge, top to bottom")
 
     q = cmd("move-many", cmd_move_many, "Move several parts at once (block move).",
             "Every decision is taken on the drawing before anything moves, so parts may take\n"

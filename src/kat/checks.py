@@ -100,19 +100,18 @@ def overlaps(s: Schematic) -> list[dict]:
 
 
 def body_overlaps(s: Schematic) -> list[dict]:
-    """Symbol bodies (graphics + pins) that intersect. Power symbols sitting on a part's pin
-    end are expected to touch it and are ignored."""
-    syms = [(sym, b) for sym in s.symbols() if (b := s.body_box(sym))]
+    """Symbol bodies (graphics + pins) and sheet boxes that intersect. Power symbols sitting
+    on a part's pin end are expected to touch it and are ignored."""
+    items = [(f"{sym.ref}/{sym.unit}", b) for sym in s.symbols() if not sym.ref.startswith("#")
+             and (b := s.body_box(sym))]
+    items += [(f"sheet {bx.ref}", bx.box()) for bx in s.sheet_boxes()]
     found = []
-    for i, (a, ba) in enumerate(syms):
-        for b, bb in syms[i + 1:]:
-            if a.ref.startswith("#") or b.ref.startswith("#"):
-                continue
+    for i, (a, ba) in enumerate(items):
+        for b, bb in items[i + 1:]:
             if _overlap(ba, bb, margin=0.5):
                 cx = (max(ba[0], bb[0]) + min(ba[2], bb[2])) / 2
                 cy = (max(ba[1], bb[1]) + min(ba[3], bb[3])) / 2
-                found.append({"a": f"{a.ref}/{a.unit}", "b": f"{b.ref}/{b.unit}",
-                              "at": [round(cx, 2), round(cy, 2)]})
+                found.append({"a": a, "b": b, "at": [round(cx, 2), round(cy, 2)]})
     return found
 
 
@@ -122,6 +121,7 @@ def off_page(s: Schematic, margin: float = 10.0) -> list[str]:
     w, h = paper_size(s)
     inside = lambda b: b[0] >= margin and b[1] >= margin and b[2] <= w - margin and b[3] <= h - margin
     out = [f"{sym.ref}/{sym.unit}" for sym in s.symbols() if (b := s.body_box(sym)) and not inside(b)]
+    out += [f"sheet {bx.ref}" for bx in s.sheet_boxes() if not inside(bx.box())]
     out += [t["what"] for t in text_items(s) if not inside(t["box"])]
     return out
 

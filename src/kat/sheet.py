@@ -104,16 +104,18 @@ class Sheet:
         return [self._info(x) for x in self.schematic.find_symbols(ref, unit)]
 
     def list(self) -> dict:
-        """Placed symbols, labels, wires and the number of junctions."""
+        """Placed symbols, sheet boxes, labels, wires and the number of junctions."""
         s = self.schematic
         syms = [{k: v for k, v in self._info(x).items() if k != "pins"} for x in s.symbols()]
-        return {"symbols": syms, "labels": s.labels(),
+        return {"symbols": syms, "sheets": [{"name": b.ref, "x": b.at[0], "y": b.at[1], "size": list(b.size)}
+                                           for b in s.sheet_boxes()],
+                "labels": s.labels(),
                 "wires": [[list(p), list(q)] for p, q in s.segments()],
                 "junctions": len(find_all(s.tree, "junction"))}
 
     def near(self, at: Point, radius: float = 5.0) -> list[dict]:
         """Everything within ``radius`` mm of a point, nearest first: parts (by body box),
-        pins, wires, labels, junctions, no-connects and free texts, with their uuids."""
+        sheet boxes, pins (sheet pins as ``NAME.PIN``), wires, labels, junctions, no-connects and free texts, with their uuids."""
         import math
         from .schematic import _on_interior  # noqa: F401
         s = self.schematic
@@ -138,6 +140,12 @@ class Sheet:
                 if (d := math.hypot(p["x"] - x, p["y"] - y)) <= radius:
                     found.append({"kind": "pin", "pin": f"{sym.ref}.{p['number']}", "name": p["name"],
                                   "x": p["x"], "y": p["y"], "dist": d})
+        for bx in s.sheet_boxes():
+            if (d := box_dist(bx.box())) <= radius:
+                found.append({"kind": "sheet", "name": bx.ref, "uuid": str(find(bx.node, "uuid")[1]), "dist": d})
+            for pn, (px, py) in bx.pins().items():
+                if (d := math.hypot(px - x, py - y)) <= radius:
+                    found.append({"kind": "pin", "pin": f"{bx.ref}.{pn}", "x": px, "y": py, "dist": d})
         for w, (a, b) in zip(s.wires(), s.segments()):
             if (d := seg_dist(a, b)) <= radius:
                 found.append({"kind": "wire", "from": list(a), "to": list(b),
@@ -269,6 +277,17 @@ class Sheet:
         from . import sch_stamp
         return sch_stamp.frame(self.schematic, block, title, margin)
 
+    def sheet_box(self, name: str, size: Point | None = None, left: list[str] | None = None,
+                  right: list[str] | None = None) -> dict:
+        """Reshape sheet box ``name`` in place (the uuid stays): ``size`` (w, h) mm; pins
+        listed in ``left`` / ``right`` go to that edge in that order (unlisted pins keep
+        their side, below). Pin wiring comes along, mirrored when a pin changes sides.
+        Move the box itself with :meth:`move`."""
+        res = hierarchy.set_box(self.schematic, name, self.point(size) if size is not None else None,
+                                left, right)
+        box = next(b for b in self.sheets() if b["name"] == name)
+        return {**res, **({"warning": w} if (w := self._covers(box)) else {})}
+
     def sheets(self) -> list[dict]:
         """Sheet boxes on this sheet: name, file, position, size, parameters and pins."""
         return [{k: (str(v) if k == "path" else v) for k, v in sh.items() if k != "node"}
@@ -285,7 +304,8 @@ class Sheet:
     def move(self, ref: str, to: Point | None = None, by: Point | None = None,
              rot: float | None = None, mirror: str | None = None, unit: int | None = None,
              drag: bool = True, allow_contact: bool = False) -> list[dict]:
-        """Move, rotate or mirror a part. What hangs only off it is carried along; wires
+        """Move, rotate or mirror a part, or move a sheet box (``ref`` = its sheet name; its
+        pins and fields come along, the uuid stays). What hangs only off it is carried along; wires
         into shared nets are dragged (unless ``drag=False``). Refuses to put a pin onto
         another part's pin, a wire or a label (that would join nets) unless
         ``allow_contact``; use :meth:`move_many` to rearrange parts that swap places."""
@@ -314,7 +334,26 @@ class Sheet:
         s = self.schematic
         s.move_symbols(plan, drag=drag, allow_contact=allow_contact)
         s.fix_junctions()
-        return [self._info(x) for m in plan for x in s.find_symbols(m["ref"], m["unit"])]
+        boxes = {b["name"]: b for b in self.sheets()}
+        out = []
+        for m in plan:
+            if not any(x.ref == m["ref"] for x in s.symbols()) and m["ref"] in boxes:
+                b = boxes[m["ref"]]
+                out.append({"sheet": b["name"], "x": b["at"][0], "y": b["at"][1], "size": b["size"],
+                            **({"warning": w} if (w := self._covers(b)) else {})})
+            else:
+                out += [self._info(x) for x in s.find_symbols(m["ref"], m["unit"])]
+        return out
+
+    def _covers(self, box: dict) -> str | None:
+        """A warning when a sheet box overlaps parts or other boxes."""
+        s = self.schematic
+        x1, y1 = box["at"]
+        x2, y2 = x1 + box["size"][0], y1 + box["size"][1]
+        hit = [x.ref for x in s.symbols() if (b := s.body_box(x)) and b[0] < x2 and x1 < b[2] and b[1] < y2 and y1 < b[3]]
+        hit += [o.ref for o in s.sheet_boxes() if o.ref != box["name"]
+                and (b := o.box())[0] < x2 and x1 < b[2] and b[1] < y2 and y1 < b[3]]
+        return f"sheet box {box['name']} overlaps {', '.join(sorted(set(hit)))}" if hit else None
 
     def set(self, ref: str, field: str, value: str | None = None, at: Point | None = None,
             angle: float | None = None, hide: bool | None = None, unit: int | None = None,

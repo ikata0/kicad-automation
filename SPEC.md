@@ -418,6 +418,13 @@ kat.hierarchy.annotate("top/top.kicad_sch")            # after every change of t
   `prefix + page × 100 + n` (R301 = first R on page 3), written into each symbol's
   `instances` for the root's project. Other projects' entries are kept, so a block keeps
   its own numbering; annotate the block as its own root with `per_page=0`.
+- **Arranging boxes:** `s.move("CH_B", to=(x, y))` (or `move-many` together with parts)
+  moves a box by its top-left corner, with its pins, fields and the wiring that hangs
+  only off its pins; wires into shared nets are dragged. `s.sheet_box("CH_A", size=(w, h),
+  left=[...], right=[...])` resizes it and puts pins on an edge in an order; a pin that
+  changes sides takes its stub and label along, mirrored. Both keep the box's uuid (the
+  board's footprint paths depend on it) and refuse a pin landing on foreign wiring, like
+  `move`. Boxes cannot rotate. `list`, `near` and the body-overlap check include boxes.
 
 ### 4.18 Stamping block layouts
 
@@ -527,14 +534,22 @@ kat sync top/top.kicad_sch design.net --sheets ch,rc      # remembered in top.ka
 - **Pins** are the block sheet's ports, wired by labels to the caller's nets. **Fields**
   are the instance's parameters (`ra: 3k3`), used inside as `${ra}` and passed down to
   nested blocks.
+- **Pin sides** follow the block's drawing (`hierarchy.pin_sides`): a port label drawn
+  horizontally keeps its side (text to the left = left edge); otherwise inputs go left and
+  outputs right, then names (`in`/`inp` left, `out`/`*_out` right), else left. Each side
+  is ordered top to bottom. So draw a block's ports at its left and right edges.
+- **New boxes** go in a row below what is drawn, spaced for their labels and fields,
+  wrapping at the page edge.
 - **References follow the design:** every instance gets the SKiDL reference of its part
   (annotation per instance), so KiCad's netlist and `design.net` compare 1:1, and the
   block keeps its own references in its own project.
 - **Checked** (`check` in the result): connectivity against the design, and value and
   footprint of every part. A block that changed after its build shows up as `value`
   differences ("make it a parameter", or rebuild the block).
-- Sheet boxes are updated in place (their uuid, and with it the board's footprint paths,
-  stays); boxes of instances that are gone are removed.
+- Sheet boxes are updated in place: their uuid (and with it the board's footprint
+  paths), position, size and pin order stay, also when the block gains or loses ports
+  (new pins are added by the side rule, removed ones leave with their wiring). Boxes of
+  instances that are gone are removed.
 - Snapshots show one page per instance.
 
 ## 5. Command reference
@@ -570,7 +585,8 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `snapshot SCH [--slug] [--note] [--expect] [--tiles] [--finding-crops N]` | SVG + trimmed PNG + check into `history/`; tiles and finding close-ups |
 | `view SCH --around REF / --at X,Y / --region X,Y,W,H` | zoomed PNG of one region into `views/` |
 | `add`, `wire`, `connect`, `label`, `power`, `nc` | draw |
-| `move`, `move-many`, `set`, `detach`, `rm` | rearrange (one part, or a block move), edit fields, disconnect (a pin or a whole part), delete |
+| `move`, `move-many`, `set`, `detach`, `rm` | rearrange (one part or sheet box, or a block move), edit fields, disconnect (a pin or a whole part), delete |
+| `sheet-box SCH NAME [--size W,H] [--left PIN,..] [--right PIN,..]` | resize a sheet box, put its pins on an edge (§4.17) |
 | `page`, `title`, `text` | paper size, title block, free text (notes, headings) |
 | `restore SCH STEP` | put the schematic back to a history step (undo a pass) |
 | `batch-exec FILE.py [--project DIR] [-- ARGS]` | run a pass and journal it with its code (§4.13) |
@@ -637,6 +653,8 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
 | SKiDL tags are local to a `@subcircuit`: two instances both have tag `r`, and matching by the bare tag pairs the wrong parts | the tag is qualified by the instance path (`CH_A/RC1/r`) from the netlist's sheet path |
 | Moving a part whose wires end on shared T-points leaves steps (like KiCad's drag) | `detach` + `connect` the affected pins |
 | A part moved onto another part's pin joined the nets silently; moving the other part later dragged wires between them (LED matrix: rows 9/10 shorted to GND) | `move` refuses pin-on-pin/wire/label contact (`allow_contact` to override); `move_many` moves parts simultaneously, so they can take each other's places without parking |
+| Moving a part wired straight to a sheet box pin carried the wire off the pin (box pins were not anchors of a wire run) | sheet pins end a part's private wire run like other parts' pins; the wire is dragged |
+| Re-creating a sheet box on a port change gave it a new uuid: the board's footprint paths broke and the hand arrangement was lost | boxes are changed in place (`hierarchy.set_box`) |
 | `sync` re-attached pins whose net had not changed when their partner pin left the net: each run stacked another stub + label | a lone pin that already carries the net's name counts as drawn; `check` reports `duplicates` |
 | `detach` on stacked identical wires removed the wires but left the labels floating | stacked identical wires count as one run |
 | The import strip ignored the page height (294 items off an A2 page, invisible in the PNG) | rows wrap within the page; the paper grows when needed |

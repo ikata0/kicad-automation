@@ -21,13 +21,15 @@ Sheet fields other than Sheetname/Sheetfile work as text variables inside the ch
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 from . import env
 from .schematic import Schematic, _sexp, new_uuid, snap, text_width
-from .sexpr import Sym, find, find_all, num
+from .sexpr import Sym, find, find_all, head, num
 
-__all__ = ["add_port", "add_sheet", "annotate", "instance", "ports", "references", "sheets", "tree"]
+__all__ = ["add_port", "add_sheet", "annotate", "instance", "pin_sides", "ports", "references", "set_box", "sheets",
+           "tree"]
 
 PIN_SHAPES = ("input", "output", "bidirectional", "tri_state", "passive")
 _OWN_FIELDS = ("Sheetname", "Sheetfile")
@@ -74,11 +76,12 @@ def add_port(s: Schematic, name: str, x: float, y: float, angle: float = 180,
 
 
 def ports(s: Schematic) -> dict[str, dict]:
-    """The hierarchical labels of a file: {name: {x, y, shape}}."""
+    """The hierarchical labels of a file: {name: {x, y, angle, shape}}."""
     out = {}
     for n in find_all(s.tree, "hierarchical_label"):
         at = find(n, "at")
-        out[str(n[1])] = {"x": float(at[1]), "y": float(at[2]), "shape": str(find(n, "shape")[1])}
+        out[str(n[1])] = {"x": float(at[1]), "y": float(at[2]), "angle": float(at[3]) if len(at) > 3 else 0,
+                          "shape": str(find(n, "shape")[1])}
     return out
 
 
@@ -131,6 +134,158 @@ def add_sheet(s: Schematic, name: str, file: Path | str, x: float, y: float,
         f'(effects (font (size 1.27 1.27)) (justify left top))) {extra} {" ".join(pin_txt)} '
         f'(instances (project "{s.project_name}" (path "/{s.root_uuid}" (page "{page}")))))'))
     return {"uuid": u, "name": name, "file": rel, "pins": pins, "size": (w, h)}
+
+
+def pin_sides(child_ports: dict[str, dict]) -> tuple[dict[str, str], dict[str, str]]:
+    """Box pin sides from the child drawing's ports, first rule that decides: a port label
+    drawn horizontally (at a drawing's edge) keeps its side: text to the left = left edge;
+    then the shape: input left, output right; then the name: ``in``/``inp``/``*_in`` left,
+    ``out``/``*_out`` right; else left. Each side is ordered top to bottom. Returns (left,
+    right) as {name: shape}."""
+    def is_left(name: str, p: dict) -> bool:
+        a = round(p.get("angle", 90)) % 360
+        if a in (0, 180):
+            return a == 180
+        if p["shape"] in ("input", "output"):
+            return p["shape"] == "input"
+        low = name.lower()
+        if re.fullmatch(r"(out|output)\d*|.*[_-]out\d*", low):
+            return False
+        return True
+
+    order = sorted(child_ports.items(), key=lambda kv: (kv[1]["y"], kv[0]))
+    return ({n: p["shape"] for n, p in order if is_left(n, p)},
+            {n: p["shape"] for n, p in order if not is_left(n, p)})
+
+
+def set_box(s: Schematic, name: str, size: tuple[float, float] | None = None,
+            left: list[str] | None = None, right: list[str] | None = None,
+            add: dict[str, tuple[str, str]] | None = None, remove: list[str] = ()) -> dict:
+    """Reshape sheet box ``name`` in place (its uuid stays): ``size`` (w, h) mm, the pins
+    listed in ``left`` / ``right`` go to that edge in that order (unlisted pins keep their
+    side, after the listed ones, top to bottom), ``add`` new pins {name: (shape, side)},
+    ``remove`` pins (with the wiring that hangs only off them). The wiring of a pin that
+    moves comes along (mirrored when it changes sides); wires into shared nets are
+    dragged. Refuses a size too small for the pins and a pin that would land on foreign
+    wiring. Returns the new pin points."""
+    box = s.sheet_box(name)
+    if box is None:
+        raise env.KatError(f"no sheet box {name!r} on {s.path.name}")
+    node = box.node
+    (x, y), (w0, h0) = box.at, box.size
+    pnodes = {str(p[1]): p for p in find_all(node, "pin")}
+    old = box.pins()
+    for pn in remove:
+        if pn not in pnodes:
+            raise env.KatError(f"sheet box {name} has no pin {pn!r}")
+    listed = list(left or []) + list(right or [])
+    unknown = [p for p in listed if p not in pnodes and p not in (add or {})]
+    if unknown or len(set(listed)) < len(listed):
+        raise env.KatError(f"sheet box {name}: unknown or repeated pins {unknown or listed}")
+
+    def side_of(pn: str) -> str:
+        return "left" if abs(old[pn][0] - x) < 1e-6 else "right"
+
+    cols = {"left": list(left or []), "right": list(right or [])}
+    rest = sorted((pn for pn in pnodes if pn not in listed and pn not in remove), key=lambda pn: old[pn][1])
+    for pn in rest:
+        cols[side_of(pn)].append(pn)
+    for pn, (shape, side) in (add or {}).items():
+        if pn in pnodes:
+            raise env.KatError(f"sheet box {name} has a pin {pn!r} already")
+        if shape not in PIN_SHAPES or side not in cols:
+            raise env.KatError(f"pin {pn}: shape one of {', '.join(PIN_SHAPES)}, side left or right")
+        if pn not in listed:
+            cols[side].append(pn)
+    rows = max(len(cols["left"]), len(cols["right"]), 1)
+    widest = max([text_width(p) for c in cols.values() for p in c] or [0])
+    w, h = (snap(size[0]), snap(size[1])) if size else (w0, max(h0, snap(2.54 * (rows + 1))))
+    if h < 2.54 * (rows + 1) - 1e-6 or (cols["left"] and cols["right"] and w < 2 * widest + 2.54):
+        raise env.KatError(f"sheet box {name}: {w:g} x {h:g} mm is too small for "
+                           f"{len(cols['left'])} + {len(cols['right'])} pins; at least "
+                           f"{max(w, 2 * widest + 2.54):g} x {2.54 * (rows + 1):g}")
+    new = {pn: ((x if side == "left" else x + w), snap(y + 2.54 * (i + 1)))
+           for side, c in cols.items() for i, pn in enumerate(c)}
+
+    # removed pins: their private wiring goes too
+    for pn in remove:
+        taken, points, boundary = s.private_run(old[pn], node)
+        marks, powers = s._items_at(points, exclude=node)
+        doomed = {id(n) for n in taken + [b for _, b in boundary] + marks + [o.node for o in powers]}
+        s.tree[:] = [c for c in s.tree if id(c) not in doomed]
+        node.remove(pnodes[pn])
+    # moved pins: plan on the unchanged drawing, then apply
+    moving = [pn for pn in old if pn not in remove and pn in new
+              and (abs(old[pn][0] - new[pn][0]) > 1e-6 or abs(old[pn][1] - new[pn][1]) > 1e-6)]
+    carried, items_seen, plans = set(), set(), []
+    for pn in moving:
+        taken, points, boundary = s.private_run(old[pn], node, carried)
+        marks, powers = s._items_at(points, exclude=node)
+        items = [n for n in marks + [o.node for o in powers] if id(n) not in items_seen]
+        carried |= {id(t) for t in taken}
+        items_seen |= {id(n) for n in items}
+        flip = (abs(new[pn][0] - x) < 1e-6) != (side_of(pn) == "left")
+        plans.append((pn, taken, items, boundary, flip))
+    if moving:
+        tmp = SheetBoxMove(box, {pn: old[pn] for pn in moving}, {pn: new[pn] for pn in moving})
+        s._check_contacts([tmp.todo()], {id(node)}, carried | {id(b) for p in plans for _, b in p[3]}, items_seen)
+    for pn, taken, items, boundary, flip in plans:
+        (ox, oy), (nx, ny) = old[pn], new[pn]
+
+        def f(px: float, py: float) -> tuple[float, float]:
+            return nx + (ox - px if flip else px - ox), py + ny - oy
+        for wn in taken:
+            for q in find_all(find(wn, "pts"), "xy"):
+                q[1], q[2] = (num(v) for v in f(float(q[1]), float(q[2])))
+        for n in items:
+            for m in [n] + (find_all(n, "property") if head(n) == "symbol" else []):
+                a = find(m, "at")
+                a[1], a[2] = (num(v) for v in f(float(a[1]), float(a[2])))
+                if flip and head(m) in ("label", "global_label", "hierarchical_label") and len(a) > 3:
+                    a[3] = num((float(a[3]) + 180) % 360)
+                    _flip_justify(m)
+        for bp, _ in boundary:
+            s._drag_wire_ends(bp, f(*bp), skip=carried)
+    # the box, its pins and fields
+    size_node = find(node, "size")
+    size_node[1], size_node[2] = num(w), num(h)
+    for pn, (px, py) in new.items():
+        if pn in pnodes:
+            p = pnodes[pn]
+        else:
+            shape = add[pn][0]
+            esc = pn.replace('"', '\\"')
+            p = _sexp(f'(pin "{esc}" {shape} (at 0 0 0) (uuid "{new_uuid()}") '
+                      f'(effects (font (size 1.27 1.27)) (justify left)))')
+            node.insert(next(i for i, c in enumerate(node) if head(c) == "instances"), p)
+        a = find(p, "at")
+        a[1:] = [num(px), num(py), num(180 if abs(px - x) < 1e-6 else 0)]
+        just = find(find(p, "effects"), "justify")
+        if just is not None:
+            just[1:] = [Sym("left" if abs(px - x) < 1e-6 else "right")]
+    for prop in find_all(node, "property"):
+        a = find(prop, "at")
+        if float(a[2]) > y + h0 - 1e-6:                  # fields below the box follow its bottom
+            a[2] = num(float(a[2]) + h - h0)
+    s.fix_junctions()
+    return {"sheet": name, "size": (w, h), "pins": {pn: {"x": p[0], "y": p[1]} for pn, p in new.items()}}
+
+
+class SheetBoxMove:
+    """A box's pins moving as ``Schematic._check_contacts`` expects a moving part."""
+
+    def __init__(self, box, old: dict, new: dict):
+        self.node, self.ref, self.old, self.new = box.node, box.ref, old, new
+
+    def todo(self) -> tuple:
+        return (self, None, self.old, self.new, False)
+
+
+def _flip_justify(node: list) -> None:
+    eff = find(node, "effects")
+    just = find(eff, "justify") if eff is not None else None
+    if just is not None:
+        just[1:] = [Sym({"left": "right", "right": "left"}.get(str(v), str(v))) for v in just[1:]]
 
 
 def tree(root: Path | str) -> list[dict]:
