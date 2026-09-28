@@ -234,6 +234,8 @@ class Board(SetupMixin, PlacementMixin, StructureMixin, StampMixin, FinishMixin)
             raise env.KatError(f"{path} is not a KiCad board")
         self._pro_edits: list = []
         self._rules_text: str | None = None
+        self._gen_rules: dict[str, str] = {}
+        self._route_edits: dict = {}
         self._stamps: dict = {}
 
     @staticmethod

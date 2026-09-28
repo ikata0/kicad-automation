@@ -74,6 +74,19 @@ def write_dsn(b: Board, path: Path, nets: list[str] | None = None) -> dict:
         lines.append(f"    (layer {_q(layer)} (type {kind}) (property (index {i})))")
     outline = _outline_points(b)
     lines.append("    (boundary (path pcb 0 " + " ".join(_xy(x, y) for x, y in outline + outline[:1]) + "))")
+    # the board's edge clearance: a band along every outline edge the router keeps out of
+    edge = b.board_minimums().get("min_copper_edge_clearance", 0) or 0
+    if edge > 0:
+        import math
+        for (ax, ay), (bx, by) in zip(outline, outline[1:] + outline[:1]):
+            length = math.hypot(bx - ax, by - ay)
+            if length < 1e-9:
+                continue
+            nx, ny = -(by - ay) / length * edge, (bx - ax) / length * edge
+            band = [(ax + nx, ay + ny), (bx + nx, by + ny), (bx - nx, by - ny), (ax - nx, ay - ny)]
+            for layer in copper:
+                lines.append(f'    (wire_keepout "" {_poly(layer, band)})')
+                lines.append(f'    (via_keepout "" {_poly(layer, band)})')
     for z in b.zones():
         pts = _zone_polygon(z)
         keep = find(z, "keepout")
@@ -94,8 +107,15 @@ def write_dsn(b: Board, path: Path, nets: list[str] | None = None) -> dict:
                     lines.append(f"    (plane {_q(str(net[1]))} {_poly(layer, pts)})")
     default = b.net_rules("")
     lines.append(f'    (via "{_via_name(default["via"], default["via_drill"])}")')
+    # KiCad's hole clearance (hole edge to copper) as the via's copper clearance: the
+    # router only knows copper, and a via's ring is thinner than the hole clearance asks
+    mins = b.board_minimums()
+    hole = mins.get("min_hole_clearance", 0.25)
+    via_cl = max(default["clearance"], hole - (default["via"] - default["via_drill"]) / 2)
+    extra = "".join(f" (clearance {_um(via_cl)} (type {ty}))" for ty in ("via_smd", "via_pin", "via_wire", "via_via")) \
+        if via_cl > default["clearance"] + 1e-9 else ""
     lines.append(f"    (rule (width {_um(default['track'])}) (clearance {_um(default['clearance'])})"
-                 f" (clearance 50 (type smd_smd)))")
+                 f" (clearance 50 (type smd_smd)){extra})")
     lines.append("  )")
 
     # placement: one image per footprint, placed front at 0 degrees. Everything in reference
@@ -139,11 +159,17 @@ def write_dsn(b: Board, path: Path, nets: list[str] | None = None) -> dict:
     classes: dict[str, list[str]] = {}
     for n in routed:
         classes.setdefault(b.net_rules(n)["netclass"], []).append(n)
+    extra = b.route_settings()
     for cname, members in classes.items():
         r = b.net_rules(members[0])
+        use = "".join(f" (use_layer {_q(l)})" for l in extra["layers"].get(cname, []))
         lines.append(f"    (class {_q(cname)} " + " ".join(_q(n) for n in members) +
-                     f' (circuit (use_via "{_via_name(r["via"], r["via_drill"])}"))'
+                     f' (circuit{use} (use_via "{_via_name(r["via"], r["via_drill"])}"))'
                      f" (rule (width {_um(r['track'])}) (clearance {_um(r['clearance'])})))")
+    for key, mm in sorted(extra["class_clearance"].items()):
+        a, bb = key.split(" ", 1)
+        if a in classes and bb in classes:
+            lines.append(f"    (class_class (classes {_q(a)} {_q(bb)}) (rule (clearance {_um(mm)})))")
     lines.append("  )")
 
     # existing copper: locked = protected, the rest may be changed by the router

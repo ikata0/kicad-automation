@@ -160,6 +160,8 @@ def cmd_pcb(a):
         return kat.pcb.instances(a.pcb, a.block)
     if a.pcb_cmd == "environment":
         return kat.pcb.block_environment(a.block, a.zone)
+    if a.pcb_cmd == "remove":
+        return kat.pcb.remove(a.pcb, a.uuid or None, xy(a.at) if a.at else None, a.layer, a.kind, a.net)
     if a.pcb_cmd == "port":
         return kat.pcb.block_port(a.block, a.port, xy(a.at), a.net)
     if a.pcb_cmd == "snapshot":
@@ -766,6 +768,15 @@ def build_parser() -> argparse.ArgumentParser:
                          description="Zones listed here (e.g. the plane the block was checked against) are\n"
                                      "not copied by stamp. Stored in NAME.block.json next to the block board.")
     s11.add_argument("block", metavar="BLOCK_PCB"); s11.add_argument("zone", nargs="*", metavar="ZONE")
+    s13 = psp.add_parser("remove", formatter_class=_Fmt, help="remove single tracks / vias (locked too)",
+                         description="By uuid (from kat pcb check / the board file) or what lies at X,Y; locked\n"
+                                     "items go too, because they are named. The board is checked afterwards.")
+    s13.add_argument("pcb", metavar="PCB")
+    s13.add_argument("--uuid", action="append", help="uuid of a track, via or zone (repeatable)")
+    s13.add_argument("--at", metavar="X,Y", help="what lies at this point (mm)")
+    s13.add_argument("--layer", help="only on this copper layer")
+    s13.add_argument("--kind", choices=("track", "via"), help="only tracks or only vias")
+    s13.add_argument("--net", help="only this net")
     s12 = psp.add_parser("port", formatter_class=_Fmt, help="mark where a port leaves a block board",
                          description="The via or pad at X,Y on the port's net is the port's point: kat block check\n"
                                      "checks it (there, on its net, near the outline's edge), stamp returns it on\n"

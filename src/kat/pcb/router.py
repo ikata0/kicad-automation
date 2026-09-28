@@ -13,11 +13,13 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 import urllib.request
 from pathlib import Path
 
 from .. import env
+from ..sexpr import find, num
 from . import checks, specctra
 from .board import Board
 
@@ -81,42 +83,69 @@ def route(pcb: Path | str, passes: int = 20, nets: list[str] | None = None, time
     b = Board(pcb)
     dsn, ses = work / f"{pcb.stem}.dsn", work / f"{pcb.stem}.ses"
     info = specctra.write_dsn(b, dsn, nets)
+    tight = fine_pitch(b, nets)
     t0 = time.time()
-    try:
-        proc = subprocess.run([exe, "-Djava.awt.headless=true", "-jar", str(jar), "--gui.enabled=false",
-                               "-de", str(dsn.resolve()), "-do", str(ses.resolve()), "-mp", str(passes)],
-                              capture_output=True, text=True, timeout=timeout, cwd=work)
-    except subprocess.TimeoutExpired:
-        raise env.KatError(f"Freerouting did not finish within {timeout} s (log in {work})")
-    log = proc.stdout + proc.stderr
-    (work / "freerouting.log").write_text(log)
+    log_file = work / "freerouting.log"
+    lines = []
+    with open(log_file, "w") as logf:
+        # streamed: the log grows while it runs, and each pass is echoed on stderr
+        proc = subprocess.Popen([exe, "-Djava.awt.headless=true", "-jar", str(jar), "--gui.enabled=false",
+                                 "-de", str(dsn.resolve()), "-do", str(ses.resolve()), "-mp", str(passes)],
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=work)
+        deadline = t0 + timeout
+        import threading
+        timer = threading.Timer(timeout, proc.kill)
+        timer.start()
+        try:
+            for line in proc.stdout:
+                lines.append(line)
+                logf.write(line)
+                logf.flush()
+                m = re.search(r"(Auto-routing pass #\d+.*?\(\d+ unrouted and \d+ violations\))", line)
+                if m:
+                    print(f"route: {m.group(1)}", file=sys.stderr, flush=True)
+            proc.wait()
+        finally:
+            timer.cancel()
+        if time.time() >= deadline and proc.returncode != 0:
+            raise env.KatError(f"Freerouting did not finish within {timeout} s (log in {work})")
+    log = "".join(lines)
     seconds = round(time.time() - t0, 1)
     if not ses.exists():
         raise env.KatError(f"Freerouting wrote no session (exit {proc.returncode}); see {work}/freerouting.log")
     result = specctra.read_ses(ses)
+    applied = apply_session(b, result)
+    b.save()
+    score = re.findall(r"\((\d+) unrouted and (\d+) violations\)", log)
+    c = checks.run(pcb)
+    return {"dir": str(work), "dsn": info, "seconds": seconds, "passes": passes,
+            "router": {"unrouted": int(score[-1][0]), "violations": int(score[-1][1])} if score else None,
+            **applied, **({"fine_pitch": tight} if tight else {}),
+            "check": {k: c[k] for k in ("ok", "clean", "drc_errors", "drc_warnings", "unconnected",
+                                        "parity", "islands", "by_type")}}
+
+
+def apply_session(b: Board, result: dict) -> dict:
+    """Add the router's new wires and vias (``specctra.read_ses``) to the board. Freerouting
+    narrows tracks at fine-pitch pads ("neck-down") below the net class width; those are
+    widened where the clearance allows, checked against everything the router added.
+    Returns ``added_tracks``, ``added_vias``, ``widened`` and the ``narrow`` ones left."""
     have = {_key(t["start"], t["end"], t["layer"]) for t in b.tracks()}
     have_vias = {(round(v["at"][0], 3), round(v["at"][1], 3)) for v in b.vias()}
     added_t = added_v = 0
-    # Freerouting narrows tracks at fine-pitch pads ("neck-down") below the net class
-    # width; widen them where the clearance allows, report the rest
+    # everything the router added goes in first, then the widening
     from .structure import _Copper
     cu, cl = _Copper(b), b._clearance_fn()
-    widened, narrow = 0, []
+    layers = set(b.copper_layers())
+    new_wires = []
     for w in result["wires"]:
         k = _key(w["start"], w["end"], w["layer"])
         if k in have:
             continue
         have.add(k)
-        want = b.net_rules(w["net"])["track"]
-        width = w["width"]
-        if width < want - 1e-6:
-            if not cu.conflicts(w["net"], {w["layer"]}, cl, seg=((w["start"], w["end"]), want / 2)):
-                width, widened = want, widened + 1
-            else:
-                narrow.append({"net": w["net"], "layer": w["layer"], "width": width,
-                               "start": list(w["start"]), "end": list(w["end"])})
-        b._segment(w["start"], w["end"], width, w["layer"], w["net"], False)
-        cu.add_track(w["start"], w["end"], width, w["layer"], w["net"])
+        node = b._segment(w["start"], w["end"], w["width"], w["layer"], w["net"], False)
+        cu.add_track(w["start"], w["end"], w["width"], w["layer"], w["net"])
+        new_wires.append((w, node))
         added_t += 1
     for v in result["vias"]:
         k = (round(v["at"][0], 3), round(v["at"][1], 3))
@@ -124,12 +153,44 @@ def route(pcb: Path | str, passes: int = 20, nets: list[str] | None = None, time
             continue
         have_vias.add(k)
         b._via(v["at"], v["net"], v["size"], v["drill"], False)
+        cu.add_via(v["at"], v["size"], v["net"], layers)
         added_v += 1
-    b.save()
-    score = re.findall(r"\((\d+) unrouted and (\d+) violations\)", log)
-    c = checks.run(pcb)
-    return {"dir": str(work), "dsn": info, "seconds": seconds, "passes": passes,
-            "router": {"unrouted": int(score[-1][0]), "violations": int(score[-1][1])} if score else None,
-            "added_tracks": added_t, "added_vias": added_v, "widened": widened, "narrow": narrow,
-            "check": {k: c[k] for k in ("ok", "clean", "drc_errors", "drc_warnings", "unconnected",
-                                        "parity", "islands", "by_type")}}
+    widened, narrow = 0, []
+    for w, node in new_wires:
+        want = b.net_rules(w["net"])["track"]
+        if w["width"] >= want - 1e-6:
+            continue
+        if not cu.conflicts(w["net"], {w["layer"]}, cl, seg=((w["start"], w["end"]), want / 2)):
+            find(node, "width")[1] = num(want)
+            cu.add_track(w["start"], w["end"], want, w["layer"], w["net"])   # the wider copper counts now
+            widened += 1
+        else:
+            narrow.append({"net": w["net"], "layer": w["layer"], "width": w["width"],
+                           "start": list(w["start"]), "end": list(w["end"])})
+    return {"added_tracks": added_t, "added_vias": added_v, "widened": widened, "narrow": narrow}
+
+
+def fine_pitch(b: Board, nets: list[str] | None = None) -> list[dict]:
+    """Pads a net's class track cannot leave straight without coming closer than the
+    class clearance to the neighbouring pad (fine-pitch parts): Freerouting then necks the
+    track down or gives up. One entry per net and part: the class width and the widest
+    that fits (``fits``, mm)."""
+    from .geometry import poly_seg
+    out: dict[tuple, dict] = {}
+    for f in b.footprints():
+        pads = [p for p in f.pads() if p.net]
+        for p in pads:
+            if nets is not None and p.net not in nets:
+                continue
+            r = b.net_rules(p.net)
+            near = [poly_seg(q.outline, (p.x, p.y), (p.x, p.y)) for q in pads
+                    if q.net != p.net and any(p.on(l) and q.on(l) for l in b.copper_layers())]
+            if not near:
+                continue
+            fits = round(2 * (min(near) - r["clearance"]), 3)
+            if r["track"] > fits + 1e-6:
+                k = (p.net, f.ref)
+                if k not in out or fits < out[k]["fits"]:
+                    out[k] = {"net": p.net, "part": f.ref, "netclass": r["netclass"],
+                              "width": r["track"], "fits": max(fits, 0.0)}
+    return sorted(out.values(), key=lambda e: (e["part"], e["net"]))

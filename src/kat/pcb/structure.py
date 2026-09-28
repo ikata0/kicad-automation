@@ -249,7 +249,10 @@ class StructureMixin:
         """A short stub from an SMD pad to a via next to it, so the pad reaches a plane of
         its net on another layer. The via goes outward from the part first, then sideways."""
         ref, _, number = pad.partition(".")
-        p = self.footprint(ref).pad(number)
+        return self._via_to_pad(self.footprint(ref).pad(number), pad, lock, _cu)
+
+    def _via_to_pad(self, p, pad: str, lock: bool, _cu=None) -> dict:
+        """``via_to_plane`` for a Pad object (a part may have several pads of one number)."""
         if not p.net:
             raise env.KatError(f"{pad} has no net")
         layer = next(l for l in self.copper_layers() if p.on(l))
@@ -259,10 +262,13 @@ class StructureMixin:
         if spot is None:
             raise env.KatError(f"no free spot for a via next to {pad}")
         self._segment((p.x, p.y), spot, rules["track"], layer, p.net, lock)
-        self._via(spot, p.net, rules["via"], rules["via_drill"], lock)
         cu.add_track((p.x, p.y), spot, rules["track"], layer, p.net)
-        cu.add_via(spot, rules["via"], p.net, set(self.copper_layers()))
-        return {"pad": pad, "net": p.net, "via": list(spot)}
+        shared = any(v["net"] == p.net and abs(v["at"][0] - spot[0]) < 1e-3 and abs(v["at"][1] - spot[1]) < 1e-3
+                     for v in self.vias())
+        if not shared:        # a pad on the other side at the same place already made it
+            self._via(spot, p.net, rules["via"], rules["via_drill"], lock)
+            cu.add_via(spot, rules["via"], p.net, set(self.copper_layers()))
+        return {"pad": pad, "net": p.net, "via": list(spot), **({"shared": True} if shared else {})}
 
     def fanout(self, refs: str | list[str], nets: list[str] | None = None,
                skip_nets: list[str] = (), lock: bool = True) -> dict:
@@ -272,13 +278,17 @@ class StructureMixin:
         cu = _Copper(self)
         done, failed = [], []
         for ref in refs:
-            for p in self.footprint(ref).pads():
+            pads = self.footprint(ref).pads()
+            for i, p in enumerate(pads):
                 if not p.net or p.kind != "smd" or p.net in skip_nets or (nets and p.net not in nets):
                     continue
+                # repeated pad numbers (an edge SMA's four GND "2"): each pad its own via
+                label = f"{ref}.{p.number}" + (f"@{sum(q.number == p.number for q in pads[:i]) + 1}"
+                                               if sum(q.number == p.number for q in pads) > 1 else "")
                 try:
-                    done.append(self.via_to_plane(f"{ref}.{p.number}", lock, _cu=cu))
+                    done.append(self._via_to_pad(p, label, lock, _cu=cu))
                 except env.KatError as e:
-                    failed.append({"pad": f"{ref}.{p.number}", "why": str(e)})
+                    failed.append({"pad": label, "why": str(e)})
         return {"vias": done, "failed": failed}
 
     def stitch(self, net: str, pitch: float = 5.0, margin: float = 2.0, lock: bool = True) -> dict:
@@ -343,3 +353,46 @@ class StructureMixin:
             self.tree.remove(item["node"])
             gone += 1
         return {"removed": gone}
+
+    def remove(self, uuid: str | list[str]) -> dict:
+        """Remove tracks, arcs, vias or zones by uuid (from ``tracks()``, ``vias()``,
+        ``at_point``), locked ones too: naming them is the decision."""
+        want = {uuid} if isinstance(uuid, str) else set(uuid)
+        gone = []
+        for n in list(self.tree):
+            u = find(n, "uuid") if isinstance(n, list) else None
+            if u is not None and str(u[1]) in want and str(n[0]) in ("segment", "arc", "via", "zone"):
+                self.tree.remove(n)
+                gone.append(str(u[1]))
+        missing = sorted(want - set(gone))
+        if missing:
+            raise env.KatError(f"no track, via or zone with uuid {', '.join(missing)}")
+        return {"removed": len(gone)}
+
+    def at_point(self, at, layer: str | None = None, kind: str | None = None,
+                 net: str | None = None, radius: float = 0.05) -> list[dict]:
+        """Tracks and vias touching the point (x, y) within ``radius`` mm (a track by its
+        centre line, a via by its pad), optionally only on ``layer``, of ``kind`` ("track"
+        or "via") or of ``net``; each with its uuid for ``remove``."""
+        x, y = self.point(at)
+        out = []
+        if kind in (None, "track"):
+            for t in self.tracks():
+                if (layer is None or t["layer"] == layer) and (net is None or t["net"] == net) \
+                        and point_seg((x, y), t["start"], t["end"]) <= t["width"] / 2 + radius:
+                    out.append({k: v for k, v in t.items() if k != "node"})
+        if kind in (None, "via"):
+            for v in self.vias():
+                if (net is None or v["net"] == net) and (layer is None or layer in self.copper_layers()) \
+                        and math.dist(v["at"], (x, y)) <= v["size"] / 2 + radius:
+                    out.append({"kind": "via", **{k: w for k, w in v.items() if k != "node"}})
+        return out
+
+    def remove_at(self, at, layer: str | None = None, kind: str | None = None,
+                  net: str | None = None) -> dict:
+        """``remove`` what ``at_point`` finds there (locked items too). KatError if nothing."""
+        found = self.at_point(at, layer, kind, net)
+        if not found:
+            raise env.KatError(f"no track or via at {at}" + (f" on {layer}" if layer else ""))
+        self.remove([f["uuid"] for f in found])
+        return {"removed": len(found), "items": [{k: f[k] for k in ("kind", "net", "uuid")} for f in found]}

@@ -58,3 +58,26 @@ def test_route_takes_a_path_relative_to_another_folder(placed, monkeypatch):
     monkeypatch.chdir(placed.parent.parent)
     r = kat.pcb.route(placed.relative_to(placed.parent.parent), passes=5, timeout=300)
     assert r["router"]["unrouted"] == 0, r
+
+
+def test_router_keeps_class_layers_class_clearance_and_hole_clearance(placed):
+    """I3: a class restricted to F.Cu + In2.Cu is routed there; the class-to-class rule and
+    the hole clearance reach the router (DSN) and DRC; the result is DRC clean."""
+    with kat.pcb.edit(placed) as b:
+        b.set_copper_layers(4)
+        b.netclass("SIG", track=0.2, clearance=0.2, nets=["/A1"], layers=["F.Cu", "In2.Cu"])
+        b.netclass("OTHER", track=0.2, clearance=0.2, nets=["/A2"])
+        b.class_clearance("SIG", "OTHER", 1.0)
+        b.constraints(hole_clearance=0.4, edge_clearance=0.5)
+    b = Board(placed)
+    assert b.route_settings() == {"layers": {"SIG": ["F.Cu", "In2.Cu"]}, "class_clearance": {"OTHER SIG": 1.0}}
+    specctra.write_dsn(b, placed.parent / "t.dsn")
+    dsn = (placed.parent / "t.dsn").read_text()
+    assert "(use_layer F.Cu) (use_layer In2.Cu)" in dsn and "(class_class (classes OTHER SIG)" in dsn
+    assert "(clearance 250 (type via_wire))" in dsn       # 0.4 - (0.6 - 0.3) / 2 = 0.25 mm
+    assert dsn.count("wire_keepout") >= 4 * 4             # the edge band: 4 edges x 4 layers
+    r = kat.pcb.route(placed, passes=10, timeout=300)
+    c = r["check"]
+    assert c["unconnected"] == 0 and c["drc_errors"] == 0, r
+    assert {t["layer"] for t in Board(placed).tracks() if t["net"] == "/A1"} <= {"F.Cu", "In2.Cu"}
+    assert "kat class OTHER SIG" in placed.with_suffix(".kicad_dru").read_text()

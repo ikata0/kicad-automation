@@ -282,18 +282,101 @@ class SetupMixin:
     # --- net classes and rules (project files, written on save) ---------------------------
 
     def netclass(self, name: str, track: float, clearance: float, via: float = 0.6,
-                 via_drill: float = 0.3, nets: list[str] | None = None) -> dict:
+                 via_drill: float = 0.3, nets: list[str] | None = None,
+                 layers: list[str] | None = None) -> dict:
         """Define or change a net class in the .kicad_pro; ``nets`` are net-name patterns
-        (``GND``, ``/LED_*``) assigned to it. ``Default`` changes the default class."""
+        (``GND``, ``/LED_*``) assigned to it. ``Default`` changes the default class.
+        ``layers``: the copper layers the router may use for the class (kept in
+        ``<board>.kat.json``; KiCad has no such setting, DRC does not check it)."""
         self._pro_edits.append(("netclass", dict(name=name, track=track, clearance=clearance,
                                                  via=via, via_drill=via_drill, nets=nets or [])))
-        return {"netclass": name}
+        if layers is not None:
+            bad = [l for l in layers if l not in self.copper_layers()]
+            if bad:
+                raise env.KatError(f"no copper layer {', '.join(bad)} on this board")
+            self._route_edits.setdefault("layers", {})[name] = list(layers)
+        return {"netclass": name, **({"layers": list(layers)} if layers is not None else {})}
+
+    def class_clearance(self, a: str, b: str, clearance: float) -> dict:
+        """Keep net classes ``a`` and ``b`` at least ``clearance`` mm apart: a generated DRC
+        rule (``kat class A B``) and the router's class-to-class rule."""
+        key = " ".join(sorted((a, b)))
+        cond = (f"(A.NetClass == '{a}' && B.NetClass == '{b}') || "
+                f"(A.NetClass == '{b}' && B.NetClass == '{a}')")
+        self._gen_rules[f"kat class {key}"] = (f'(rule "kat class {key}" (condition "{cond}") '
+                                               f'(constraint clearance (min {clearance:g}mm)))')
+        self._route_edits.setdefault("class_clearance", {})[key] = clearance
+        return {"classes": [a, b], "clearance": clearance}
+
+    def route_settings(self) -> dict:
+        """What the router gets beyond KiCad's classes: ``layers`` per class and
+        ``class_clearance`` ({"A B": mm}), with pending changes."""
+        from ..syncer_hier import settings_file
+        f = settings_file(self.path)
+        saved = (json.loads(f.read_text()) if f.exists() else {}).get("route", {})
+        out = {k: dict(saved.get(k, {})) for k in ("layers", "class_clearance")}
+        for k, v in self._route_edits.items():
+            out[k].update(v)
+        return out
+
+    def _write_route_settings(self) -> None:
+        if not self._route_edits:
+            return
+        from ..syncer_hier import remember
+        remember(self.path, route=self.route_settings())
+        self._route_edits = {}
 
     def rules(self, text: str) -> dict:
-        """Custom DRC rules (KiCad's rule language) for the .kicad_dru, replacing it:
-        ``(rule "hv" (condition "A.NetClass == 'HV'") (constraint clearance (min 2mm)))``."""
+        """Custom DRC rules (KiCad's rule language) for the .kicad_dru, replacing the earlier
+        custom rules (kat's generated ones, named ``kat ...``, stay):
+        ``(rule "hv" (condition "A.NetClass == 'HV'") (constraint clearance (min 2mm)))``.
+        ``warnings``: rules asking less than the board minimum (``constraints``), which
+        DRC ignores."""
         self._rules_text = text.strip()
-        return {"rules": text.count("(rule ")}
+        return {"rules": text.count("(rule "), **({"warnings": w} if (w := self._below_minimum(text)) else {})}
+
+    def constraints(self, min_track: float | None = None, min_clearance: float | None = None,
+                    min_via: float | None = None, min_via_drill: float | None = None,
+                    min_annular: float | None = None, hole_clearance: float | None = None,
+                    hole_to_hole: float | None = None, edge_clearance: float | None = None,
+                    edge_exempt: list[str] | None = None) -> dict:
+        """The board's minimums (Board Setup > Constraints; mm), what the fab can make:
+        DRC reports anything below them, and custom rules cannot ask less. ``edge_exempt``:
+        parts that may reach the board edge (edge-mount connectors): the board minimum
+        becomes 0 and a generated rule ``kat edge`` keeps ``edge_clearance`` for
+        everything else. Values left None stay as they are. Written on save; the router
+        gets the hole clearance too."""
+        keys = {"min_track_width": min_track, "min_clearance": min_clearance,
+                "min_via_diameter": min_via, "min_through_hole_diameter": min_via_drill,
+                "min_via_annular_width": min_annular, "min_hole_clearance": hole_clearance,
+                "min_hole_to_hole": hole_to_hole, "min_copper_edge_clearance": edge_clearance}
+        values = {k: v for k, v in keys.items() if v is not None}
+        if edge_exempt:
+            if edge_clearance is None:
+                raise env.KatError("edge_exempt needs edge_clearance (the rule for the other parts)")
+            values["min_copper_edge_clearance"] = 0.0
+            cond = " && ".join(f"A.Reference != '{r}' && B.Reference != '{r}'" for r in edge_exempt)
+            self._gen_rules["kat edge"] = (f'(rule "kat edge" (condition "{cond}") '
+                                           f'(constraint edge_clearance (min {edge_clearance:g}mm)))')
+        self._pro_edits.append(("constraints", values))
+        return {"constraints": values, **({"edge_exempt": list(edge_exempt)} if edge_exempt else {})}
+
+    def board_minimums(self) -> dict:
+        """The board's minimums now (with pending ``constraints``), KiCad's names, mm."""
+        return dict(self._project_data().get("board", {}).get("design_settings", {}).get("rules", {}))
+
+    def _below_minimum(self, text: str) -> list[str]:
+        import re
+        mins = self.board_minimums()
+        which = {"clearance": "min_clearance", "track_width": "min_track_width",
+                 "edge_clearance": "min_copper_edge_clearance", "hole_clearance": "min_hole_clearance"}
+        out = []
+        for name, kind, value in re.findall(r'\(rule\s+"?([^"\s)]+)"?.*?\(constraint\s+(\w+)\s+\(min\s+([\d.]+)mm', text, re.S):
+            m = mins.get(which.get(kind, ""))
+            if m is not None and float(value) < m - 1e-9:
+                out.append(f"rule {name}: {kind} {value} mm is below the board minimum {m:g} mm "
+                           f"(DRC uses the minimum; lower it with constraints)")
+        return out
 
     def _project_data(self) -> dict:
         """The .kicad_pro as it will be saved: the file plus the pending edits."""
@@ -307,6 +390,9 @@ class SetupMixin:
             classes.insert(0, dict(DEFAULT_CLASS))  # an empty v0 list means "KiCad defaults"
         patterns = ns.get("netclass_patterns") or []
         for kind, e in self._pro_edits:
+            if kind == "constraints":
+                data.setdefault("board", {}).setdefault("design_settings", {}).setdefault("rules", {}).update(e)
+                continue
             if kind != "netclass":
                 continue
             cls = next((c for c in classes if c.get("name") == e["name"]), None)
@@ -324,11 +410,34 @@ class SetupMixin:
         return data
 
     def _write_project_files(self) -> None:
+        self._write_route_settings()
         pro = self.path.with_suffix(".kicad_pro")
         if self._pro_edits:
             pro.write_text(json.dumps(self._project_data(), indent=2) + "\n")
             self._pro_edits = []
-        if self._rules_text is not None:
+        if self._rules_text is not None or self._gen_rules:
             dru = self.path.with_suffix(".kicad_dru")
-            dru.write_text(f"(version 1)\n{self._rules_text}\n" if self._rules_text else "(version 1)\n")
+            old = dru.read_text() if dru.exists() else ""
+            own, gen = _split_rules(old)
+            if self._rules_text is not None:
+                own = [self._rules_text] if self._rules_text else []
+            gen.update(self._gen_rules)
+            body = "\n".join(own + [gen[k] for k in sorted(gen)])
+            dru.write_text(f"(version 1)\n{body}\n" if body else "(version 1)\n")
             self._rules_text = None
+            self._gen_rules = {}
+
+
+def _split_rules(text: str) -> tuple[list[str], dict[str, str]]:
+    """A .kicad_dru's rules: (the user's, as text; kat's generated ones by name)."""
+    from ..sexpr import dumps, loads
+    own, gen = [], {}
+    if not text.strip():
+        return own, gen
+    for n in loads(f"(dru {text})")[1:]:
+        if head(n) != "rule":
+            continue
+        name = str(n[1])
+        (gen.__setitem__(name, dumps(n).replace("\n", " ")) if name.startswith("kat ")
+         else own.append(dumps(n)))
+    return own, gen

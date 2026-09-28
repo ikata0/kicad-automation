@@ -80,6 +80,37 @@ def test_netclass_and_rules_reach_drc(board):
     assert "clearance" not in k and "track_width" in k
 
 
+def test_board_minimums_edge_exemption_and_rules_below_them(board):
+    """I2: the board's minimums reach DRC; I12: an edge-exempt part, a generated rule for
+    the rest, kept beside the user's rules; a rule below a minimum is reported."""
+    import json
+    b = Board(board)
+    gnd = b.footprint("D1").pad("1")
+    box = b.outline_box()
+    y = box[3] - 1.5
+    with kat.pcb.edit(board) as b:
+        b.add_track((box[0] + 1, y), (box[0] + 8, y), 0.12, "F.Cu", gnd.net)
+        b.constraints(min_track=0.1)
+    assert "track_width" not in kinds(board)
+    with kat.pcb.edit(board) as b:
+        b.constraints(min_track=0.15, min_clearance=0.15, hole_clearance=0.2)
+        assert b.board_minimums()["min_track_width"] == 0.15      # seen before the save
+    assert "track_width" in kinds(board)
+    rules = json.loads(board.with_suffix(".kicad_pro").read_text())["board"]["design_settings"]["rules"]
+    assert rules["min_hole_clearance"] == 0.2 and rules["min_clearance"] == 0.15
+    with kat.pcb.edit(board) as b:
+        b.constraints(min_track=0.1, edge_clearance=0.3, edge_exempt=["J1"])
+        w = b.rules('(rule "tight" (constraint clearance (min 0.1mm)))')["warnings"]
+    assert "below the board minimum 0.15" in w[0]
+    dru = board.with_suffix(".kicad_dru").read_text()
+    assert '"tight"' in dru and "kat edge" in dru and "J1" in dru
+    with kat.pcb.edit(board) as b:                                # user rules replaced, kat's stay
+        b.rules('(rule "wide" (constraint track_width (min 0.3mm)))')
+    dru = board.with_suffix(".kicad_dru").read_text()
+    assert '"tight"' not in dru and '"wide"' in dru and "kat edge" in dru
+    assert "invalid" not in " ".join(kinds(board))
+
+
 def test_keepout_forbids_tracks(board):
     b = Board(board)
     box = b.outline_box()

@@ -13,11 +13,11 @@ from pathlib import Path
 from typing import Iterator
 
 from .. import report
-from ..env import tidy
+from ..env import KatError, tidy
 from . import checks, syncer, views
 from .board import Board, Footprint, Pad
 
-__all__ = ["Board", "Footprint", "Pad", "block_environment", "block_port", "check", "drc", "edit", "fab",
+__all__ = ["Board", "Footprint", "Pad", "block_environment", "block_port", "remove", "check", "drc", "edit", "fab",
            "instances", "load", "ready", "refill", "route", "snapshot", "stamp", "sync", "view"]
 
 
@@ -135,6 +135,21 @@ def block_environment(block_pcb: Path | str, zones: list[str]) -> dict:
     checked against); ``stamp`` does not copy them. Stored in ``NAME.block.json``."""
     from . import stamping
     return stamping.set_environment(block_pcb, zones)
+
+
+def remove(pcb: Path | str, uuids: list[str] | None = None, at: tuple[float, float] | None = None,
+           layer: str | None = None, kind: str | None = None, net: str | None = None) -> dict:
+    """Remove single tracks, vias or zones (locked ones too): by ``uuids``, or what lies
+    ``at`` a point (x, y mm; only ``layer`` / ``kind`` "track"|"via" / ``net`` if given).
+    Saves, then checks the board."""
+    report.touch(pcb)
+    if not uuids and at is None:
+        raise KatError("remove needs uuids or at")
+    with edit(pcb) as b:
+        res = b.remove(uuids) if uuids else b.remove_at(at, layer, kind, net)
+    c = checks.run(Path(pcb))
+    return tidy({"board": str(pcb), **res,
+                 "check": {k: c[k] for k in ("ok", "drc_errors", "unconnected", "parity")}})
 
 
 def block_port(block_pcb: Path | str, port: str, at: tuple[float, float], net: str | None = None) -> dict:
