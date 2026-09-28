@@ -467,6 +467,7 @@ Each block is a project of its own in `blocks/NAME/` (`KAT_BLOCKS`, else the nea
 | `NAME.py` | the SKiDL block function; under `__main__` a test harness calling it with `tag="DUT"` |
 | `NAME.kicad_sch` | the harness, with the block as the sheet `DUT` |
 | `NAME_block.kicad_sch` | the block's drawing: its parts, ports as hierarchical labels, parameters as `${name}`; designs use this file |
+| `NAME_flat.kicad_sch` | only for a block with sheets inside: the whole block on one sheet, the source of flat stamps (§4.20) |
 | `NAME.kicad_pro/.kicad_pcb` | the block's project (`text_variables`: parameter defaults) and its layout |
 | `NAME.block.json` | type, instance (`DUT`), ports, parameters, environment zones, last check |
 | `NAME_REPORT.md` | the block's journal |
@@ -479,6 +480,14 @@ Each block is a project of its own in `blocks/NAME/` (`KAT_BLOCKS`, else the nea
   parameter's value in the harness call becomes `${param}`; the harness value is the
   project's default. Give parameters distinct default values.
 - Blocks used inside a block that are themselves in the library are drawn as nested sheets.
+  Such a block also gets a **flat drawing**, `NAME_flat.kicad_sch`, made once per block.
+  - The first build syncs the harness flat and stamps each inner instance from its own
+    block where its box is in `NAME_block.kicad_sch` (spread out for the bigger drawing),
+    framed. The block's own parts go where they are in its drawing.
+  - Later builds keep the arrangement (edit it like any sheet), sync changes and re-stamp
+    only the inner instances whose block drawing changed since (`restamped`).
+  - `kat block check` also checks the flat drawing (netlist against the harness, ERC) and
+    warns when an inner block changed after it was made.
 - The harness parts (outside `DUT`) are the block's **environment**: they are on the
   block's board so that it can be checked, but `stamp` does not copy them.
 - `kat block check NAME`: the schematic check against the harness netlist, the gate's part
@@ -524,10 +533,11 @@ kat stamp top.kicad_sch RC all --at 50.8,50.8 --step 0,40.64 --expect design.net
   - `--plan` / `plan=True` reports each area and what is in it, and changes nothing.
   - Stamping several instances detaches all of them first; their parts are no obstacle for
     each other, and all areas are kept free (`at + n * step`, or the areas found so far).
-- Only blocks without nested sheets can be drawn this way: for a block made of blocks,
-  stamp the inner blocks (`/CH_A/RC1`, ...) and frame the outer instance (`kat frame SCH
-  CH_A`). The board stamp has no such limit: a nested block board is stamped onto flat
-  designs too (a part's key is then its sheet path in the block plus its tag, `RC1/r`).
+- **Blocks made of blocks** are stamped from their flat drawing (`NAME_flat.kicad_sch`,
+  §4.19): `kat stamp SCH CH all --expect design.net` draws each channel in one piece, its
+  RC stages framed inside (`CH_A/RC1 (rc)`) as in the block. A part's key is its sheet
+  path in the block plus its tag (`RC1/r`), as on the board. Without a flat drawing the
+  stamp is refused with the hint `kat block build CH`.
 - **Frames:** each stamped instance gets a dashed frame with the heading `CH_A (rc)` above
   it; `kat frame SCH CH_A` / `s.frame("CH_A")` draws one for any block instance. Drawing
   it again replaces it.
@@ -664,6 +674,7 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
 | SKiDL tags are local to a `@subcircuit`: two instances both have tag `r`, and matching by the bare tag pairs the wrong parts | the tag is qualified by the instance path (`CH_A/RC1/r`) from the netlist's sheet path |
 | Moving a part whose wires end on shared T-points leaves steps (like KiCad's drag) | `detach` + `connect` the affected pins |
 | A part moved onto another part's pin joined the nets silently; moving the other part later dragged wires between them (LED matrix: rows 9/10 shorted to GND) | `move` refuses pin-on-pin/wire/label contact (`allow_contact` to override); `move_many` moves parts simultaneously, so they can take each other's places without parking |
+| A block made of blocks could not be drawn flat in one piece: every design stamped the inner blocks and arranged the outer one itself | the library keeps a flat drawing per nested block (`NAME_flat.kicad_sch`), made once and re-stamped where inner blocks change |
 | `stamp` moved the instance first and found other parts' wiring in the way only through the contact check, or warned after the fact | the area is checked before anything moves; `make_room` moves occupants, never shared wiring |
 | Moving a part wired straight to a sheet box pin carried the wire off the pin (box pins were not anchors of a wire run) | sheet pins end a part's private wire run like other parts' pins; the wire is dragged |
 | Re-creating a sheet box on a port change gave it a new uuid: the board's footprint paths broke and the hand arrangement was lost | boxes are changed in place (`hierarchy.set_box`) |

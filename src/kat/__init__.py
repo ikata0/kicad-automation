@@ -71,7 +71,7 @@ def stamp(sch: Path | str, block: str, instances: str | list[str],
           plan: bool = False) -> dict:
     """Copy a block's checked drawing (library name or .kicad_sch) onto block instances of a
     flat sheet (``Sheet.stamp``): the n-th instance goes to ``at + n * step`` (mm; the
-    top-left of the block's drawing), ``instances`` a Block path (``/CH_A``), a list, or
+    top-left of the block's drawing; or ``at`` is a list, one point per instance), ``instances`` a Block path (``/CH_A``), a list, or
     ``"all"`` (every instance whose parts pair with the block). Without ``at`` each goes
     to its current place if that is free, else to the first free area. Each area must be
     free of other drawing: else refused, or with ``make_room`` what is in the way is
@@ -106,7 +106,12 @@ def stamp(sch: Path | str, block: str, instances: str | list[str],
         for _, tx in pairs.values():
             for p in s.schematic.pins(tx):
                 s.schematic.detach(tx.ref, p["number"])
-    spots = [None if at is None else (at[0] + k * step[0], at[1] + k * step[1]) for k in range(len(names))]
+    if at is not None and len(at) and not isinstance(at[0], (int, float)):
+        if len(at) != len(names):
+            raise KatError(f"{len(at)} positions for {len(names)} instances")
+        spots = [tuple(a) for a in at]
+    else:
+        spots = [None if at is None else (at[0] + k * step[0], at[1] + k * step[1]) for k in range(len(names))]
     fixed = [sch_stamp.room_of(s.schematic, block, n, a)[2] if a else None for n, a in zip(names, spots)]
     done = []
     for k, name in enumerate(names):
@@ -115,6 +120,8 @@ def stamp(sch: Path | str, block: str, instances: str | list[str],
         done.append(sch_stamp.stamp(s.schematic, block, name, spots[k], design, make_room=make_room,
                                     reserved=reserved, skip=skip, plan=plan))
         if frame and not plan:
+            for sub in sch_stamp.sub_frames(s.schematic, block):     # as framed in the block
+                sch_stamp.frame(s.schematic, f"{name.strip('/')}/{sub}")
             sch_stamp.frame(s.schematic, name)
     if plan:
         return tidy({"file": str(sch), "plan": done,

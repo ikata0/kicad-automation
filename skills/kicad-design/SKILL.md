@@ -41,7 +41,9 @@ board gets the checked layout with `kat pcb stamp`. Fix a block in the library (
 check, stamp again), never in a stamped copy.
 
 **Flat or sheets.** Small blocks read best flat: `kat sync`, then `kat stamp` draws each
-instance like the block (SPEC §4.20). Large or deeply nested blocks go on sheets:
+instance like the block (SPEC §4.20); a block made of blocks is drawn from its flat
+drawing (`blocks/NAME/NAME_flat.kicad_sch`, made by `kat block build`: arrange it there
+once). Large or deeply nested blocks go on sheets:
 `kat sync SCH design.net --sheets TYPE,...` (§4.21). Ask the user when unsure; the board
 flow (`kat pcb stamp`) is the same for both.
 

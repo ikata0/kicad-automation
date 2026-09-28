@@ -224,3 +224,53 @@ def test_boxes_are_arranged_and_keep_hand_changes(lib, tmp_path):
     after = {sh["name"]: sh for sh in hierarchy.sheets(Schematic(sch))}["CH_B"]
     assert {k: after[k] for k in ("uuid", "at", "size", "pins")} == {k: before[k] for k in ("uuid", "at", "size", "pins")}
     assert kat.check(sch, d / "design.net")["netlist_vs_expected"]["match"]
+
+
+def test_a_nested_block_gets_a_flat_drawing_for_flat_designs(lib, tmp_path):
+    blocks.build("RC", force=True)
+    blocks.new("CH")
+    (lib / "CH" / "CH.py").write_text(CH_PY)
+    res = blocks.build("CH", force=True)
+    flat = lib / "CH" / "CH_flat.kicad_sch"
+    assert res["flat"]["created"] and res["flat"]["ok"] and flat.exists()
+    chk = blocks.check("CH", require=())
+    assert chk["flat"]["ok"] and not chk.get("warnings")
+    s = Schematic(flat)
+    tags = {x.field("SKiDL Tag"): x for x in s.symbols() if not x.ref.startswith("#")}
+    assert {t.rsplit("/", 1)[0] for t in tags if t != "j"} == {"DUT", "DUT/RC1", "DUT/RC2", "DUT/RC3"}
+
+    # a flat design: one stamp per channel, RC stages framed inside
+    d = tmp_path / "design"
+    d.mkdir()
+    (d / "design.py").write_text(TOP_PY)
+    subprocess.run([sys.executable, "design.py"], cwd=d, check=True, capture_output=True)
+    sch = d / "flat" / "flat.kicad_sch"
+    assert cli.main(["new", str(sch)]) == 0
+    kat.sync(sch, d / "design.net")
+    out = kat.stamp(sch, "CH", "all", design=d / "design.net", make_room=True)
+    assert [i["instance"] for i in out["instances"]] == ["/CH_A", "/CH_B"]
+    assert out["check"]["erc_errors"] == 0 and out["check"]["clean"]
+    assert kat.check(sch, d / "design.net")["netlist_vs_expected"]["match"]
+    texts = {str(t[1]) for t in Schematic(sch).tree if isinstance(t, list) and str(t[0]) == "text"}
+    assert {"CH_A (ch)", "CH_B (ch)", "CH_A/RC1 (rc)", "CH_B/RC3 (rc)"} <= texts
+
+    # RC's drawing changes, rout was moved by hand: a rebuild re-stamps only the RC stages
+    rout = next(x.ref for x in s.symbols() if x.field("SKiDL Tag") == "DUT/rout")
+    with kat.edit(flat) as e:
+        e.move(rout, by=(0, -5.08))
+    moved = next(x.place for x in Schematic(flat).symbols() if x.ref == rout)
+    rc_sheet = lib / "RC" / "RC_block.kicad_sch"
+    c1 = next(x.ref for x in Schematic(rc_sheet).symbols() if (x.field("SKiDL Tag") or "").endswith("/c"))
+    with kat.edit(rc_sheet) as e:
+        e.move(c1, by=(-5.08, 0))
+    assert "RC" in blocks.check("CH", require=())["warnings"][0]
+    res = blocks.build("CH", force=True)
+    assert not res["flat"]["created"] and res["flat"]["restamped"] == ["RC"] and res["flat"]["ok"]
+    s = Schematic(flat)
+    assert next(x.place for x in s.symbols() if x.ref == rout) == moved
+    by_tag = {x.field("SKiDL Tag"): x.place for x in s.symbols() if x.field("SKiDL Tag")}
+    src = {x.field("SKiDL Tag").rsplit("/", 1)[1]: x.place for x in Schematic(rc_sheet).symbols()
+           if x.field("SKiDL Tag")}
+    for i in (1, 2, 3):
+        r, c = by_tag[f"DUT/RC{i}/r"], by_tag[f"DUT/RC{i}/c"]
+        assert (r.x - c.x, r.y - c.y) == pytest.approx((src["r"].x - src["c"].x, src["r"].y - src["c"].y))

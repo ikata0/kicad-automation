@@ -186,14 +186,16 @@ def _pair_only(s: Schematic, block: Path | str, instance: str, source_instance: 
     return src, src_path, sname, keyed, env_syms, pairs
 
 
-def _room(src: Schematic, block_syms, items, powers, region) -> tuple:
+def _room(src: Schematic, block_syms, items, powers, region, sname: str = "") -> tuple:
     """The area a stamped drawing needs, in the source's coordinates: the block region,
-    the parts' fields, the labels and power symbols, and room for the frame and heading."""
+    the parts' fields, the labels and power symbols, the frames of sub-instances, and room
+    for the frame and heading."""
     from .checks import text_items
-    from .sch_room import _label_box, _union
+    from .sch_room import _frame_box, _frame_nodes, _label_box, _union
     refs = {x.ref for x in block_syms} | {x.ref for x in powers}
     boxes = [region] + [t["box"] for t in text_items(src) if t["owner"] in refs]
     boxes += [_label_box(n) for n in items if head(n) in ("label", "global_label", "hierarchical_label")]
+    boxes += [_frame_box(*v) for k, v in _frame_nodes(src).items() if k.startswith(sname + "/")]
     b = _union(boxes)
     return b[0] - 5.08, b[1] - 7.62, b[2] + 5.08, b[3] + 5.08
 
@@ -201,9 +203,9 @@ def _room(src: Schematic, block_syms, items, powers, region) -> tuple:
 def room_of(s: Schematic, block: Path | str, instance: str, at: tuple[float, float] | None = None,
             source_instance: str | None = None) -> tuple:
     """(size (w, h), offset of ``at`` inside the room, the room box at ``at`` or None)."""
-    src, _, _, keyed, env_syms, _ = _pair_only(s, block, instance, source_instance)
+    src, _, sname, keyed, env_syms, _ = _pair_only(s, block, instance, source_instance)
     items, powers, region = _drawing(src, list(keyed.values()), env_syms)
-    room = _room(src, list(keyed.values()), items, powers, region)
+    room = _room(src, list(keyed.values()), items, powers, region, sname)
     off = (region[0] - room[0], region[1] - room[1])
     size = (room[2] - room[0], room[3] - room[1])
     box = None if at is None else (snap(at[0]) - off[0], snap(at[1]) - off[1],
@@ -227,8 +229,9 @@ def stamp(s: Schematic, block: Path | str, instance: str, at: tuple[float, float
     name = instance.strip("/")
 
     items, powers, region = _drawing(src, list(keyed.values()), env_syms)
-    room = _room(src, list(keyed.values()), items, powers, region)
+    room = _room(src, list(keyed.values()), items, powers, region, sname)
     mine = {tx.ref for _, tx in pairs.values()}
+    here = _region(s, [tx for _, tx in pairs.values()])     # where the instance is now
     for _, tx in pairs.values():          # the instance's old wiring is no obstacle
         for p in s.pins(tx):
             s.detach(tx.ref, p["number"])
@@ -236,8 +239,7 @@ def stamp(s: Schematic, block: Path | str, instance: str, at: tuple[float, float
     frames = {name} | {b for b in _frame_names(s) if b.startswith(name + "/")}
     if at is None:
         size = (room[2] - room[0], room[3] - room[1])
-        bodies = [b for _, tx in pairs.values() if (b := s.body_box(tx))]
-        prefer = (min(b[0] for b in bodies), min(b[1] for b in bodies)) if bodies else None
+        prefer = (here[0] - (region[0] - room[0]), here[1] - (region[1] - room[1]))
         x, y = sch_room.free_spot(s, size, others, reserved, prefer, frames)
         at = (x + region[0] - room[0], y + region[1] - room[1])
     dx, dy = snap(at[0] - region[0]), snap(at[1] - region[1])
@@ -329,6 +331,16 @@ def stamp(s: Schematic, block: Path | str, instance: str, at: tuple[float, float
             "attached": sync.report["attached"], "unresolved": sync.report["unresolved"]}
 
 
+def sub_frames(s: Schematic, block: Path | str) -> list[str]:
+    """The sub-instances framed in a block's drawing, relative to the block (``RC1``)."""
+    from . import blocks as lib
+    from .sch_room import _frame_nodes
+    src_path, inst = lib.sheet_of(block, near=s.path)
+    src = Schematic(src_path)
+    sname = _source_instance(src, inst)
+    return sorted(k[len(sname) + 1:] for k in _frame_nodes(src) if k.startswith(sname + "/"))
+
+
 def _frame_names(s: Schematic) -> set[str]:
     from .sch_room import _frame_nodes
     return set(_frame_nodes(s))
@@ -356,6 +368,8 @@ def frame(s: Schematic, block: str, title: str | None = None, margin: float = 3.
         if t["owner"] in refs or (t["owner"] is None and any(
                 _inside(c, region) for c in ((b[0], b[1]), (b[2], b[1]), (b[0], b[3]), (b[2], b[3]), anchor))):
             boxes.append(b)
+    from .sch_room import _frame_box, _frame_nodes
+    boxes += [_frame_box(*v) for k, v in _frame_nodes(s).items() if k.startswith(name + "/")]
     x0, y0 = min(b[0] for b in boxes), min(b[1] for b in boxes)
     x1, y1 = max(b[2] for b in boxes), max(b[3] for b in boxes)
     x0, y0 = snap(x0 - margin), snap(y0 - margin)

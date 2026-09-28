@@ -94,7 +94,7 @@ def _files(d: Path) -> dict[str, Path]:
     n = d.name
     return {k: d / f"{n}{ext}" for k, ext in (
         ("py", ".py"), ("sch", ".kicad_sch"), ("pcb", ".kicad_pcb"), ("net", ".net"),
-        ("info", ".block.json"), ("block", "_block.kicad_sch"))}
+        ("info", ".block.json"), ("block", "_block.kicad_sch"), ("flat", "_flat.kicad_sch"))}
 
 
 def _info(d: Path) -> dict:
@@ -160,12 +160,101 @@ def build(name: str, lib: Path | str | None = None, force: bool = False) -> dict
         data = json.loads(pro.read_text())
         data["text_variables"] = {**data.get("text_variables", {}), **sch["parameters"]}
         pro.write_text(json.dumps(data, indent=2) + "\n")
+    flat = _build_flat(d, rec)
     pcb = kat.pcb.sync(f["pcb"], force=force)
     return {"block": name, "type": me["type"], "ports": info["ports"], "params": info["params"],
-            "warnings": rec["warnings"],
+            "warnings": rec["warnings"], **({"flat": flat} if flat else {}),
             "schematic": {k: sch.get(k) for k in ("added", "removed", "updated", "parameters")} | {
                 "ok": (sch.get("check") or {}).get("ok")},
             "board": {k: pcb.get(k) for k in ("added", "removed", "updated", "check")}}
+
+
+def _children(d: Path, rec: dict) -> dict[str, list[str]]:
+    """The inner block instances drawn as sheets in the block: {library block: [paths]}."""
+    from .schematic import Schematic
+    f = _files(d)
+    inst = _info(d).get("instance", HARNESS)
+    names = {b.ref for b in Schematic(f["block"]).sheet_boxes()}
+    by_type = {json.loads(p.read_text()).get("type"): p.parent.name for p in d.parent.glob("*/*.block.json")}
+    out: dict[str, list[str]] = {}
+    for n in sorted(names):
+        path = f"{inst}/{n}"
+        out.setdefault(by_type[rec["instances"][path]["type"]], []).append("/" + path)
+    return out
+
+
+def _child_times(d: Path, children: dict) -> dict[str, float]:
+    return {c: sheet_of(c, near=d)[0].stat().st_mtime for c in children}
+
+
+def _build_flat(d: Path, rec: dict) -> dict | None:
+    """``NAME_flat.kicad_sch``: the whole block on one sheet, for flat stamps of a block
+    that contains sheets. The first time, each inner instance is stamped from its own
+    block where its box is in the block's drawing (spread out for the bigger drawing) and
+    the block's own parts go where they are there; later builds keep the arrangement,
+    sync the changes and re-stamp only instances whose block drawing changed."""
+    import kat
+    from . import hierarchy, sch_stamp
+    from .schematic import Schematic
+    f = _files(d)
+    if not f["block"].exists() or not _has_sheets(f["block"]):
+        return None
+    info = _info(d)
+    inst = info.get("instance", HARNESS)
+    children = _children(d, rec)
+    times = _child_times(d, children)
+    first = not f["flat"].exists()
+    if first:
+        Schematic.create(f["flat"])
+    sync = kat.sync(f["flat"], f["net"])
+    restamp = list(children) if first else [c for c in children if times[c] > info.get("flat", {}).get(
+        "children", {}).get(c, 0) + 1e-3]
+    if first:
+        s = kat.load(f["flat"]).schematic
+        block = Schematic(f["block"])
+        boxes = {b["name"]: b for b in hierarchy.sheets(block)}
+        rooms = {}
+        for c, paths in children.items():
+            for p in paths:
+                size, off, _ = sch_stamp.room_of(s, c, p)
+                rooms[p] = (boxes[p.rsplit("/", 1)[1]], size, off)
+        extra = [(b["at"], b["size"], size) for b, size, _ in rooms.values()]
+
+        def spread(x: float, y: float) -> tuple[float, float]:
+            ex = sum(max(sz[0] - bs[0], 0) for at, bs, sz in extra if at[0] + bs[0] <= x + 1e-6)
+            ey = sum(max(sz[1] - bs[1], 0) for at, bs, sz in extra if at[1] + bs[1] <= y + 1e-6)
+            return x + ex, y + ey
+
+        spots = {p: spread(*b["at"]) for p, (b, _, _) in rooms.items()}
+        own = {x.field("SKiDL Tag"): x for x in block.symbols() if (x.field("Block") or "") == inst}
+        moves = []
+        for x in s.symbols():
+            src = own.get(x.field("SKiDL Tag") or "")
+            if src is not None and (x.field("Block") or "") == inst:
+                moves.append({"ref": x.ref, "unit": x.unit, "to": spread(src.place.x, src.place.y),
+                              "rot": src.place.rot, "mirror": src.place.mirror or ""})
+        # everything to the page's upper left, below the frame headings
+        pts = list(spots.values()) + [m["to"] for m in moves]
+        sx, sy = 38.1 - min(p[0] for p in pts), 38.1 - min(p[1] for p in pts)
+        if moves:
+            with kat.edit(f["flat"]) as sh:
+                try:
+                    sh.move_many([dict(m, to=(m["to"][0] + sx, m["to"][1] + sy)) for m in moves])
+                except env.KatError:
+                    pass                                  # stays where sync put it; make_room decides
+        for c, paths in children.items():
+            at = [(spots[p][0] + sx + rooms[p][2][0], spots[p][1] + sy + rooms[p][2][1]) for p in paths]
+            kat.stamp(f["flat"], c, paths, at=at, design=f["net"], make_room=True)
+    else:
+        for c in restamp:
+            kat.stamp(f["flat"], c, children[c], design=f["net"], make_room=True)
+    check = kat.check(f["flat"], f["net"])
+    info = _info(d)
+    info["flat"] = {"file": f["flat"].name, "children": times}
+    _write_info(d, info)
+    return {"file": f["flat"].name, "created": first, "restamped": restamp if not first else [],
+            "synced": {k: len(sync.get(k) or []) for k in ("added", "removed", "updated")},
+            "ok": check["netlist_vs_expected"]["match"] and check["erc"]["errors"] == 0}
 
 
 def _env_refs(d: Path) -> set[str]:
@@ -204,10 +293,26 @@ def check(name: str, lib: Path | str | None = None, require: tuple[str, ...] = (
     ok = bool(sch["ok"] and g["ready"] and board["drc_errors"] == 0 and board["parity"] == 0
               and not open_ and board["outline"])
     info = _info(d)
+    flat, warnings = None, []
+    if f["block"].exists() and _has_sheets(f["block"]):
+        if not f["flat"].exists():
+            raise env.KatError(f"{f['flat'].name} is missing: kat block build {name}")
+        c = kat.check(f["flat"], f["net"])
+        flat = {"ok": bool(c["netlist_vs_expected"]["match"] and c["erc"]["errors"] == 0),
+                "erc_errors": c["erc"]["errors"], "clean": c["clean"]}
+        ok = ok and flat["ok"]
+        from .netlist import blocks_file
+        rec = json.loads(blocks_file(f["net"]).read_text())
+        seen = info.get("flat", {}).get("children", {})
+        newer = [c for c, m in _child_times(d, _children(d, rec)).items() if m > seen.get(c, 0) + 1e-3]
+        if newer:
+            warnings.append(f"{', '.join(newer)} changed after the flat drawing was made: kat block build {name}")
+    keys = ("py", "sch", "pcb") + (("flat",) if flat else ())
     info["checked"] = {"ok": ok, "time": dt.datetime.now().isoformat(timespec="seconds"),
-                       "mtimes": {k: f[k].stat().st_mtime for k in ("py", "sch", "pcb")}}
+                       "mtimes": {k: f[k].stat().st_mtime for k in keys}}
     _write_info(d, info)
-    return {"block": name, "ok": ok, "schematic_ok": sch["ok"], "gate": g["ready"],
+    return {"block": name, "ok": ok, "schematic_ok": sch["ok"], **({"flat": flat} if flat else {}),
+            **({"warnings": warnings} if warnings else {}), "gate": g["ready"],
             "gate_errors": g.get("errors", []), "drc_errors": board["drc_errors"],
             "drc_warnings": board["drc_warnings"], "parity": board["parity"],
             "unconnected": len(open_), "unconnected_to_environment": len(board["unconnected_items"]) - len(open_),
@@ -223,7 +328,7 @@ def stale(d: Path) -> str | None:
     if not c["ok"]:
         return "its last check failed"
     f = _files(d)
-    changed = [k for k in ("py", "sch", "pcb") if f[k].exists() and f[k].stat().st_mtime > c["mtimes"].get(k, 0) + 1e-3]
+    changed = [k for k in ("py", "sch", "pcb", "flat") if f[k].exists() and f[k].stat().st_mtime > c["mtimes"].get(k, 0) + 1e-3]
     return f"changed since its last clean check ({', '.join(changed)})" if changed else None
 
 
@@ -262,7 +367,18 @@ def sheet_of(name_or_path: Path | str, near: Path | str | None = None) -> tuple[
         return p, (json.loads(info.read_text()).get("instance") if info.exists() else None)
     d = find(str(name_or_path), library(near))
     f = _files(d)
-    return (f["block"] if f["block"].exists() else f["sch"]), _info(d).get("instance", HARNESS)
+    inst = _info(d).get("instance", HARNESS)
+    if f["block"].exists() and _has_sheets(f["block"]):
+        if not f["flat"].exists():
+            raise env.KatError(f"block {d.name} contains sheets and has no flat drawing yet: "
+                               f"kat block build {d.name}")
+        return f["flat"], inst
+    return (f["block"] if f["block"].exists() else f["sch"]), inst
+
+
+def _has_sheets(sch: Path) -> bool:
+    from .schematic import Schematic
+    return bool(Schematic(sch).sheet_boxes())
 
 
 def board_of(name_or_path: Path | str, near: Path | str | None = None) -> tuple[Path, str | None]:
