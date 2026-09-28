@@ -84,7 +84,7 @@ def route(pcb: Path | str, passes: int = 20, nets: list[str] | None = None, time
     t0 = time.time()
     try:
         proc = subprocess.run([exe, "-Djava.awt.headless=true", "-jar", str(jar), "--gui.enabled=false",
-                               "-de", str(dsn), "-do", str(ses), "-mp", str(passes)],
+                               "-de", str(dsn.resolve()), "-do", str(ses.resolve()), "-mp", str(passes)],
                               capture_output=True, text=True, timeout=timeout, cwd=work)
     except subprocess.TimeoutExpired:
         raise env.KatError(f"Freerouting did not finish within {timeout} s (log in {work})")

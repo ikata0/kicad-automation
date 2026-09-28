@@ -50,3 +50,11 @@ def test_route_after_structure_is_complete_and_keeps_it(placed):
     assert r["added_tracks"] > 0
     assert locked <= {v["uuid"] for v in Board(placed).vias()}   # structure untouched
     assert Path(r["dir"], "freerouting.log").exists()
+
+
+def test_route_takes_a_path_relative_to_another_folder(placed, monkeypatch):
+    """Freerouting runs in the route folder; the board path given from a parent folder
+    must still reach it (it once got the relative path and found no DSN)."""
+    monkeypatch.chdir(placed.parent.parent)
+    r = kat.pcb.route(placed.relative_to(placed.parent.parent), passes=5, timeout=300)
+    assert r["router"]["unrouted"] == 0, r
