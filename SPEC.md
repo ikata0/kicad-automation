@@ -510,9 +510,20 @@ kat stamp top.kicad_sch RC all --at 50.8,50.8 --step 0,40.64 --expect design.net
   must connect to the block by labels: a wire from a block pin to a harness pin is refused.
 - Afterwards whatever the design still misses is attached as `sync` would, and the sheet
   must match `--expect`; otherwise the file is put back and the command fails.
-- A warning names parts that the stamped drawing now covers; move them, or stamp elsewhere.
-  Stamping several instances detaches all of them first, so their old wiring is out of the
-  way; other parts (a connector placed by `sync`) must be moved by hand.
+- **The area must be free.** Each instance needs an area: the block's drawing with its
+  fields and labels, plus room for the frame and heading. Other drawing in it is refused
+  before anything changes ("the area ... holds J1"), because a stamped pin on a foreign
+  wire or label would join nets.
+  - `--make-room` / `make_room=True` moves what is in the way out, each by the shortest
+    straight shift that lands it on the page, clear of the areas and of everything else:
+    a part with the wiring that hangs only off its pins, a framed instance as a whole
+    (frame redrawn), a sheet box. Wiring that joins several parts is never moved: then it
+    is still refused, naming the wire.
+  - Without `--at` each instance goes to its current place if that is free, else to the
+    first free area in reading order.
+  - `--plan` / `plan=True` reports each area and what is in it, and changes nothing.
+  - Stamping several instances detaches all of them first; their parts are no obstacle for
+    each other, and all areas are kept free (`at + n * step`, or the areas found so far).
 - Only blocks without nested sheets can be drawn this way: for a block made of blocks,
   stamp the inner blocks (`/CH_A/RC1`, ...) and frame the outer instance (`kat frame SCH
   CH_A`). The board stamp has no such limit: a nested block board is stamped onto flat
@@ -581,7 +592,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `pcb stamp PCB BLOCK_PCB INSTANCE... --at X,Y [--step DX,DY] [--rot R] [--no-lock]` | copy a checked block layout onto instances (`all`), then the board check (§4.18) |
 | `pcb instances PCB BLOCK_PCB` / `pcb environment BLOCK_PCB ZONE...` | a block's instances in a design / its test-environment zones |
 | `block new/build/check NAME [--lib DIR]`, `block list` | the block library (§4.19); BLOCK_PCB above may be a block name |
-| `stamp SCH BLOCK INSTANCE... --at X,Y [--step DX,DY] --expect NETLIST [--no-frame]` / `frame SCH BLOCK` | draw block instances like the block's schematic, framed (§4.20) |
+| `stamp SCH BLOCK INSTANCE... [--at X,Y] [--step DX,DY] --expect NETLIST [--make-room] [--plan] [--no-frame]` / `frame SCH BLOCK` | draw block instances like the block's schematic, framed (§4.20) |
 | `snapshot SCH [--slug] [--note] [--expect] [--tiles] [--finding-crops N]` | SVG + trimmed PNG + check into `history/`; tiles and finding close-ups |
 | `view SCH --around REF / --at X,Y / --region X,Y,W,H` | zoomed PNG of one region into `views/` |
 | `add`, `wire`, `connect`, `label`, `power`, `nc` | draw |
@@ -653,6 +664,7 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
 | SKiDL tags are local to a `@subcircuit`: two instances both have tag `r`, and matching by the bare tag pairs the wrong parts | the tag is qualified by the instance path (`CH_A/RC1/r`) from the netlist's sheet path |
 | Moving a part whose wires end on shared T-points leaves steps (like KiCad's drag) | `detach` + `connect` the affected pins |
 | A part moved onto another part's pin joined the nets silently; moving the other part later dragged wires between them (LED matrix: rows 9/10 shorted to GND) | `move` refuses pin-on-pin/wire/label contact (`allow_contact` to override); `move_many` moves parts simultaneously, so they can take each other's places without parking |
+| `stamp` moved the instance first and found other parts' wiring in the way only through the contact check, or warned after the fact | the area is checked before anything moves; `make_room` moves occupants, never shared wiring |
 | Moving a part wired straight to a sheet box pin carried the wire off the pin (box pins were not anchors of a wire run) | sheet pins end a part's private wire run like other parts' pins; the wire is dragged |
 | Re-creating a sheet box on a port change gave it a new uuid: the board's footprint paths broke and the hand arrangement was lost | boxes are changed in place (`hierarchy.set_box`) |
 | `sync` re-attached pins whose net had not changed when their partner pin left the net: each run stacked another stub + label | a lone pin that already carries the net's name counts as drawn; `check` reports `duplicates` |

@@ -134,19 +134,24 @@ def design(tmp_path: Path, capsys) -> Path:
 
 
 def test_flat_sheet_gets_the_block_drawing(lib, tmp_path, capsys):
+    from kat import sch_room
     from kat.schematic import Schematic
     sch = design(tmp_path, capsys)
     net = tmp_path / "design" / "design.net"
     with pytest.raises(kat.KatError, match="no parts with Block = CH "):
         kat.stamp(sch, "RC", "/CH", at=(50.8, 50.8), design=net)
-    res = kat.stamp(sch, "RC", "/CH_A", at=(50.8, 50.8), design=net)
-    assert "J1" in res["instances"][0]["warnings"][0]               # sync put J1 there
-    with kat.edit(sch) as s:
-        s.move("J1", to=(160.02, 101.6))
-    res = kat.stamp(sch, "RC", "all", at=(50.8, 50.8), step=(0, 40.64), design=net)
-    # (CH_A may still cover CH_B's parts before those are stamped: only J1 matters here)
-    assert not any("J1" in w for i in res["instances"] for w in i.get("warnings", []))
+    before = sch.read_text()
+    with pytest.raises(kat.KatError, match="holds J1: pass make_room"):     # sync put J1 there
+        kat.stamp(sch, "RC", "/CH_A", at=(50.8, 50.8), design=net)
+    assert sch.read_text() == before
+    plan = kat.stamp(sch, "RC", "all", at=(50.8, 50.8), step=(0, 40.64), design=net, plan=True)
+    assert not plan["free"] and plan["plan"][0]["in_the_way"] == ["J1"]    # CH_B's parts are no obstacle
+    assert sch.read_text() == before
+    res = kat.stamp(sch, "RC", "all", at=(50.8, 50.8), step=(0, 40.64), design=net, make_room=True)
+    assert [m["what"] for m in res["instances"][0]["made_room"]] == ["J1"]
     assert [i["instance"] for i in res["instances"]] == ["/CH_A", "/CH_B"]
+    j1 = next(x for x in Schematic(sch).symbols() if x.ref == "J1")
+    assert all(not sch_room.hits(Schematic(sch).body_box(j1), tuple(i["area"])) for i in res["instances"])
     assert res["check"]["erc_errors"] == 0
     c = kat.check(sch, net)
     assert c["netlist_vs_expected"]["match"], c["netlist_vs_expected"]
@@ -203,3 +208,20 @@ def test_design_uses_the_block_and_stamps_it_by_name(lib, tmp_path, capsys):
     with kat.pcb.edit(pcb) as b:
         again = b.stamp("RC", "/CH_A", at=(110, 103))
     assert "changed since its last clean check (pcb)" in again["warnings"][0]
+
+
+def test_stamp_finds_free_areas_itself(lib, tmp_path, capsys):
+    from kat import sch_room
+    from kat.schematic import Schematic
+    sch = design(tmp_path, capsys)
+    net = tmp_path / "design" / "design.net"
+    assert cli.main(["stamp", str(sch), "RC", "all", "--expect", str(net), "--plan"]) == 0
+    plan = json.loads(capsys.readouterr().out)
+    assert plan["free"] and len(plan["plan"]) == 2
+    res = kat.stamp(sch, "RC", "all", design=net)
+    a, b = (tuple(i["area"]) for i in res["instances"])
+    assert not sch_room.hits(a, b) and not any(i.get("made_room") for i in res["instances"])
+    s = Schematic(sch)
+    room = sch_room.Room(s, {x.ref for x in s.symbols() if x.field("Block")}, {"CH_A", "CH_B"})
+    assert not room.occupants(a) and not room.occupants(b)     # J1 was left alone, and is outside
+    assert res["check"]["clean"] and res["check"]["erc_errors"] == 0

@@ -115,8 +115,8 @@ def cmd_frame(s, a):
 
 def cmd_stamp(a):
     names = "all" if a.instance == ["all"] else a.instance
-    return kat.stamp(a.sch, a.block, names, xy(a.at), a.expect, xy(a.step) if a.step else (0.0, 0.0),
-                     not a.no_frame)
+    return kat.stamp(a.sch, a.block, names, xy(a.at) if a.at else None, a.expect,
+                     xy(a.step) if a.step else (0.0, 0.0), not a.no_frame, a.make_room, a.plan)
 
 
 def cmd_restore(a):
@@ -601,12 +601,20 @@ def build_parser() -> argparse.ArgumentParser:
             "the block's schematic (library name or .kicad_sch), its wires, labels (renamed to the\n"
             "instance's nets) and power symbols are copied, and what the design still misses is\n"
             "attached as sync would. The block's harness must connect to it by labels. Each\n"
-            "instance gets a dashed frame. The sheet must then match --expect, else it is put back.",
+            "instance gets a dashed frame. The sheet must then match --expect, else it is put back.\n"
+            "Each instance's area must be free of other drawing (a pin on a foreign wire joins\n"
+            "nets): else refused, or --make-room moves what is in the way out (parts with their\n"
+            "own wiring, framed instances, sheet boxes; never wiring between parts). Without --at\n"
+            "each instance goes to its current place if free, else to the first free area.\n"
+            "--plan reports the areas and what is in them and changes nothing.",
             ["kat stamp top.kicad_sch RC all --at 50.8,50.8 --step 0,40.64 --expect design.net",
-             "kat stamp top.kicad_sch RC /CH_A --at 50.8,50.8 --expect design.net"])
+             "kat stamp top.kicad_sch RC /CH_A --at 50.8,50.8 --expect design.net --make-room",
+             "kat stamp top.kicad_sch CH all --expect design.net --plan"])
     q.add_argument("block", metavar="BLOCK", help="block name (library) or its .kicad_sch")
     q.add_argument("instance", nargs="+", metavar="INSTANCE", help="/CH_A ... or all")
-    q.add_argument("--at", required=True, metavar="X,Y", help="top-left of the first block drawing (mm)")
+    q.add_argument("--at", metavar="X,Y", help="top-left of the first block drawing (mm); default: free areas")
+    q.add_argument("--make-room", action="store_true", help="move what is in the way out of the areas")
+    q.add_argument("--plan", action="store_true", help="only report the areas and what is in them")
     q.add_argument("--step", metavar="DX,DY", help="offset from one instance to the next (mm)")
     q.add_argument("--expect", required=True, metavar="NETLIST", help="the design netlist")
     q.add_argument("--no-frame", action="store_true", help="no frame and heading")

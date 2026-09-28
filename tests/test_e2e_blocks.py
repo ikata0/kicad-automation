@@ -108,7 +108,7 @@ def test_flat_and_sheets_give_the_same_clean_boards(work):
         s.move(next(c.ref for c in comps.values() if c.tag == "j"), to=(203.2, 101.6))
     for row, ch in enumerate(("CH_A", "CH_B")):      # one row per channel
         res = kat.stamp(a, "RC", [f"/{ch}/RC{i}" for i in (1, 2, 3)], at=(38.1, 38.1 + 50.8 * row),
-                        step=(33.02, 0), design=net, frame=False)
+                        step=(33.02, 0), design=net, frame=False, make_room=True)
         assert len(res["instances"]) == 3
     by_tag = {c.tag: c.ref for c in comps.values()}
     with kat.edit(a) as s:

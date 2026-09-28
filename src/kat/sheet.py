@@ -262,14 +262,16 @@ class Sheet:
         self.schematic.fix_junctions()
         return {"port": name, "x": float(find(node, "at")[1]), "y": float(find(node, "at")[2])}
 
-    def stamp(self, block: str, instance: str, at: Point, design: str) -> dict:
+    def stamp(self, block: str, instance: str, at: Point | None, design: str, make_room: bool = False) -> dict:
         """Copy a block's checked drawing (library name or .kicad_sch) onto the instance
         ``instance`` (Block path, e.g. ``/CH_A``) of this flat sheet, with the top-left
-        corner of the block region at ``at``. ``design``: the design netlist, which names
-        the labels and completes the connections afterwards. Prefer ``kat.stamp``, which
-        also checks the result against the design and undoes a wrong one."""
+        corner of the block region at ``at`` (None: a free area). ``design``: the design
+        netlist, which names the labels and completes the connections afterwards. Refused
+        when other drawing is in the area, unless ``make_room`` (moves it out). Prefer
+        ``kat.stamp``, which also checks the result against the design and undoes a wrong one."""
         from . import sch_stamp
-        return sch_stamp.stamp(self.schematic, block, instance, self.point(at), design)
+        return sch_stamp.stamp(self.schematic, block, instance, self.point(at) if at is not None else None,
+                               design, make_room=make_room)
 
     def frame(self, block: str, title: str | None = None, margin: float = 3.81) -> dict:
         """Dashed frame and heading ("CH_A (block type)") around a block instance's parts;

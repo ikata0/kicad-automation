@@ -65,15 +65,24 @@ def sync(sch: Path | str, design: Path | str, dry_run: bool = False,
     return tidy(syncer.run(sch, Path(design), dry_run))
 
 
-def stamp(sch: Path | str, block: str, instances: str | list[str], at: tuple[float, float],
-          design: Path | str, step: tuple[float, float] = (0.0, 0.0), frame: bool = True) -> dict:
+def stamp(sch: Path | str, block: str, instances: str | list[str],
+          at: tuple[float, float] | None = None, design: Path | str | None = None,
+          step: tuple[float, float] = (0.0, 0.0), frame: bool = True, make_room: bool = False,
+          plan: bool = False) -> dict:
     """Copy a block's checked drawing (library name or .kicad_sch) onto block instances of a
-    flat sheet (``Sheet.stamp``): the n-th instance goes to ``at + n * step`` (mm),
-    ``instances`` a Block path (``/CH_A``), a list, or ``"all"`` (every instance whose parts
-    pair with the block). With ``frame`` each gets a dashed frame and heading. Then the
-    sheet is checked against ``design``; if its connectivity differs, the file is put
-    back and KatError explains why."""
+    flat sheet (``Sheet.stamp``): the n-th instance goes to ``at + n * step`` (mm; the
+    top-left of the block's drawing), ``instances`` a Block path (``/CH_A``), a list, or
+    ``"all"`` (every instance whose parts pair with the block). Without ``at`` each goes
+    to its current place if that is free, else to the first free area. Each area must be
+    free of other drawing: else refused, or with ``make_room`` what is in the way is
+    moved out (parts with their own wiring, framed instances, sheet boxes; never wiring
+    that joins parts). ``plan``: report the areas and what is in them, change nothing.
+    With ``frame`` each gets a dashed frame and heading. Then the sheet is checked
+    against ``design``; if its connectivity differs, the file is put back and KatError
+    explains why."""
     from . import sch_stamp
+    if design is None:
+        raise KatError("stamp needs the design netlist (design=)")
     report.touch(sch)
     sch = Path(sch)
     before = sch.read_text(encoding="utf-8")
@@ -90,17 +99,26 @@ def stamp(sch: Path | str, block: str, instances: str | list[str], at: tuple[flo
         instances = sorted(found)
     names = [instances] if isinstance(instances, str) else list(instances)
     # free all instances first: their old wiring must not stand where another one goes
+    batch: dict[str, set[str]] = {}
     for name in names:
         *_, pairs = sch_stamp._pair_only(s.schematic, block, name)
+        batch[name] = {tx.ref for _, tx in pairs.values()}
         for _, tx in pairs.values():
             for p in s.schematic.pins(tx):
                 s.schematic.detach(tx.ref, p["number"])
+    spots = [None if at is None else (at[0] + k * step[0], at[1] + k * step[1]) for k in range(len(names))]
+    fixed = [sch_stamp.room_of(s.schematic, block, n, a)[2] if a else None for n, a in zip(names, spots)]
     done = []
     for k, name in enumerate(names):
-        done.append(sch_stamp.stamp(s.schematic, block, name, (at[0] + k * step[0], at[1] + k * step[1]),
-                                    design))
-        if frame:
+        reserved = [b for j, b in enumerate(fixed) if b and j != k] + [d["area"] for d in done]
+        skip = set().union(*(refs for n, refs in batch.items() if n != name))
+        done.append(sch_stamp.stamp(s.schematic, block, name, spots[k], design, make_room=make_room,
+                                    reserved=reserved, skip=skip, plan=plan))
+        if frame and not plan:
             sch_stamp.frame(s.schematic, name)
+    if plan:
+        return tidy({"file": str(sch), "plan": done,
+                     "free": all(not d["in_the_way"] and not d["loose"] for d in done)})
     s.save()
     c = checks.run(sch, Path(design))
     if not c["netlist_vs_expected"]["match"]:

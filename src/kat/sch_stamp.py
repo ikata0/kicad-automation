@@ -186,17 +186,75 @@ def _pair_only(s: Schematic, block: Path | str, instance: str, source_instance: 
     return src, src_path, sname, keyed, env_syms, pairs
 
 
-def stamp(s: Schematic, block: Path | str, instance: str, at: tuple[float, float],
-          design: Path | str, source_instance: str | None = None) -> dict:
+def _room(src: Schematic, block_syms, items, powers, region) -> tuple:
+    """The area a stamped drawing needs, in the source's coordinates: the block region,
+    the parts' fields, the labels and power symbols, and room for the frame and heading."""
+    from .checks import text_items
+    from .sch_room import _label_box, _union
+    refs = {x.ref for x in block_syms} | {x.ref for x in powers}
+    boxes = [region] + [t["box"] for t in text_items(src) if t["owner"] in refs]
+    boxes += [_label_box(n) for n in items if head(n) in ("label", "global_label", "hierarchical_label")]
+    b = _union(boxes)
+    return b[0] - 5.08, b[1] - 7.62, b[2] + 5.08, b[3] + 5.08
+
+
+def room_of(s: Schematic, block: Path | str, instance: str, at: tuple[float, float] | None = None,
+            source_instance: str | None = None) -> tuple:
+    """(size (w, h), offset of ``at`` inside the room, the room box at ``at`` or None)."""
+    src, _, _, keyed, env_syms, _ = _pair_only(s, block, instance, source_instance)
+    items, powers, region = _drawing(src, list(keyed.values()), env_syms)
+    room = _room(src, list(keyed.values()), items, powers, region)
+    off = (region[0] - room[0], region[1] - room[1])
+    size = (room[2] - room[0], room[3] - room[1])
+    box = None if at is None else (snap(at[0]) - off[0], snap(at[1]) - off[1],
+                                   snap(at[0]) - off[0] + size[0], snap(at[1]) - off[1] + size[1])
+    return size, off, box
+
+
+def stamp(s: Schematic, block: Path | str, instance: str, at: tuple[float, float] | None,
+          design: Path | str, source_instance: str | None = None, make_room: bool = False,
+          reserved: list = (), skip: set[str] = frozenset(), plan: bool = False) -> dict:
     """Copy a block's drawing onto one instance on this (flat) sheet; see the module text.
-    ``at``: where the top-left corner of the block region goes (mm). ``design``: the
-    design netlist (names the labels, and completes the connections afterwards)."""
+    ``at``: where the top-left corner of the block region goes (mm); None: the first free
+    area (the instance's current place if free). ``design``: the design netlist (names the
+    labels, and completes the connections afterwards). The area must be free of other
+    drawing: else refused, or with ``make_room`` the occupants are moved out of it.
+    ``reserved``: areas to keep free; ``skip``: parts that are no obstacles (other
+    instances about to be stamped). ``plan``: only report the area and what is in it."""
+    from . import sch_room
     from .syncer import Syncer, _clean, drawn_nets
     src, src_path, sname, keyed, env_syms, pairs = _pair_only(s, block, instance, source_instance)
     name = instance.strip("/")
 
     items, powers, region = _drawing(src, list(keyed.values()), env_syms)
+    room = _room(src, list(keyed.values()), items, powers, region)
+    mine = {tx.ref for _, tx in pairs.values()}
+    for _, tx in pairs.values():          # the instance's old wiring is no obstacle
+        for p in s.pins(tx):
+            s.detach(tx.ref, p["number"])
+    others = set(skip) | mine
+    frames = {name} | {b for b in _frame_names(s) if b.startswith(name + "/")}
+    if at is None:
+        size = (room[2] - room[0], room[3] - room[1])
+        bodies = [b for _, tx in pairs.values() if (b := s.body_box(tx))]
+        prefer = (min(b[0] for b in bodies), min(b[1] for b in bodies)) if bodies else None
+        x, y = sch_room.free_spot(s, size, others, reserved, prefer, frames)
+        at = (x + region[0] - room[0], y + region[1] - room[1])
     dx, dy = snap(at[0] - region[0]), snap(at[1] - region[1])
+    target = (room[0] + dx, room[1] + dy, room[2] + dx, room[3] + dy)
+    occ = sch_room.Room(s, others, frames)
+    in_way, loose = [sch_room.describe(g) for g in occ.occupants(target)], occ.loose(target)
+    if plan:
+        return {"instance": "/" + name, "block": src_path.stem, "at": [region[0] + dx, region[1] + dy],
+                "area": list(target), "in_the_way": in_way, "loose": loose}
+    moved = []
+    if in_way or loose:
+        if not make_room or loose:
+            what = ", ".join(in_way + loose)
+            hint = ("wiring that joins several parts is never moved: move those parts, or stamp elsewhere"
+                    if loose else "pass make_room=True (--make-room), another at, or no at (a free area)")
+            raise env.KatError(f"the area {', '.join(f'{v:g}' for v in target)} for {instance} holds {what}: {hint}")
+        moved = sch_room.make_room(s, target, others, [r for r in reserved], frames)
 
     # nets: the block's drawn names -> the design's names for this instance
     comps, dnets = netlist.read_design(design)
@@ -210,10 +268,7 @@ def stamp(s: Schematic, block: Path | str, instance: str, at: tuple[float, float
                 raise env.KatError(f"net {a} of the block maps to {netmap[a]} and {b}: "
                                    f"{instance} is wired differently from the block")
 
-    # the instance: detach, move, copy
-    for _, tx in pairs.values():
-        for p in s.pins(tx):
-            s.detach(tx.ref, p["number"])
+    # the instance: move, copy
     moves = [dict(ref=tx.ref, unit=tx.unit, x=sx.place.x + dx, y=sx.place.y + dy,
                   rot=sx.place.rot, mirror=sx.place.mirror or "") for sx, tx in pairs.values()]
     s.move_symbols(moves, drag=False)
@@ -262,21 +317,21 @@ def stamp(s: Schematic, block: Path | str, instance: str, at: tuple[float, float
                 tp[1] = keep
                 _shift(tp, dx, dy)
         copied["power"] += 1
-    placed = (region[0] + dx, region[1] + dy, region[2] + dx, region[3] + dy)
-    mine = {tx.ref for _, tx in pairs.values()}
-    crowded = sorted({x.ref for x in _parts(s) if x.ref not in mine and (b := s.body_box(x))
-                      and b[0] < placed[2] and placed[0] < b[2] and b[1] < placed[3] and placed[1] < b[3]})
     s.prune_dangling()                 # e.g. the stub that led to the block's PWR_FLAG
     s.fix_junctions()
     sync = Syncer(s, Path(design))
     sync.reconcile()
     sync.power_flags()
-    return {"instance": "/" + name, "block": src_path.stem, "at": [at[0], at[1]],
+    return {"instance": "/" + name, "block": src_path.stem, "at": [region[0] + dx, region[1] + dy],
+            "area": list(target), **({"made_room": moved} if moved else {}),
             "pairs": {f"{name}/{k}" + (f" unit {u}" if u > 1 else ""): tx.ref for (k, u), (_, tx) in pairs.items()},
             "nets": {k: v for k, v in netmap.items() if k != v}, "copied": copied,
-            "attached": sync.report["attached"], "unresolved": sync.report["unresolved"],
-            **({"warnings": [f"the stamped block covers {', '.join(crowded)}: move them or "
-                             f"stamp elsewhere"]} if crowded else {})}
+            "attached": sync.report["attached"], "unresolved": sync.report["unresolved"]}
+
+
+def _frame_names(s: Schematic) -> set[str]:
+    from .sch_room import _frame_nodes
+    return set(_frame_nodes(s))
 
 
 def frame(s: Schematic, block: str, title: str | None = None, margin: float = 3.81) -> dict:

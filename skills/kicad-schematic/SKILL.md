@@ -131,7 +131,9 @@ and outward directions while computing coordinates. Try a large pass with
 - Many instances of a library block on one flat sheet: arrange the block's own schematic
   once (`blocks/NAME/NAME_block.kicad_sch`), then `kat stamp SCH NAME all --at X,Y
   --step DX,DY --expect design.net` draws every instance like it, framed with its name
-  (SPEC §4.20). `kat frame SCH CH_A` frames any block instance.
+  (SPEC §4.20). `kat frame SCH CH_A` frames any block instance. The areas must be free:
+  `--plan` shows what is in them, `--make-room` moves it out, and without `--at` kat
+  finds free areas itself.
 - Hierarchical sheets can be drawn by hand (`s.sheet(...)`, `s.port(...)`, pins as
   `"CH_A.IN"`, parameters as sheet fields used as `${NAME}` inside); run
   `kat.hierarchy.annotate(root)` after each change of the tree (SPEC §4.17).
