@@ -25,7 +25,8 @@ def _svg(sch: Path) -> Path:
             old.unlink()
         tmp = cache / "export"
         exported = render.export_svg(sch, tmp, frame=False)
-        exported[0].replace(svg)
+        # a hierarchy exports a page per sheet instance; the root's page is <stem>.svg
+        next((e for e in exported if e.stem == sch.stem), exported[0]).replace(svg)
         for f in tmp.glob("*"):
             f.unlink()
         tmp.rmdir()

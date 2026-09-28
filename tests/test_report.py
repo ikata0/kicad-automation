@@ -94,6 +94,15 @@ def test_failed_batch_reports_the_error_and_saves_nothing(project, tmp_path):
     assert 'File "' in body and "bad.py" in body and "runpy" not in body
 
 
+def test_batch_exec_stdout_is_json_only(project, tmp_path, capsys):
+    """B19: the script's prints go to stderr; stdout parses as kat's JSON."""
+    script = tmp_path / "talk.py"
+    script.write_text("print('hello from the pass')\n")
+    assert cli.main(["batch-exec", str(script), "--project", str(project)]) == 0
+    out, err = capsys.readouterr()
+    assert json.loads(out)["ok"] and "hello from the pass" in err
+
+
 def test_comment_from_cli_and_stdin(project, monkeypatch):
     monkeypatch.chdir(project.parent.parent)                      # project found in a subdir
     assert cli.main(["comment", "--kind", "plan", "Place", "**U1**", "first."]) == 0

@@ -175,12 +175,14 @@ def ready(sch: Path | str, expect: Path | str | None = None,
 
 def snapshot(sch: Path | str, slug: str = "", note: str | None = None,
              expect: Path | str | None = None, out: Path | str | None = None,
-             zoom: float = 3.0, tiles: bool | None = None, finding_crops: int = 0) -> dict:
+             zoom: float = 3.0, tiles: bool | None = None, finding_crops: int = 0,
+             pages: str = "files") -> dict:
     """Render and check the sheet into ``history/<timestamp>[_slug]/`` (SVG, trimmed PNG,
     schematic copy, check.json, note.md). Large sheets (PNG > 2000 px) also get readable
     ``tiles/`` unless ``tiles=False``; ``finding_crops=N`` adds close-ups of the first N
-    findings. Returns the paths and the check summary."""
-    res = tidy(_snapshot(sch, slug, note, expect, out, zoom, tiles, finding_crops))
+    findings. A hierarchy gets one PNG per sheet file (``pages="instances"``: one per
+    instance). Returns the paths and the check summary."""
+    res = tidy(_snapshot(sch, slug, note, expect, out, zoom, tiles, finding_crops, pages))
     report.snapshot_images(sch, res, f"kat.snapshot({str(sch)!r}, slug={slug!r})", slug or "sch")
     return res
 

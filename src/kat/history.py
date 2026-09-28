@@ -13,7 +13,8 @@ from .env import tidy
 
 def snapshot(sch: Path | str, slug: str = "", note: str | None = None,
              expect: Path | str | None = None, out: Path | str | None = None,
-             zoom: float = 3.0, tiles: bool | None = None, finding_crops: int = 0) -> dict:
+             zoom: float = 3.0, tiles: bool | None = None, finding_crops: int = 0,
+             pages: str = "files") -> dict:
     """Write ``history/<timestamp>[_slug]/`` (or under ``out``): SVG, trimmed PNG, a copy of
     the schematic, ``check.json`` and ``note.md``; ``tiles/`` for large sheets (see
     ``render.snapshot``); with ``finding_crops`` = N, ``findings/NN_kind.png`` close-ups of
@@ -22,7 +23,7 @@ def snapshot(sch: Path | str, slug: str = "", note: str | None = None,
     stamp = dt.datetime.now().strftime("%Y-%m-%d_%H%M%S")
     slug = ("_" + "".join(c if c.isalnum() or c in "-_" else "-" for c in slug)) if slug else ""
     target = Path(out or sch.parent / "history") / f"{stamp}{slug}"
-    result = render.snapshot(sch, target, zoom, tiles)
+    result = render.snapshot(sch, target, zoom, tiles, pages)
     shutil.copy(sch, target / sch.name)
     res = tidy(checks.run(sch, Path(expect) if expect else None))
     (target / "check.json").write_text(json.dumps(res, indent=1))

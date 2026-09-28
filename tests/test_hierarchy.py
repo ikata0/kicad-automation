@@ -160,6 +160,37 @@ def test_moving_a_sheet_box_brings_its_wiring(design):
     assert checks.erc(design["top"])["errors"] == 0
 
 
+def test_a_name_both_part_and_box_must_be_told_apart(design):
+    """B5: a part named like a sheet box is not moved silently in the box's place."""
+    with kat.edit(design["top"]) as s:
+        s.add("Device:R", 30.48, 30.48, ref="CH_B")
+    with pytest.raises(kat.KatError, match="both a part and a sheet box"):
+        with kat.edit(design["top"]) as s:
+            s.move("CH_B", by=(0, 5.08))
+    with kat.edit(design["top"]) as s:
+        box = s.move("sheet:CH_B", by=(50.8, 0))
+        part = s.move("part:CH_B", by=(0, 5.08))
+    assert box[0]["sheet"] == "CH_B" and box[0]["x"] == 142.24
+    assert part[0]["ref"] == "CH_B" and part[0]["y"] == 35.56
+
+
+def test_snapshot_and_view_of_a_hierarchy(design, tmp_path):
+    """I8: one PNG per sheet file (3 files, 9 pages); B14: tiles of each page in their
+    own folder; B13: kat view shows the root page, not the first sub-sheet."""
+    from kat import render, views
+    top = design["top"]
+    res = render.snapshot(top, tmp_path / "snap", zoom=1, tiles=True)
+    assert len(res["svg"]) == 9 and len(res["images"]) == 3, res["images"]
+    folders = {Path(t["png"]).parent.name for t in res["tiles"]}
+    assert len(folders) == 3 and all(Path(t["png"]).exists() for t in res["tiles"])
+    assert len(render.snapshot(top, tmp_path / "all", zoom=1, pages="instances")["images"]) == 9
+    root = next(Path(p) for p in res["svg"] if Path(p).stem == top.stem)
+    shown = views._svg(top)
+    plain = render.export_svg(top, tmp_path / "plain", frame=False)
+    assert shown.read_bytes() == next(p for p in plain if p.stem == top.stem).read_bytes()
+    assert root.exists()
+
+
 def test_sheet_box_refusals(design):
     with pytest.raises(kat.KatError, match="sheet pin CH_A.IN"):
         with kat.edit(design["top"]) as s:

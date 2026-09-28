@@ -476,11 +476,24 @@ class Schematic:
 
         Unless ``allow_contact``, refuses when a pin would land on another part's pin, a
         wire, a label or a power symbol it does not carry: that contact would join nets
-        silently (and a later move would drag wires between them). Pins of the parts in
+        silently (and a later move would drag wires between them). A sheet box is moved by
+        its sheet name (``sheet:NAME`` / ``part:NAME`` when a part has the same name).
+        Pins of the parts in
         ``ignore`` are no contacts (detached parts that move away themselves next)."""
         todo = []
+        refs = {x.ref for x in self.symbols()}
         for m in moves:
-            if not any(x.ref == m["ref"] for x in self.symbols()) and (box := self.sheet_box(m["ref"])) is not None:
+            name, kind = m["ref"], None
+            for k in ("sheet", "part"):
+                if name.startswith(k + ":"):
+                    name, kind = name[len(k) + 1:], k
+            if kind == "sheet" and self.sheet_box(name) is None:
+                raise env.KatError(f"no sheet box {name}")
+            if kind is None and name in refs and self.sheet_box(name) is not None:
+                raise env.KatError(f"{name} is both a part and a sheet box: say 'part:{name}' or "
+                                   f"'sheet:{name}'")
+            m = dict(m, ref=name)
+            if kind != "part" and (kind == "sheet" or name not in refs) and (box := self.sheet_box(name)) is not None:
                 if m.get("rot") is not None or m.get("mirror"):
                     raise env.KatError(f"sheet box {m['ref']}: KiCad cannot rotate or mirror a sheet box")
                 bx, by = box.at

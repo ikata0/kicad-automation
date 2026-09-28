@@ -372,8 +372,9 @@ def batch_exec(file: Path | str, project: Path | str | None = None, argv: list[s
     title, the original source, its output, the exception if it failed, and the images of
     snapshots and views it made. kat calls inside write no entries of their own. The
     project is ``project``, else ``KAT_PROJECT``, else found from the files the script
-    edits or snapshots, else the working directory. Returns ``file``, ``seconds``, ``ok``,
-    ``error``, ``report``, ``entry``."""
+    edits or snapshots, else the working directory. The script's own output goes to
+    stderr (and the journal), so the CLI's stdout is only its JSON. Returns ``file``,
+    ``seconds``, ``ok``, ``error``, ``report``, ``entry``."""
     global _current
     file = Path(file)
     if not file.is_file():
@@ -381,7 +382,7 @@ def batch_exec(file: Path | str, project: Path | str | None = None, argv: list[s
     source = file.read_text(encoding="utf-8")
     e = Entry("batch", project)
     outer, _current = _current, e
-    out, err = _Tee(sys.stdout), _Tee(sys.stderr)
+    out, err = _Tee(sys.stderr), _Tee(sys.stderr)   # stdout stays kat's JSON alone
     old_argv, sys.argv = sys.argv, [str(file), *argv]
     old_out, old_err, sys.stdout, sys.stderr = sys.stdout, sys.stderr, out, err
     t0, error, tb = time.time(), None, ""

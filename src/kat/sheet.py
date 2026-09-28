@@ -306,8 +306,9 @@ class Sheet:
     def move(self, ref: str, to: Point | None = None, by: Point | None = None,
              rot: float | None = None, mirror: str | None = None, unit: int | None = None,
              drag: bool = True, allow_contact: bool = False) -> list[dict]:
-        """Move, rotate or mirror a part, or move a sheet box (``ref`` = its sheet name; its
-        pins and fields come along, the uuid stays). What hangs only off it is carried along; wires
+        """Move, rotate or mirror a part, or move a sheet box (``ref`` = its sheet name, or
+        ``sheet:NAME`` / ``part:NAME`` when a part and a box share the name; its pins and
+        fields come along, the uuid stays). What hangs only off it is carried along; wires
         into shared nets are dragged (unless ``drag=False``). Refuses to put a pin onto
         another part's pin, a wire or a label (that would join nets) unless
         ``allow_contact``; use :meth:`move_many` to rearrange parts that swap places."""
@@ -339,8 +340,10 @@ class Sheet:
         boxes = {b["name"]: b for b in self.sheets()}
         out = []
         for m in plan:
-            if not any(x.ref == m["ref"] for x in s.symbols()) and m["ref"] in boxes:
-                b = boxes[m["ref"]]
+            kind, _, name = m["ref"].rpartition(":") if m["ref"].startswith(("sheet:", "part:")) else ("", "", m["ref"])
+            m = dict(m, ref=name)
+            if kind != "part" and (kind == "sheet" or not any(x.ref == name for x in s.symbols())) and name in boxes:
+                b = boxes[name]
                 out.append({"sheet": b["name"], "x": b["at"][0], "y": b["at"][1], "size": b["size"],
                             **({"warning": w} if (w := self._covers(b)) else {})})
             else:

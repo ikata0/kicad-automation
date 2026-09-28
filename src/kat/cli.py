@@ -220,7 +220,7 @@ def cmd_ready(a):
 
 
 def cmd_snapshot(a):
-    return kat.snapshot(a.sch, a.slug, a.note, a.expect, a.out, a.zoom, a.tiles, a.finding_crops)
+    return kat.snapshot(a.sch, a.slug, a.note, a.expect, a.out, a.zoom, a.tiles, a.finding_crops, a.pages)
 
 
 def cmd_view(a):
@@ -422,7 +422,9 @@ def build_parser() -> argparse.ArgumentParser:
             "  <name>.png   trimmed, frameless image (for review by the agent)\n"
             "  <name>.kicad_sch copy, check.json, note.md (if --note)\n"
             "  tiles/r<i>c<j>.png  readable pieces of large sheets, with their regions in mm\n"
-            "  findings/NN_*.png   close-ups of findings (--finding-crops N)",
+            "                      (tiles/<page>/... when there are several pages)\n"
+            "  findings/NN_*.png   close-ups of findings (--finding-crops N)\n"
+            "A hierarchy gets one PNG per sheet file (--pages instances: one per instance).",
             ["kat snapshot tia.kicad_sch --slug pass2 --expect tia_design.net --note \"moved R1\""])
     q.add_argument("--out", help="history root directory (default: history/ next to SCH)")
     q.add_argument("--slug", default="", help="short name appended to the timestamp")
@@ -433,6 +435,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="also write tiles/r<i>c<j>.png of ~1600 px (default: when the PNG exceeds 2000 px)")
     q.add_argument("--finding-crops", type=int, default=0, metavar="N",
                    help="write close-ups of the first N findings with a position to findings/")
+    q.add_argument("--pages", choices=("files", "instances"), default="files",
+                   help="hierarchy: a PNG per sheet file (default) or per sheet instance")
 
     q = cmd("view", cmd_view, "Render a zoomed view of one region of the sheet.",
             "For details the full image cannot show (large sheets are downscaled when viewed).\n"
