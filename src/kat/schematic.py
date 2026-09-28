@@ -508,7 +508,7 @@ class Schematic:
                             drags.append((bp, (bp[0] + delta[0], bp[1] + delta[1])))
 
         if not allow_contact:
-            self._check_contacts(todo, moving, carried | boundary_ids, carried_items)
+            self._check_contacts(todo, moving, carried | boundary_ids, carried_items, translate)
 
         # --- apply ---
         for s, new, _, _, reorient in todo:
@@ -544,8 +544,10 @@ class Schematic:
         for old, new_p in contacts:
             self.route(old, new_p, first="v")
 
-    def _check_contacts(self, todo, moving: set[int], own_wires: set[int], own_items: set[int]) -> None:
-        """Raise if a moved pin would touch something it does not bring along."""
+    def _check_contacts(self, todo, moving: set[int], own_wires: set[int], own_items: set[int],
+                        carried: list = ()) -> None:
+        """Raise if a moved pin, or a wire or label it carries along (``carried``: [(wires,
+        items, delta)]), would touch something it does not bring along."""
         taken: dict[tuple[int, int], tuple[int, str]] = {}  # point -> (owner node id, what)
         for o in self.symbols():
             if id(o.node) in moving or id(o.node) in own_items:
@@ -582,6 +584,37 @@ class Schematic:
                     raise env.KatError(
                         f"{s.ref}.{n} would land on {hit} at {q[0]:g},{q[1]:g} and join nets; "
                         "move that first, move both at once (move_many), or allow_contact=True")
+        # the wiring that comes along: its new points on foreign drawing, foreign points on it
+        new_segs, new_pts = [], []
+        for wires, nodes, (dx, dy) in carried:
+            for w in wires:
+                a, b = (tuple(float(v) for v in xy[1:3]) for xy in find_all(find(w, "pts"), "xy")[:2])
+                seg = ((a[0] + dx, a[1] + dy), (b[0] + dx, b[1] + dy))
+                new_segs.append(seg)
+                new_pts += list(seg)
+            for n in nodes:
+                if head(n) != "symbol":
+                    at = find(n, "at")
+                    new_pts.append((float(at[1]) + dx, float(at[2]) + dy))
+        if not new_pts:
+            return
+        own_nodes = moving | own_items
+        for q in new_pts:
+            owner, hit = taken.get(key(q), (0, None))
+            if hit and owner in own_nodes:
+                hit = None
+            if hit is None and index.interior(q):
+                hit = "a wire"
+            if hit:
+                raise env.KatError(
+                    f"the wiring moving with {', '.join(sorted({s.ref for s, *_ in todo}))} would land on {hit} "
+                    f"at {q[0]:g},{q[1]:g} and join nets; move that first, or move both at once (move_many)")
+        mine = SegIndex(new_segs)
+        for k, (owner, what) in taken.items():
+            if owner not in own_nodes and mine.interior((k[0] / 100, k[1] / 100)):
+                raise env.KatError(
+                    f"the wiring moving with {', '.join(sorted({s.ref for s, *_ in todo}))} would run over "
+                    f"{what} at {k[0] / 100:g},{k[1] / 100:g} and join nets; move that first, or move both at once")
 
     def private_run(self, start: tuple[float, float], owner: list | None = None,
                     skip: set[int] = frozenset()):

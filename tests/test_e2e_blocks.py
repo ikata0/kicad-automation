@@ -99,27 +99,31 @@ def board(sch: Path, net: Path) -> Path:
 
 def test_flat_and_sheets_give_the_same_clean_boards(work):
     net = work["net"]
-    # A: flat, every RC drawn like the block, channels framed
+    # A: flat, each channel stamped in one piece from CH's flat drawing, RC stages framed
     a = work["out"] / "flat" / "flat.kicad_sch"
     assert cli.main(["new", str(a)]) == 0
     kat.sync(a, net)
-    comps, _ = netlist.read_design(net)
-    with kat.edit(a) as s:                       # the connector out of the blocks' way
-        s.move(next(c.ref for c in comps.values() if c.tag == "j"), to=(203.2, 101.6))
-    for row, ch in enumerate(("CH_A", "CH_B")):      # one row per channel
-        res = kat.stamp(a, "RC", [f"/{ch}/RC{i}" for i in (1, 2, 3)], at=(38.1, 38.1 + 50.8 * row),
-                        step=(33.02, 0), design=net, frame=False, make_room=True)
-        assert len(res["instances"]) == 3
-    by_tag = {c.tag: c.ref for c in comps.values()}
-    with kat.edit(a) as s:
-        for row, ch in enumerate(("CH_A", "CH_B")):
-            s.move(by_tag[f"{ch}/rout"], to=(142.24, 50.8 + 50.8 * row))
-            s.frame(ch)
+    plan = kat.stamp(a, "CH", "all", design=net, plan=True)       # nothing changes
+    assert [p["instance"] for p in plan["plan"]] == ["/CH_A", "/CH_B"]
+    res = kat.stamp(a, "CH", "all", design=net, make_room=True)
+    assert res["check"]["clean"] and res["check"]["erc_errors"] == 0, res["check"]
     assert kat.check(a, net)["netlist_vs_expected"]["match"]
-    # B: sheets from the library
+    # B: sheets from the library, the top arranged: J1 left of the channel boxes
     b = work["out"] / "sheets" / "sheets.kicad_sch"
     assert cli.main(["new", str(b)]) == 0
     assert kat.sync(b, net, sheets=["ch", "rc"])["check"]["ok"]
+    comps, _ = netlist.read_design(net)
+    j = next(c.ref for c in comps.values() if c.tag == "j")
+    with kat.edit(b) as s:
+        boxes = s.sheets()
+        top = min(bx["at"][1] for bx in boxes)
+        s.move(j, to=(38.1, top + 5.08))
+        s.move_many([{"ref": bx["name"], "to": (101.6 + 63.5 * i, top)} for i, bx in enumerate(boxes)])
+    c = kat.check(b, net)
+    assert c["netlist_vs_expected"]["match"] and c["clean"], {k: c[k] for k in ("body_overlaps", "overlaps")}
+    # a re-sync keeps the arrangement
+    again = kat.sync(b, net)
+    assert again["check"]["ok"] and not again["added"] and not again["updated"]
 
     boards = {name: board(sch, net) for name, sch in (("flat", a), ("sheets", b))}
     counts = {}
