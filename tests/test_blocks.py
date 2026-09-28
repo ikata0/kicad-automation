@@ -213,6 +213,55 @@ def test_design_uses_the_block_and_stamps_it_by_name(lib, tmp_path, capsys):
     with kat.pcb.edit(pcb) as b:
         again = b.stamp("RC", "/CH_A", at=(110, 103))
     assert "changed since its last clean check (pcb)" in again["warnings"][0]
+    # B4: the block routed together with its harness connector: none of the harness's
+    # route is stamped, not even the part that ends at the block's R1
+    tracks = again["tracks"]
+    with kat.pcb.edit(rc_pcb) as b:
+        j = b.footprint("J1").pad("1")
+        r = b.footprint("R1").pad("1")
+        b.track(["J1.1", (j.x, 99.6), (r.x, 99.6), "R1.1"], layer="F.Cu")
+    with kat.pcb.edit(pcb) as b:
+        routed = b.stamp("RC", "/CH_A", at=(110, 103))
+    assert routed["tracks"] == tracks and routed["skipped_environment"] >= 3, routed
+
+
+def test_port_points_are_checked_and_stamped(lib, tmp_path, capsys):
+    """I1: a via at the block's edge marks where port inp leaves it; block check checks
+    it, the stamp reports it on the design; D4: the harness needs no MPN."""
+    rc_pcb = lib / "RC" / "RC.kicad_pcb"
+    with kat.pcb.edit(rc_pcb) as b:
+        net = b.footprint("R1").pad("1").net
+        b.via((100.8, 101.5), net=net)
+        b.track(["R1.1", (100.8, 101.5)])
+    assert kat.pcb.block_port(rc_pcb, "inp", (100.8, 101.5))["net"] == net
+    with pytest.raises(kat.KatError, match="no via or pad"):
+        kat.pcb.block_port(rc_pcb, "out", (107, 107))
+    res = blocks.check("RC", require=("MPN",))
+    assert "port_problems" not in res and not any(e["ref"] == "J1" for e in res["gate_errors"]), res
+    with kat.pcb.edit(rc_pcb) as b:
+        b.via((106.0, 105.0), net=net)
+    kat.pcb.block_port(rc_pcb, "inp", (106.0, 105.0))
+    assert "inside the outline's edge" in blocks.check("RC", require=())["port_problems"][0]
+    kat.pcb.block_port(rc_pcb, "inp", (100.8, 101.5))
+
+    d = tmp_path / "design"
+    d.mkdir()
+    (d / "design.py").write_text(DESIGN_PY)
+    subprocess.run([sys.executable, "design.py"], cwd=d, check=True, capture_output=True)
+    sch = d / "top" / "top.kicad_sch"
+    assert cli.main(["new", str(sch)]) == 0
+    capsys.readouterr()
+    kat.sync(sch, d / "design.net")
+    pcb = sch.with_suffix(".kicad_pcb")
+    kat.pcb.sync(pcb, force=True)
+    with kat.pcb.edit(pcb) as b:
+        b.set_copper_layers(4)
+        b.outline(rect=(100, 100, 40, 20))
+        got = b.stamp("RC", "/CH_B", at=(110, 111), rot=180)
+    assert got["ports"]["inp"]["net"] == "IN_B" or got["ports"]["inp"]["net"].endswith("IN_B"), got["ports"]
+    # 180 deg about the block origin (100, 100) -> (110, 111): (100.8, 101.5) -> (109.2, 109.5)
+    assert (got["ports"]["inp"]["x"], got["ports"]["inp"]["y"]) == (109.2, 109.5)
+    assert kat.pcb.Board(pcb).ports("/CH_B") == got["ports"]
 
 
 def test_stamp_finds_free_areas_itself(lib, tmp_path, capsys):

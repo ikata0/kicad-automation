@@ -155,11 +155,13 @@ def cmd_pcb(a):
     if a.pcb_cmd == "stamp":
         names = "all" if a.instance == ["all"] else a.instance
         return kat.pcb.stamp(a.pcb, a.block, names, xy(a.at), xy(a.step) if a.step else (0.0, 0.0),
-                             a.rot, not a.no_lock)
+                             a.rot, not a.no_lock, a.make_room)
     if a.pcb_cmd == "instances":
         return kat.pcb.instances(a.pcb, a.block)
     if a.pcb_cmd == "environment":
         return kat.pcb.block_environment(a.block, a.zone)
+    if a.pcb_cmd == "port":
+        return kat.pcb.block_port(a.block, a.port, xy(a.at), a.net)
     if a.pcb_cmd == "snapshot":
         return kat.pcb.snapshot(a.pcb, a.slug, a.note, a.out, a.tiles, a.finding_crops, not a.no_3d)
     if a.pcb_cmd == "view":
@@ -747,7 +749,9 @@ def build_parser() -> argparse.ArgumentParser:
                                     "nets, into a KiCad group \"/CH_A (NAME)\". Instances are sheet paths\n"
                                     "(hierarchical) or SKiDL block paths (flat, Block field). Stamping again\n"
                                     "replaces the copy. The block board's origin is the top-left corner of\n"
-                                    "its outline. Refused if the instance is wired differently.")
+                                    "its outline. Refused if the instance is wired differently, if the design's\n"
+                                    "net classes on its nets are stricter than the block's, or if design parts\n"
+                                    "overlap the block's parts (--make-room pushes them aside).")
     s9.add_argument("pcb", metavar="PCB", help="the design's board")
     s9.add_argument("block", metavar="BLOCK_PCB", help="the checked block board")
     s9.add_argument("instance", nargs="+", metavar="INSTANCE", help="/CH_A ... or all")
@@ -755,12 +759,20 @@ def build_parser() -> argparse.ArgumentParser:
     s9.add_argument("--step", metavar="DX,DY", help="offset from one instance to the next (mm)")
     s9.add_argument("--rot", type=float, default=0.0, help="0, 90, 180 or 270")
     s9.add_argument("--no-lock", action="store_true", help="leave the copied copper unlocked")
+    s9.add_argument("--make-room", action="store_true", help="move design parts out of the block's way")
     s10 = psp.add_parser("instances", formatter_class=_Fmt, help="instances of a block in a design")
     s10.add_argument("pcb", metavar="PCB"); s10.add_argument("block", metavar="BLOCK_PCB")
     s11 = psp.add_parser("environment", formatter_class=_Fmt, help="name a block board's test-environment zones",
                          description="Zones listed here (e.g. the plane the block was checked against) are\n"
                                      "not copied by stamp. Stored in NAME.block.json next to the block board.")
     s11.add_argument("block", metavar="BLOCK_PCB"); s11.add_argument("zone", nargs="*", metavar="ZONE")
+    s12 = psp.add_parser("port", formatter_class=_Fmt, help="mark where a port leaves a block board",
+                         description="The via or pad at X,Y on the port's net is the port's point: kat block check\n"
+                                     "checks it (there, on its net, near the outline's edge), stamp returns it on\n"
+                                     "the design (ports), so the top level is routed to known points.")
+    s12.add_argument("block", metavar="BLOCK_PCB"); s12.add_argument("port", metavar="PORT")
+    s12.add_argument("--at", required=True, metavar="X,Y", help="the via or pad (mm)")
+    s12.add_argument("--net", help="refuse unless the copper there is on this net")
 
     # --- block library ---
     q = cmd("block", cmd_block, "The block library: blocks designed, laid out and checked once.",

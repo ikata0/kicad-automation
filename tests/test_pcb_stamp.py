@@ -179,6 +179,37 @@ def test_refusals(hier, tmp_path):
         two.stamp(hier["b1"], "/CH_B", at=(112, 112))
 
 
+def test_parts_in_the_way_are_refused_or_moved(hier, tmp_path):
+    """I10: a top-level part where the block's parts go: refused, or with make_room
+    pushed aside; the result is DRC clean."""
+    pcb = copy_of(hier, tmp_path)["top"]
+    r = Board(pcb).footprint("R201")                             # CH_A's R101
+    with kat.pcb.edit(pcb) as b:
+        b.footprint("J101").place(r.x, r.y, 0)
+    with pytest.raises(kat.KatError, match="overlap J101"):
+        with kat.pcb.edit(pcb) as b:
+            b.stamp(hier["b1"], "/CH_A", at=(112, 102))
+    with kat.pcb.edit(pcb) as b:
+        res = b.stamp(hier["b1"], "/CH_A", at=(112, 102), make_room=True)
+    assert [m["ref"] for m in res["made_room"]] == ["J101"]
+    assert not [c for c in Board(pcb).collisions() if "J101" in (c["a"], c["b"])]
+
+
+def test_net_classes_stricter_than_the_blocks_are_refused(hier, tmp_path):
+    """I4: the block was routed with 0.2 mm clearance; a design class of 0.3 on its port
+    nets would make the stamped copper DRC errors. A looser class is only a warning."""
+    pcb = copy_of(hier, tmp_path)["top"]
+    with kat.pcb.edit(pcb) as b:
+        b.netclass("WIDE", track=0.25, clearance=0.3, nets=["/IN_A"])
+    with pytest.raises(kat.KatError, match=r"/IN_A \(WIDE: track 0.25 > block 0.2, clearance 0.3"):
+        with kat.pcb.edit(pcb) as b:
+            b.stamp(hier["b1"], "/CH_A", at=(112, 102))
+    with kat.pcb.edit(pcb) as b:
+        b.netclass("WIDE", track=0.2, clearance=0.15, nets=["/IN_A"])
+        res = b.stamp(hier["b1"], "/CH_A", at=(112, 102))
+    assert any("looser" in w and "/IN_A" in w for w in res["warnings"]), res
+
+
 @pytest.mark.skipif(not __import__("kat.pcb.router", fromlist=["x"]).jar_path().exists()
                     or shutil.which("java") is None, reason="needs Freerouting and Java")
 def test_router_connects_the_rest_and_keeps_block_copper(hier, tmp_path):

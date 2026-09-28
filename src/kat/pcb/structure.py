@@ -108,8 +108,7 @@ class StructureMixin:
     # --- net classes -------------------------------------------------------------------------
 
     def _classes(self) -> tuple[dict, list]:
-        pro = self.path.with_suffix(".kicad_pro")
-        ns = json.loads(pro.read_text()).get("net_settings", {}) if pro.exists() else {}
+        ns = self._project_data().get("net_settings", {})
         classes = {c["name"]: c for c in ns.get("classes", [])}
         return classes, ns.get("netclass_patterns") or []
 

@@ -30,7 +30,7 @@ from .. import env
 from ..schematic import new_uuid
 from ..sexpr import Sym, find, find_all, head, num
 from . import footprints as fps
-from .geometry import inside, rotate
+from .geometry import box_of, inside, overlap, rotate
 
 COPPER = ("segment", "arc", "via", "zone")
 GRAPHICS = ("gr_line", "gr_rect", "gr_arc", "gr_circle", "gr_poly", "gr_curve", "gr_text",
@@ -57,6 +57,37 @@ def set_environment(block_pcb: Path | str, zones: list[str]) -> dict:
     info["environment"] = sorted(set(zones))
     block_file(block_pcb).write_text(json.dumps(info, indent=2) + "\n")
     return info
+
+
+def set_port(block_pcb: Path | str, port: str, at: tuple[float, float], net: str | None = None) -> dict:
+    """Mark where port ``port`` leaves the block board: the via or pad at ``at`` (mm),
+    on the port's net. Stored in the block file; ``kat block check`` checks it (still
+    there, on its net, near the outline's edge) and ``stamp`` reports it on the design
+    (``Board.ports``), so the design is routed to known points."""
+    from .board import Board
+    b = Board(block_pcb)
+    x, y = at
+    hit = next((("via", v["net"]) for v in b.vias()
+                if abs(v["at"][0] - x) < 0.01 and abs(v["at"][1] - y) < 0.01), None)
+    if hit is None:
+        hit = next((("pad", f"{p.ref}.{p.number}", p.net) for p in b.pads() if inside(p.outline, (x, y))), None)
+        hit = hit and (hit[0], hit[2])
+    if hit is None:
+        raise env.KatError(f"no via or pad at {x:g},{y:g} on {Path(block_pcb).name}: place the port's via first")
+    kind, on = hit
+    if net and on != net:
+        raise env.KatError(f"the {kind} at {x:g},{y:g} is on {on or 'no net'}, not {net}")
+    info = block_info(block_pcb)
+    pts = [q for q in info.get("port_points", []) if q["port"] != port]
+    pts.append({"port": port, "net": on, "x": x, "y": y, "kind": kind})
+    info["port_points"] = sorted(pts, key=lambda q: q["port"])
+    block_file(block_pcb).write_text(json.dumps(info, indent=2) + "\n")
+    return {"port": port, "net": on, "kind": kind, "at": [x, y]}
+
+
+def stamps_file(pcb: Path | str) -> Path:
+    """``<board>.stamps.json``: where each instance was stamped (block, at, rot) and its ports."""
+    return Path(pcb).with_suffix(".stamps.json")
 
 
 # --- helpers ------------------------------------------------------------------------------
@@ -107,6 +138,55 @@ def _joined(instance: str, name: str) -> str:
 
 def _group_name(instance: str, name: str) -> str:
     return instance + name if name.startswith("/") else f"{instance} {name}"
+
+
+def _harness_copper(src, block_pads: list, env_pads: list, nets: set[str],
+                    keep: set[tuple[float, float]] = frozenset()) -> set[int]:
+    """Copper of the block board that serves only its harness: on ``nets`` (port nets),
+    the segments touching a harness pad, then every segment or arc with an end that
+    reaches nothing (no block pad, via or other kept segment), until none is left; then
+    the vias left with no copper (``keep``: points of port vias, kept anyway). Returns
+    the ids of the nodes not to stamp."""
+    def pt(n, key):
+        v = find(n, key)
+        return (round(float(v[1]), 4), round(float(v[2]), 4))
+
+    def net(n):
+        v = find(n, "net")
+        return str(v[1]) if v is not None else ""
+
+    segs = [n for n in src.tree if head(n) in ("segment", "arc") and net(n) in nets]
+    vias = [n for n in src.tree if head(n) == "via" and net(n) in nets]
+    pads = [(p.net, p) for p in block_pads if p.net in nets]
+    drop = {id(n) for n in segs if any(inside(p.outline, pt(n, k)) for p in env_pads for k in ("start", "end"))}
+
+    def held(q, n, lay) -> bool:
+        if any(pn == net(n) and inside(p.outline, q) for pn, p in pads):
+            return True
+        if any(id(v) not in drop and pt(v, "at") == q for v in vias):
+            return True
+        return any(m is not n and id(m) not in drop and str(find(m, "layer")[1]) == lay
+                   and q in (pt(m, "start"), pt(m, "end")) for m in segs)
+
+    changed = True
+    while changed:
+        changed = False
+        for n in segs:
+            if id(n) in drop:
+                continue
+            lay = str(find(n, "layer")[1])
+            if not all(held(pt(n, k), n, lay) for k in ("start", "end")):
+                drop.add(id(n))
+                changed = True
+        for v in vias:
+            q = pt(v, "at")
+            if id(v) in drop or q in keep:
+                continue
+            had = [n for n in segs if q in (pt(n, "start"), pt(n, "end"))]
+            if had and all(id(n) in drop for n in had) and not any(inside(p.outline, q) for _, p in pads):
+                drop.add(id(v))
+                changed = True
+    return drop
 
 
 def _item_layers(node: list) -> set[str]:
@@ -249,7 +329,8 @@ class StampMixin:
     # --- stamping ---------------------------------------------------------------------------
 
     def stamp(self, block_pcb: Path | str, instance: str | dict, at: tuple[float, float] | None = None,
-              rot: float = 0.0, lock: bool = True, source_instance: str | None = None) -> dict:
+              rot: float = 0.0, lock: bool = True, source_instance: str | None = None,
+              make_room: bool = False) -> dict:
         """Copy a checked block layout (a block board, or a block name from the library)
         onto one instance of the block: parts placed as on
         the block board, tracks, vias, zones, keep-outs, graphics and board-only parts
@@ -257,12 +338,16 @@ class StampMixin:
         of its outline) goes, mm; ``rot``: 0/90/180/270 degrees. Several instances at
         once: ``instance={"/CH_A": (x, y), "/CH_B": ((x, y), 180)}``. Copied copper is
         locked (``lock=False`` leaves it free), so routing keeps it. Stamping again
-        replaces the earlier copy. Returns pairs, renamed nets and counts."""
+        replaces the earlier copy. Parts of the design that would overlap the block's parts
+        (courtyards, same side) are refused, or with ``make_room`` pushed out of the way;
+        parts of block instances not stamped yet are no obstacles. The design's net classes
+        on the block's nets must not be stricter than the block's. Returns pairs, renamed
+        nets and counts."""
         if isinstance(instance, dict):
             out = []
             for name, where in instance.items():
                 pos, r = (where if len(where) == 2 and isinstance(where[0], (tuple, list)) else (where, rot))
-                out.append(self.stamp(block_pcb, name, pos, r, lock, source_instance))
+                out.append(self.stamp(block_pcb, name, pos, r, lock, source_instance, make_room))
             return {"instances": out}
         from .. import blocks as lib
         from .board import Board
@@ -296,6 +381,7 @@ class StampMixin:
 
         box = src.outline_box() or _parts_box(src, pairs)
         f = _xf(box[:2], at, rot)
+        moved = self._room_for(src, pairs, instance, f, make_room)
         self._unstamp(instance)
 
         # parts
@@ -323,6 +409,23 @@ class StampMixin:
                 if netmap.setdefault(sp.net, tp.net) != tp.net:
                     raise env.KatError(f"net {sp.net} maps to {netmap[sp.net]} and {tp.net}: "
                                        f"{instance} is wired differently from the block")
+        # net classes: the block was checked with its own; a stricter class here would
+        # make its copper a DRC error, a looser one is only worth knowing
+        stricter, looser = [], []
+        for sn, tn in sorted(netmap.items()):
+            sr, tr = src.net_rules(sn), self.net_rules(tn)
+            diff = {k: [sr[k], tr[k]] for k in ("track", "clearance") if abs(sr[k] - tr[k]) > 1e-9}
+            if any(tr[k] > sr[k] + 1e-9 for k in ("track", "clearance")):
+                stricter.append(f"{tn} ({tr['netclass']}: " + ", ".join(
+                    f"{k} {b:g} > block {a:g}" for k, (a, b) in diff.items()) + ")")
+            elif diff:
+                looser.append(f"{tn} ({tr['netclass']} vs block {sr['netclass']})")
+        if stricter:
+            raise env.KatError(f"the design's net classes are stricter than those {block} was routed "
+                               f"with: {'; '.join(stricter[:8])}: give these nets classes that match "
+                               f"the block's (netclass), or re-route the block with the design's")
+        if looser:
+            warnings.append(f"net classes looser than the block's: {'; '.join(looser[:8])}")
         target_nets = {p.net for p in self.pads() if p.net} | {
             str(find(z, "net")[1]) for z in self.zones() if find(z, "net") is not None}
         self._ungroup([tf.uuid for tf in pairs.values()])
@@ -337,8 +440,11 @@ class StampMixin:
             raise env.KatError(f"block net {name!r} has no pads in the block and no net of that "
                                f"name in the design")
 
-        def on_env_pad(pt) -> bool:
-            return any(inside(p.outline, pt) for p in env_pads)
+        # the harness's routes (the block routed with its test connector): not stamped,
+        # not even the part of them that ends at a block pad (a stub)
+        block_pads = [p for sf in src.footprints() if sf.uuid in pairs for p in sf.pads()]
+        port_points = {(round(v["x"], 4), round(v["y"], 4)) for v in info.get("port_points", [])}
+        harness = _harness_copper(src, block_pads, env_pads, env_nets & set(netmap), port_points)
 
         counts = {"footprints": len(placed), "tracks": 0, "vias": 0, "zones": 0, "keepouts": 0,
                   "graphics": 0, "board_parts": 0, "skipped_environment": 0}
@@ -358,8 +464,7 @@ class StampMixin:
                         counts["skipped_environment"] += 1
                         continue
                     net[1] = mapped
-                if h in ("segment", "arc") and any(
-                        on_env_pad((float(p[1]), float(p[2]))) for p in (find(n, "start"), find(n, "end"))):
+                if id(n) in harness:
                     counts["skipped_environment"] += 1
                     continue
                 if h == "zone":
@@ -401,9 +506,86 @@ class StampMixin:
             self._insert(c)
 
         groups = self._copy_groups(src, instance, block, members)
+        ports = {}
+        for q in info.get("port_points", []):
+            x, y = f(q["x"], q["y"])
+            ports[q["port"]] = {"x": x, "y": y, "net": netmap.get(q["net"], q["net"])}
+        self._stamps[instance] = {"block": str(block_pcb), "at": list(at), "rot": rot, "ports": ports}
         return {"instance": instance, "block": block, "mode": mode, "at": list(at), "rot": rot,
+                **({"ports": ports} if ports else {}),
+                **({"made_room": moved} if moved else {}),
                 "pairs": placed, "nets": {k: v for k, v in netmap.items() if k != v},
                 "groups": groups, **counts, **({"warnings": warnings} if warnings else {})}
+
+    def ports(self, instance: str | None = None) -> dict:
+        """Port points of stamped instances on this board (``set_port`` on the block
+        board): {instance: {port: {x, y, net}}}, or one instance's {port: ...}."""
+        f = stamps_file(self.path)
+        saved = json.loads(f.read_text()) if f.exists() else {}
+        known = {k: v["ports"] for k, v in {**saved, **self._stamps}.items()}
+        if instance is None:
+            return known
+        if _norm(instance) not in known:
+            raise env.KatError(f"{instance} is not stamped on {self.path.name}")
+        return known[_norm(instance)]
+
+    def _save_stamps(self) -> None:
+        if not self._stamps:
+            return
+        f = stamps_file(self.path)
+        saved = json.loads(f.read_text()) if f.exists() else {}
+        f.write_text(json.dumps({**saved, **self._stamps}, indent=2, sort_keys=True) + "\n")
+        self._stamps = {}
+
+    def _room_for(self, src, pairs: dict, instance: str, f, make_room: bool) -> list[dict]:
+        """Refuse (or with ``make_room`` move) the design's parts that overlap where the
+        block's parts will go. Obstacles: parts outside any block instance, and parts of
+        instances stamped already; not the instance's own, not those still to be stamped."""
+        own = {tf.uuid for tf in pairs.values()}
+        stamped = set()
+        for g in self._groups():
+            if not str(g[1]).startswith(f"{instance} ("):
+                stamped |= {str(u) for u in (find(g, "members") or [None])[1:]}
+        after = []                                     # (side, box) of the block's parts, placed
+        for sf in src.footprints():
+            if sf.uuid in pairs and (b := sf.box()):
+                corners = [f(x, y) for x in (b[0], b[2]) for y in (b[1], b[3])]
+                after.append((sf.side, box_of(corners)))
+
+        def top_level(fp) -> bool:
+            return not fp.field("Block") and fp.path.count("/") <= 1
+
+        obstacles = [fp for fp in self.footprints() if fp.uuid not in own and (fp.box() is not None)
+                     and (top_level(fp) or fp.uuid in stamped)
+                     and any(side == fp.side and overlap(fp.box(), b, -1e-6) for side, b in after)]
+        if not obstacles:
+            return []
+        fixed = [fp.ref for fp in obstacles if fp.uuid in stamped or find(fp.node, "locked") is not None]
+        if not make_room or fixed:
+            why = f" ({', '.join(fixed)} locked or stamped: move the stamp)" if fixed and make_room else ""
+            raise env.KatError(f"{instance} would overlap {', '.join(sorted(fp.ref for fp in obstacles))}"
+                               f"{why}: move them first, pass make_room=True, or stamp elsewhere")
+        moved = []
+        blocked = [(side, b) for side, b in after]
+        for fp in obstacles:
+            b = fp.box()
+            others = [(o.side, o.box()) for o in self.footprints()
+                      if o.uuid not in own and o is not fp and o.box() and (top_level(o) or o.uuid in stamped)]
+            best = None
+            for ux, uy in ((1, 0), (0, 1), (-1, 0), (0, -1)):
+                d = 0.5
+                while d < 200:
+                    nb = (b[0] + ux * d, b[1] + uy * d, b[2] + ux * d, b[3] + uy * d)
+                    if not any(side == fp.side and overlap(nb, x, 0.25) for side, x in blocked + others):
+                        if best is None or d < best[0]:
+                            best = (d, ux * d, uy * d)
+                        break
+                    d += 0.5
+            if best is None:
+                raise env.KatError(f"no room to move {fp.ref} out of {instance}'s way")
+            fp.place(fp.x + best[1], fp.y + best[2])
+            moved.append({"ref": fp.ref, "by": [best[1], best[2]]})
+        return moved
 
     def _next_board_ref(self, prefix: str) -> str:
         used = {f.ref for f in self.footprints()}

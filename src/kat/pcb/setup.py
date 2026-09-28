@@ -295,29 +295,38 @@ class SetupMixin:
         self._rules_text = text.strip()
         return {"rules": text.count("(rule ")}
 
+    def _project_data(self) -> dict:
+        """The .kicad_pro as it will be saved: the file plus the pending edits."""
+        pro = self.path.with_suffix(".kicad_pro")
+        data = json.loads(pro.read_text()) if pro.exists() else {}
+        if not self._pro_edits:
+            return data
+        ns = data.setdefault("net_settings", {})
+        classes = ns.setdefault("classes", [])
+        if not any(c.get("name") == "Default" for c in classes):
+            classes.insert(0, dict(DEFAULT_CLASS))  # an empty v0 list means "KiCad defaults"
+        patterns = ns.get("netclass_patterns") or []
+        for kind, e in self._pro_edits:
+            if kind != "netclass":
+                continue
+            cls = next((c for c in classes if c.get("name") == e["name"]), None)
+            if cls is None:
+                base = next(c for c in classes if c.get("name") == "Default")
+                cls = dict(base, name=e["name"],
+                           priority=sum(c.get("name") != "Default" for c in classes))
+                classes.append(cls)
+            cls.update(track_width=e["track"], clearance=e["clearance"],
+                       via_diameter=e["via"], via_drill=e["via_drill"])
+            patterns = [p for p in patterns if p.get("netclass") != e["name"]]
+            patterns += [{"netclass": e["name"], "pattern": pat} for pat in e["nets"]]
+        ns["netclass_patterns"] = patterns
+        ns["meta"] = {"version": 5}
+        return data
+
     def _write_project_files(self) -> None:
         pro = self.path.with_suffix(".kicad_pro")
         if self._pro_edits:
-            data = json.loads(pro.read_text()) if pro.exists() else {}
-            ns = data.setdefault("net_settings", {})
-            classes = ns.setdefault("classes", [])
-            if not any(c.get("name") == "Default" for c in classes):
-                classes.insert(0, dict(DEFAULT_CLASS))  # an empty v0 list means "KiCad defaults"
-            patterns = ns.get("netclass_patterns") or []
-            for kind, e in self._pro_edits:
-                cls = next((c for c in classes if c.get("name") == e["name"]), None)
-                if cls is None:
-                    base = next(c for c in classes if c.get("name") == "Default")
-                    cls = dict(base, name=e["name"],
-                               priority=sum(c.get("name") != "Default" for c in classes))
-                    classes.append(cls)
-                cls.update(track_width=e["track"], clearance=e["clearance"],
-                           via_diameter=e["via"], via_drill=e["via_drill"])
-                patterns = [p for p in patterns if p.get("netclass") != e["name"]]
-                patterns += [{"netclass": e["name"], "pattern": pat} for pat in e["nets"]]
-            ns["netclass_patterns"] = patterns
-            ns["meta"] = {"version": 5}
-            pro.write_text(json.dumps(data, indent=2) + "\n")
+            pro.write_text(json.dumps(self._project_data(), indent=2) + "\n")
             self._pro_edits = []
         if self._rules_text is not None:
             dru = self.path.with_suffix(".kicad_dru")

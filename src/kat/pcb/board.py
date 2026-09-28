@@ -234,6 +234,7 @@ class Board(SetupMixin, PlacementMixin, StructureMixin, StampMixin, FinishMixin)
             raise env.KatError(f"{path} is not a KiCad board")
         self._pro_edits: list = []
         self._rules_text: str | None = None
+        self._stamps: dict = {}
 
     @staticmethod
     def create(path: Path | str) -> "Board":
@@ -251,6 +252,7 @@ class Board(SetupMixin, PlacementMixin, StructureMixin, StampMixin, FinishMixin)
         from ..gui import guard
         guard(self.path)
         self._write_project_files()
+        self._save_stamps()
         self.path.write_text(dumps(self.tree) + "\n", encoding="utf-8")
         normalize(self.path)
         self.tree = loads(self.path.read_text(encoding="utf-8"))

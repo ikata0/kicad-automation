@@ -342,8 +342,12 @@ def check(name: str, lib: Path | str | None = None, require: tuple[str, ...] = (
                    for i in item["items"])
 
     open_ = [u for u in board["unconnected_items"] if not to_env(u)]
+    # the harness is test equipment: its parts need no part data (MPN)
+    g["errors"] = [e for e in g.get("errors", []) if e.get("ref") not in envs]
+    g["ready"] = not g["errors"]
+    ports = _check_ports(d, f["pcb"])
     ok = bool(sch["ok"] and g["ready"] and board["drc_errors"] == 0 and board["parity"] == 0
-              and not open_ and board["outline"])
+              and not open_ and board["outline"] and not ports)
     info = _info(d)
     flat, warnings = None, []
     if f["block"].exists() and _has_sheets(f["block"]):
@@ -368,7 +372,41 @@ def check(name: str, lib: Path | str | None = None, require: tuple[str, ...] = (
             "gate_errors": g.get("errors", []), "drc_errors": board["drc_errors"],
             "drc_warnings": board["drc_warnings"], "parity": board["parity"],
             "unconnected": len(open_), "unconnected_to_environment": len(board["unconnected_items"]) - len(open_),
-            "environment_parts": sorted(envs), "unconnected_items": open_}
+            "environment_parts": sorted(envs), "unconnected_items": open_,
+            **({"port_problems": ports} if ports else {})}
+
+
+PORT_BAND = 2.5     # mm: a port point lies at most this far inside the outline's edge
+
+
+def _check_ports(d: Path, pcb: Path) -> list[str]:
+    """Problems of the block's port points (``kat.pcb.block_port``)."""
+    from .pcb.board import Board
+    from .pcb.geometry import inside
+    info = _info(d)
+    pts = info.get("port_points", [])
+    if not pts:
+        return []
+    b = Board(pcb)
+    box = b.outline_box()
+    names = set(info.get("ports", [])) | set(info.get("power", []))
+    out = []
+    for q in pts:
+        x, y = q["x"], q["y"]
+        on = next((v["net"] for v in b.vias() if abs(v["at"][0] - x) < 0.01 and abs(v["at"][1] - y) < 0.01), None)
+        if on is None:
+            on = next((p.net for p in b.pads() if inside(p.outline, (x, y))), None)
+        if names and q["port"] not in names:
+            out.append(f"port {q['port']}: the block has no such port ({', '.join(sorted(names))})")
+        if on is None:
+            out.append(f"port {q['port']}: no via or pad at {x:g},{y:g} any more")
+        elif on != q["net"]:
+            out.append(f"port {q['port']}: the copper at {x:g},{y:g} is on {on}, not {q['net']}")
+        if box and not (box[0] <= x <= box[2] and box[1] <= y <= box[3]):
+            out.append(f"port {q['port']}: {x:g},{y:g} is outside the outline")
+        elif box and min(x - box[0], box[2] - x, y - box[1], box[3] - y) > PORT_BAND:
+            out.append(f"port {q['port']}: {x:g},{y:g} is more than {PORT_BAND:g} mm inside the outline's edge")
+    return out
 
 
 def stale(d: Path) -> str | None:

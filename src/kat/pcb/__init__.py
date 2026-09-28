@@ -17,7 +17,7 @@ from ..env import tidy
 from . import checks, syncer, views
 from .board import Board, Footprint, Pad
 
-__all__ = ["Board", "Footprint", "Pad", "block_environment", "check", "drc", "edit", "fab",
+__all__ = ["Board", "Footprint", "Pad", "block_environment", "block_port", "check", "drc", "edit", "fab",
            "instances", "load", "ready", "refill", "route", "snapshot", "stamp", "sync", "view"]
 
 
@@ -106,16 +106,18 @@ def route(pcb: Path | str, passes: int = 20, nets: list[str] | None = None, time
 
 def stamp(pcb: Path | str, block_pcb: Path | str, instances: str | list[str],
           at: tuple[float, float], step: tuple[float, float] = (0.0, 0.0), rot: float = 0.0,
-          lock: bool = True) -> dict:
+          lock: bool = True, make_room: bool = False) -> dict:
     """Stamp a checked block layout onto instances of the block (``Board.stamp``) and save.
     ``instances``: paths such as ``/CH_A`` (a list, or ``"all"`` for every instance). The
-    n-th one goes to ``at + n * step`` (mm), turned by ``rot`` degrees. Ends with the
-    board check, like ``sync``."""
+    n-th one goes to ``at + n * step`` (mm), turned by ``rot`` degrees. ``make_room``:
+    push the design's parts out of the block parts' way instead of refusing. Ends with
+    the board check, like ``sync``."""
     report.touch(pcb)
     with edit(pcb) as b:
         names = b.instances(block_pcb) if instances == "all" else (
             [instances] if isinstance(instances, str) else list(instances))
-        done = [b.stamp(block_pcb, name, (at[0] + k * step[0], at[1] + k * step[1]), rot, lock)
+        done = [b.stamp(block_pcb, name, (at[0] + k * step[0], at[1] + k * step[1]), rot, lock,
+                        make_room=make_room)
                 for k, name in enumerate(names)]
     c = checks.run(Path(pcb))
     return tidy({"board": str(pcb), "instances": done,
@@ -133,6 +135,15 @@ def block_environment(block_pcb: Path | str, zones: list[str]) -> dict:
     checked against); ``stamp`` does not copy them. Stored in ``NAME.block.json``."""
     from . import stamping
     return stamping.set_environment(block_pcb, zones)
+
+
+def block_port(block_pcb: Path | str, port: str, at: tuple[float, float], net: str | None = None) -> dict:
+    """Mark where a port leaves a block board: the via or pad at ``at`` (mm) on the port's
+    net, stored in ``NAME.block.json``. ``kat block check`` checks the port points,
+    ``stamp`` returns them on the design (``Board.ports``)."""
+    from . import stamping
+    report.touch(block_pcb)
+    return stamping.set_port(block_pcb, port, at, net)
 
 
 def fab(pcb: Path | str, out: Path | str | None = None, step: bool = True, three_d: bool = True) -> dict:
