@@ -17,8 +17,8 @@ from ..env import tidy
 from . import checks, syncer, views
 from .board import Board, Footprint, Pad
 
-__all__ = ["Board", "Footprint", "Pad", "check", "drc", "edit", "fab", "load", "ready", "refill",
-           "route", "snapshot", "sync", "view"]
+__all__ = ["Board", "Footprint", "Pad", "block_environment", "check", "drc", "edit", "fab",
+           "instances", "load", "ready", "refill", "route", "snapshot", "stamp", "sync", "view"]
 
 
 def load(path: Path | str) -> Board:
@@ -102,6 +102,37 @@ def route(pcb: Path | str, passes: int = 20, nets: list[str] | None = None, time
     if install:
         _route.install()
     return tidy(_route.route(Path(pcb), passes, nets, timeout, out))
+
+
+def stamp(pcb: Path | str, block_pcb: Path | str, instances: str | list[str],
+          at: tuple[float, float], step: tuple[float, float] = (0.0, 0.0), rot: float = 0.0,
+          lock: bool = True) -> dict:
+    """Stamp a checked block layout onto instances of the block (``Board.stamp``) and save.
+    ``instances``: paths such as ``/CH_A`` (a list, or ``"all"`` for every instance). The
+    n-th one goes to ``at + n * step`` (mm), turned by ``rot`` degrees. Ends with the
+    board check, like ``sync``."""
+    report.touch(pcb)
+    with edit(pcb) as b:
+        names = b.instances(block_pcb) if instances == "all" else (
+            [instances] if isinstance(instances, str) else list(instances))
+        done = [b.stamp(block_pcb, name, (at[0] + k * step[0], at[1] + k * step[1]), rot, lock)
+                for k, name in enumerate(names)]
+    c = checks.run(Path(pcb))
+    return tidy({"board": str(pcb), "instances": done,
+                 "check": {k: c[k] for k in ("ok", "drc_errors", "unconnected", "parity")}})
+
+
+def instances(pcb: Path | str, block_pcb: Path | str) -> dict:
+    """The instances of a block in a design (``Board.instances``)."""
+    report.touch(pcb)
+    return {"block": Path(block_pcb).stem, "instances": Board(pcb).instances(block_pcb)}
+
+
+def block_environment(block_pcb: Path | str, zones: list[str]) -> dict:
+    """Name the zones of a block board that are its test environment (e.g. the plane it was
+    checked against); ``stamp`` does not copy them. Stored in ``NAME.block.json``."""
+    from . import stamping
+    return stamping.set_environment(block_pcb, zones)
 
 
 def fab(pcb: Path | str, out: Path | str | None = None, step: bool = True, three_d: bool = True) -> dict:

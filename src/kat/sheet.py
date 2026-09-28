@@ -254,6 +254,21 @@ class Sheet:
         self.schematic.fix_junctions()
         return {"port": name, "x": float(find(node, "at")[1]), "y": float(find(node, "at")[2])}
 
+    def stamp(self, block: str, instance: str, at: Point, design: str) -> dict:
+        """Copy a block's checked drawing (library name or .kicad_sch) onto the instance
+        ``instance`` (Block path, e.g. ``/CH_A``) of this flat sheet, with the top-left
+        corner of the block region at ``at``. ``design``: the design netlist, which names
+        the labels and completes the connections afterwards. Prefer ``kat.stamp``, which
+        also checks the result against the design and undoes a wrong one."""
+        from . import sch_stamp
+        return sch_stamp.stamp(self.schematic, block, instance, self.point(at), design)
+
+    def frame(self, block: str, title: str | None = None, margin: float = 3.81) -> dict:
+        """Dashed frame and heading ("CH_A (block type)") around a block instance's parts;
+        drawing it again replaces it."""
+        from . import sch_stamp
+        return sch_stamp.frame(self.schematic, block, title, margin)
+
     def sheets(self) -> list[dict]:
         """Sheet boxes on this sheet: name, file, position, size, parameters and pins."""
         return [{k: (str(v) if k == "path" else v) for k, v in sh.items() if k != "node"}

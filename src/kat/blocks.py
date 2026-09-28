@@ -1,0 +1,265 @@
+"""The block library: each block is a project of its own, designed and checked once, then
+used by designs (SKiDL function) and stamped onto their boards (layout).
+
+    blocks/RC/
+      RC.py            SKiDL: the block function, and under __main__ a test harness
+      RC.kicad_pro     the block's project (text_variables: parameter defaults)
+      RC.kicad_sch     the harness and the block, synced from RC.net
+      RC.kicad_pcb     the block's layout; the harness parts are its environment
+      RC.block.json    type, instance, ports, params, environment zones, last check
+      RC_REPORT.md     the block's own journal
+
+The library is ``KAT_BLOCKS``, else the nearest ``blocks/`` folder in the given place (or
+the working directory) or above it.
+
+    kat block new RC  ->  edit RC.py  ->  kat block build RC  ->  lay out RC.kicad_pcb
+    ->  kat block check RC  ->  in the design: rc = kat.blocks.use("RC"); on its board:
+    b.stamp("RC", {"/CH_A/RC1": (x, y)})
+"""
+
+from __future__ import annotations
+
+import datetime as dt
+import importlib.util
+import json
+import os
+import re
+import subprocess
+import sys
+from pathlib import Path
+
+from . import env
+
+__all__ = ["build", "check", "find", "library", "list_blocks", "new", "use"]
+
+HARNESS = "DUT"
+
+TEMPLATE = '''"""Block {name}: what it does. Ports: inp, out, gnd. Parameters: r_val."""
+import os
+import sys
+
+os.environ.setdefault("KICAD10_SYMBOL_DIR", "/usr/share/kicad/symbols")
+from skidl import KICAD10, Net, Part, generate_netlist, set_default_tool, subcircuit  # noqa: E402
+
+
+@subcircuit
+def {func}(inp, out, gnd, r_val="10k"):
+    """The block. Every part gets a tag= (unique inside the block)."""
+    r = Part("Device", "R", value=r_val, footprint="Resistor_SMD:R_0603_1608Metric", tag="r")
+    inp += r[1]
+    r[2] += out
+
+
+if __name__ == "__main__":
+    # the test harness: the block's environment on its own board (not stamped)
+    import kat
+    set_default_tool(KICAD10)
+    inp, out, gnd = Net("IN"), Net("OUT"), Net("GND")
+    j = Part("Connector_Generic", "Conn_01x03", tag="j",
+             footprint="Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical")
+    j[1] += inp
+    j[2] += out
+    j[3] += gnd
+    {func}(inp=inp, out=out, gnd=gnd, tag="{harness}")
+    net = sys.argv[1] if len(sys.argv) > 1 else "{name}.net"
+    generate_netlist(file_=net)
+    kat.skidl_blocks.write(net)
+'''
+
+
+def library(start: Path | str | None = None) -> Path:
+    """The block library folder: ``KAT_BLOCKS``, else ``blocks/`` in ``start`` (default:
+    the working directory) or its parents. KatError if there is none."""
+    if os.environ.get("KAT_BLOCKS"):
+        return Path(os.environ["KAT_BLOCKS"])
+    here = Path(start or Path.cwd()).resolve()
+    here = here if here.is_dir() else here.parent
+    for d in (here, *here.parents):
+        if d.name == "blocks" and d.is_dir():
+            return d
+        if (d / "blocks").is_dir():
+            return d / "blocks"
+    raise env.KatError(f"no blocks/ folder in {here} or above (or set KAT_BLOCKS)")
+
+
+def find(name: str, lib: Path | str | None = None) -> Path:
+    """The folder of block ``name``; KatError if it does not exist."""
+    d = (Path(lib) if lib else library()) / name
+    if not (d / f"{name}.py").exists():
+        raise env.KatError(f"no block {name!r} in {d.parent} (kat block new {name})")
+    return d
+
+
+def _files(d: Path) -> dict[str, Path]:
+    n = d.name
+    return {k: d / f"{n}{ext}" for k, ext in (
+        ("py", ".py"), ("sch", ".kicad_sch"), ("pcb", ".kicad_pcb"), ("net", ".net"),
+        ("info", ".block.json"))}
+
+
+def _info(d: Path) -> dict:
+    f = _files(d)["info"]
+    return json.loads(f.read_text()) if f.exists() else {}
+
+
+def _write_info(d: Path, info: dict) -> None:
+    _files(d)["info"].write_text(json.dumps(info, indent=2) + "\n")
+
+
+def new(name: str, lib: Path | str | None = None) -> dict:
+    """Create block ``name`` in the library (``blocks/`` in the working directory if there
+    is no library yet): its project, a SKiDL template with a test harness and the block
+    file. Refuses an existing block."""
+    if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", name):
+        raise env.KatError("a block name is a Python identifier (letters, digits, _)")
+    try:
+        root = Path(lib) if lib else library()
+    except env.KatError:
+        root = Path.cwd() / "blocks"
+    d = root / name
+    f = _files(d)
+    if f["py"].exists():
+        raise env.KatError(f"block {name} exists in {root}")
+    from . import project
+    project.new(f["sch"])
+    f["py"].write_text(TEMPLATE.format(name=name, func=name.lower(), harness=HARNESS))
+    _write_info(d, {"name": name, "type": name.lower(), "instance": HARNESS, "environment": []})
+    return {"block": name, "dir": str(d), "files": {k: str(v) for k, v in f.items()},
+            "next": f"edit {f['py'].name}, then kat block build {name}"}
+
+
+def build(name: str, lib: Path | str | None = None, force: bool = False) -> dict:
+    """Run the block's harness (``NAME.py`` -> ``NAME.net`` + block record), sync the
+    schematic and the board, and store type, ports and parameters in the block file.
+    ``force`` passes the board sync gate (e.g. parts without MPN while developing)."""
+    import kat
+    d = find(name, lib)
+    f = _files(d)
+    proc = subprocess.run([sys.executable, str(f["py"]), str(f["net"])], cwd=d,
+                          capture_output=True, text=True)
+    if proc.returncode != 0 or not f["net"].exists():
+        raise env.KatError(f"{f['py'].name} failed: {(proc.stderr or proc.stdout).strip()[-1500:]}")
+    from .netlist import blocks_file
+    rec = json.loads(blocks_file(f["net"]).read_text())
+    info = _info(d)
+    inst = info.get("instance", HARNESS)
+    if inst not in rec["instances"]:
+        raise env.KatError(f"the harness in {f['py'].name} has no block instance tag={inst!r} "
+                           f"(found: {sorted(rec['instances']) or 'none'})")
+    me = rec["instances"][inst]
+    info.update(type=me["type"], ports=sorted(me["ports"]), params=me["params"])
+    _write_info(d, info)
+    sch = kat.sync(f["sch"], f["net"])
+    pcb = kat.pcb.sync(f["pcb"], force=force)
+    return {"block": name, "type": me["type"], "ports": info["ports"], "params": info["params"],
+            "warnings": rec["warnings"],
+            "schematic": {k: sch.get(k) for k in ("added", "removed", "updated")} | {
+                "ok": (sch.get("check") or {}).get("ok")},
+            "board": {k: pcb.get(k) for k in ("added", "removed", "updated", "check")}}
+
+
+def _env_refs(d: Path) -> set[str]:
+    from .pcb.board import Board
+    inst = _info(d).get("instance", HARNESS)
+    out = set()
+    for fp in Board(_files(d)["pcb"]).footprints():
+        block = fp.field("Block") or ""
+        if not fp.board_only and not (block == inst or block.startswith(inst + "/")):
+            out.add(fp.ref)
+    return out
+
+
+def check(name: str, lib: Path | str | None = None, require: tuple[str, ...] = ("MPN",)) -> dict:
+    """Is the block ready to be stamped? The schematic check against the harness netlist,
+    the gate's part data, and the board check (DRC, parity). Missing connections to the
+    harness (environment) parts are expected and not counted. The result and the files'
+    times are stored in the block file; ``stamp`` warns when the block changed since."""
+    import kat
+    from . import gate
+    d = find(name, lib)
+    f = _files(d)
+    for k in ("sch", "pcb", "net"):
+        if not f[k].exists():
+            raise env.KatError(f"{f[k].name} is missing: kat block build {name}")
+    sch = kat.check(f["sch"], f["net"])
+    g = gate.run(f["sch"], f["net"], require)
+    board = kat.pcb.check(f["pcb"])
+    envs = _env_refs(d)
+
+    def to_env(item) -> bool:
+        return any((m := re.search(r" of (\S+)", i["description"])) and m.group(1) in envs
+                   for i in item["items"])
+
+    open_ = [u for u in board["unconnected_items"] if not to_env(u)]
+    ok = bool(sch["ok"] and g["ready"] and board["drc_errors"] == 0 and board["parity"] == 0
+              and not open_ and board["outline"])
+    info = _info(d)
+    info["checked"] = {"ok": ok, "time": dt.datetime.now().isoformat(timespec="seconds"),
+                       "mtimes": {k: f[k].stat().st_mtime for k in ("py", "sch", "pcb")}}
+    _write_info(d, info)
+    return {"block": name, "ok": ok, "schematic_ok": sch["ok"], "gate": g["ready"],
+            "gate_errors": g.get("errors", []), "drc_errors": board["drc_errors"],
+            "drc_warnings": board["drc_warnings"], "parity": board["parity"],
+            "unconnected": len(open_), "unconnected_to_environment": len(board["unconnected_items"]) - len(open_),
+            "environment_parts": sorted(envs), "unconnected_items": open_}
+
+
+def stale(d: Path) -> str | None:
+    """Why block folder ``d`` is not known to be clean, or None."""
+    info = _info(d)
+    c = info.get("checked")
+    if not c:
+        return "never checked (kat block check)"
+    if not c["ok"]:
+        return "its last check failed"
+    f = _files(d)
+    changed = [k for k in ("py", "sch", "pcb") if f[k].exists() and f[k].stat().st_mtime > c["mtimes"].get(k, 0) + 1e-3]
+    return f"changed since its last clean check ({', '.join(changed)})" if changed else None
+
+
+def list_blocks(lib: Path | str | None = None) -> dict:
+    """The blocks of the library: type, ports, parameters and check state."""
+    root = Path(lib) if lib else library()
+    out = []
+    for d in sorted(p for p in root.iterdir() if (p / f"{p.name}.py").exists()):
+        info = _info(d)
+        out.append({"block": d.name, "type": info.get("type"), "ports": info.get("ports"),
+                    "params": info.get("params"), "checked": (info.get("checked") or {}).get("time"),
+                    "state": stale(d) or "clean"})
+    return {"library": str(root), "blocks": out}
+
+
+def use(name: str, lib: Path | str | None = None):
+    """The block's SKiDL function, for a design script: ``rc = kat.blocks.use("RC")``,
+    then ``rc(inp=a, out=b, gnd=gnd, tag="CH_A")``. The harness does not run."""
+    d = find(name, lib)
+    info = _info(d)
+    spec = importlib.util.spec_from_file_location(f"kat_block_{name}", _files(d)["py"])
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    func = getattr(mod, info.get("type") or name.lower(), None)
+    if func is None:
+        raise env.KatError(f"{name}.py has no function {info.get('type') or name.lower()!r}")
+    return func
+
+
+def sheet_of(name_or_path: Path | str, near: Path | str | None = None) -> tuple[Path, str | None]:
+    """A block schematic from a block name (looked up from ``near``) or a path, and the
+    block instance on it (from the block file)."""
+    p = Path(name_or_path)
+    if p.suffix == ".kicad_sch" or p.exists():
+        info = p.with_suffix(".block.json")
+        return p, (json.loads(info.read_text()).get("instance") if info.exists() else None)
+    d = find(str(name_or_path), library(near))
+    return _files(d)["sch"], _info(d).get("instance", HARNESS)
+
+
+def board_of(name_or_path: Path | str, near: Path | str | None = None) -> tuple[Path, str | None]:
+    """A block board from a block name (looked up from ``near``) or a path, and the block
+    instance on it (from the block file)."""
+    p = Path(name_or_path)
+    if p.suffix == ".kicad_pcb" or p.exists():
+        info = json.loads(p.with_suffix(".block.json").read_text()) if p.with_suffix(".block.json").exists() else {}
+        return p, info.get("instance")
+    d = find(str(name_or_path), library(near))
+    return _files(d)["pcb"], _info(d).get("instance", HARNESS)

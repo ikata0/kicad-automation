@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from pathlib import Path
 
 import kat
 
@@ -103,6 +104,16 @@ def cmd_text(s, a):
     return s.text(a.text, a.at, a.size, a.angle, a.bold)
 
 
+def cmd_frame(s, a):
+    return s.frame(a.block, a.title, a.margin)
+
+
+def cmd_stamp(a):
+    names = "all" if a.instance == ["all"] else a.instance
+    return kat.stamp(a.sch, a.block, names, xy(a.at), a.expect, xy(a.step) if a.step else (0.0, 0.0),
+                     not a.no_frame)
+
+
 def cmd_restore(a):
     return kat.restore(a.sch, a.step, a.expect)
 
@@ -136,6 +147,14 @@ def cmd_pcb(a):
         if not a.pcb:
             raise env.KatError("give the board (or only --install)")
         return kat.pcb.route(a.pcb, a.passes, a.net or None, a.timeout, install=a.install)
+    if a.pcb_cmd == "stamp":
+        names = "all" if a.instance == ["all"] else a.instance
+        return kat.pcb.stamp(a.pcb, a.block, names, xy(a.at), xy(a.step) if a.step else (0.0, 0.0),
+                             a.rot, not a.no_lock)
+    if a.pcb_cmd == "instances":
+        return kat.pcb.instances(a.pcb, a.block)
+    if a.pcb_cmd == "environment":
+        return kat.pcb.block_environment(a.block, a.zone)
     if a.pcb_cmd == "snapshot":
         return kat.pcb.snapshot(a.pcb, a.slug, a.note, a.out, a.tiles, a.finding_crops, not a.no_3d)
     if a.pcb_cmd == "view":
@@ -149,6 +168,19 @@ def cmd_pcb(a):
         return kat.pcb.view(a.pcb, a.around, xy(a.at) if a.at else None, region, a.layers,
                             a.margin, a.ppm)
     raise env.KatError(f"unknown pcb action {a.pcb_cmd!r}")
+
+
+def cmd_block(a):
+    from . import blocks
+    if a.block_cmd == "new":
+        return blocks.new(a.name, a.lib)
+    if a.block_cmd == "build":
+        return blocks.build(a.name, a.lib, a.force)
+    if a.block_cmd == "check":
+        return blocks.check(a.name, a.lib, () if a.no_require else tuple(a.require_field or ["MPN"]))
+    if a.block_cmd == "list":
+        return blocks.list_blocks(a.lib)
+    raise env.KatError(f"unknown block action {a.block_cmd!r}")
 
 
 def cmd_api(a):
@@ -539,6 +571,30 @@ def build_parser() -> argparse.ArgumentParser:
             mutating=True)
     q.add_argument("pin", help="REF.PIN, or REF for all pins")
 
+    q = cmd("stamp", cmd_stamp, "Draw block instances like the block's own checked schematic.",
+            "For flat sheets with SKiDL blocks: the instance's parts (Block field) are placed as in\n"
+            "the block's schematic (library name or .kicad_sch), its wires, labels (renamed to the\n"
+            "instance's nets) and power symbols are copied, and what the design still misses is\n"
+            "attached as sync would. The block's harness must connect to it by labels. Each\n"
+            "instance gets a dashed frame. The sheet must then match --expect, else it is put back.",
+            ["kat stamp top.kicad_sch RC all --at 50.8,50.8 --step 0,40.64 --expect design.net",
+             "kat stamp top.kicad_sch RC /CH_A --at 50.8,50.8 --expect design.net"])
+    q.add_argument("block", metavar="BLOCK", help="block name (library) or its .kicad_sch")
+    q.add_argument("instance", nargs="+", metavar="INSTANCE", help="/CH_A ... or all")
+    q.add_argument("--at", required=True, metavar="X,Y", help="top-left of the first block drawing (mm)")
+    q.add_argument("--step", metavar="DX,DY", help="offset from one instance to the next (mm)")
+    q.add_argument("--expect", required=True, metavar="NETLIST", help="the design netlist")
+    q.add_argument("--no-frame", action="store_true", help="no frame and heading")
+
+    q = cmd("frame", cmd_frame, "Dashed frame and heading around a block instance's parts.",
+            "Around the parts with that Block (sub-blocks included), their fields, labels and\n"
+            "power symbols. Drawing it again replaces it; only a drawing, no connectivity.",
+            ["kat frame top.kicad_sch CH_A", "kat frame top.kicad_sch CH_A --title 'Channel A'"],
+            mutating=True)
+    q.add_argument("block", metavar="BLOCK", help="instance path, e.g. CH_A")
+    q.add_argument("--title", help='heading (default: "CH_A (block type)")')
+    q.add_argument("--margin", type=float, default=3.81, help="mm around the content (default 3.81)")
+
     q = cmd("page", cmd_page, "Change the paper size.",
             "Everything keeps its position; `check` reports items outside the new frame.",
             ["kat page s.kicad_sch A2", "kat page s.kicad_sch A4 --portrait"], mutating=True)
@@ -646,6 +702,50 @@ def build_parser() -> argparse.ArgumentParser:
                                     "set, fabrication set complete and newer than the board.")
     s7.add_argument("pcb", metavar="PCB")
     s7.add_argument("--fab", help="fabrication directory (default fab/<name>-<rev>/)")
+    s9 = psp.add_parser("stamp", formatter_class=_Fmt, help="copy a checked block layout onto instances",
+                        description="Places the instance's parts as on the block board and copies its tracks,\n"
+                                    "vias, zones, keep-outs, graphics and board-only parts with the instance's\n"
+                                    "nets, into a KiCad group \"/CH_A (NAME)\". Instances are sheet paths\n"
+                                    "(hierarchical) or SKiDL block paths (flat, Block field). Stamping again\n"
+                                    "replaces the copy. The block board's origin is the top-left corner of\n"
+                                    "its outline. Refused if the instance is wired differently.")
+    s9.add_argument("pcb", metavar="PCB", help="the design's board")
+    s9.add_argument("block", metavar="BLOCK_PCB", help="the checked block board")
+    s9.add_argument("instance", nargs="+", metavar="INSTANCE", help="/CH_A ... or all")
+    s9.add_argument("--at", required=True, metavar="X,Y", help="where the block origin goes (mm)")
+    s9.add_argument("--step", metavar="DX,DY", help="offset from one instance to the next (mm)")
+    s9.add_argument("--rot", type=float, default=0.0, help="0, 90, 180 or 270")
+    s9.add_argument("--no-lock", action="store_true", help="leave the copied copper unlocked")
+    s10 = psp.add_parser("instances", formatter_class=_Fmt, help="instances of a block in a design")
+    s10.add_argument("pcb", metavar="PCB"); s10.add_argument("block", metavar="BLOCK_PCB")
+    s11 = psp.add_parser("environment", formatter_class=_Fmt, help="name a block board's test-environment zones",
+                         description="Zones listed here (e.g. the plane the block was checked against) are\n"
+                                     "not copied by stamp. Stored in NAME.block.json next to the block board.")
+    s11.add_argument("block", metavar="BLOCK_PCB"); s11.add_argument("zone", nargs="*", metavar="ZONE")
+
+    # --- block library ---
+    q = cmd("block", cmd_block, "The block library: blocks designed, laid out and checked once.",
+            "Each block is a project in blocks/NAME/ (KAT_BLOCKS, else the nearest blocks/ folder):\n"
+            "NAME.py (SKiDL function + test harness), schematic, board, NAME.block.json. The\n"
+            "harness parts are the block's environment: not stamped, and their open connections\n"
+            "do not count in `check`. Designs use the function (kat.blocks.use) and stamp the\n"
+            "board (kat pcb stamp PCB NAME ...).",
+            ["kat block new RC", "kat block build RC", "kat block check RC", "kat block list"], sch=False)
+    bsp = q.add_subparsers(dest="block_cmd", required=True, metavar="ACTION")
+    for action, summary in (("new", "create a block: project, SKiDL template with harness"),
+                            ("build", "run the harness, sync schematic and board, record ports/params"),
+                            ("check", "schematic, gate and board check; stored for stamp"),
+                            ("list", "the library's blocks and their check state")):
+        b = bsp.add_parser(action, formatter_class=_Fmt, help=summary, description=summary)
+        if action != "list":
+            b.add_argument("name", metavar="NAME")
+        b.add_argument("--lib", help="library folder (default: KAT_BLOCKS or the nearest blocks/)")
+        if action == "build":
+            b.add_argument("--force", action="store_true", help="pass the board sync gate")
+        if action == "check":
+            b.add_argument("--require-field", action="append", metavar="NAME",
+                           help="field the gate requires (repeatable; default MPN)")
+            b.add_argument("--no-require", action="store_true", help="gate requires no fields")
     s4 = psp.add_parser("view", formatter_class=_Fmt, help="zoomed PNG of one board region",
                         description="Into views/ next to the board; not a history step. Layer sets:\n"
                                     "top, bottom, placement, copper, In1, ... or KiCad layer names.\n"
@@ -670,6 +770,12 @@ def main(argv: list[str] | None = None) -> int:
         return _run(args)
     hint = (getattr(args, "sch", None) or getattr(args, "pcb", None) or getattr(args, "path", None)
             or getattr(args, "file", None))
+    if args.cmd == "block" and getattr(args, "name", None):
+        from . import blocks
+        try:                                   # the block's own journal
+            hint = (blocks.library() if not args.lib else Path(args.lib)) / args.name / f"{args.name}.kicad_pro"
+        except env.KatError:
+            hint = None
     with report.command([a for a in argv if a != "--no-report"], hint) as entry:
         code = _run(args, entry)
         entry.exit = code

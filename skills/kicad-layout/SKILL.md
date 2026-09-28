@@ -70,6 +70,7 @@ one call with its signature and documentation. Calls by phase:
 |---|---|
 | setup | `outline`, `set_copper_layers`, `plane`, `set_layer_type`, `zone`, `keepout`, `netclass`, `rules`, `mounting_hole`, `add_board_part` |
 | placement | `move`, `move_many`, `flip`, `align`, `distribute`, `place_near`, `collisions`, `near`, `blocks`, `move_block`, `replicate` |
+| blocks | `stamp`, `instances` (and `kat.pcb.block_environment`) |
 | structure | `track`, `via`, `via_to_plane`, `fanout`, `stitch`, `lock`, `remove_tracks`, `net_rules` |
 | finishing | `place_refs`, `board_text`, `title_from_schematic`, `fiducials` |
 | reading | `footprints`, `footprint(ref).pads()`, `pads`, `tracks`, `vias`, `zones`, `outline_box`, `copper_layers` |
@@ -134,6 +135,12 @@ with kat.pcb.edit(PCB) as b:
   included), or `part.fields["Block"] = "ch1"` set by hand; then `b.blocks()`,
   `b.move_block("CH_A", to=(x, y))`, and `b.replicate("CH_A", {"CH_B": (x, y)})` arranges
   the other blocks like the first (parts pair by SKiDL tag without the block name).
+- Repeated blocks, block first: lay the block out once on its own board (its parts, copper,
+  keep-outs; a plane it relies on named as environment with `kat.pcb.block_environment`),
+  get `kat pcb check` clean there, then `b.stamp(BLOCK_PCB, {"/CH_A": (x, y), ...})` or
+  `kat pcb stamp PCB BLOCK_PCB all --at X,Y --step DX,DY` onto every instance, and route
+  only what connects the blocks. Change the block board and stamp again; never edit a
+  stamped copy by hand (SPEC §4.18).
 - Placement order: mechanical/fixed, connectors, critical analog parts and heat sources,
   decoupling, the rest. Keep sensitive nodes short and away from switching nets; give
   analog returns their own path to the plane.

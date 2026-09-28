@@ -16,6 +16,7 @@ from .geometry import Box, box_of, pad_outline, to_board, union
 from .finish import FinishMixin
 from .placement import PlacementMixin
 from .setup import SetupMixin
+from .stamping import StampMixin
 from .structure import StructureMixin
 
 FORMAT = "20260206"
@@ -216,13 +217,14 @@ class Footprint:
                 "box": list(b) if (b := self.box()) else None}
 
 
-class Board(SetupMixin, PlacementMixin, StructureMixin, FinishMixin):
+class Board(SetupMixin, PlacementMixin, StructureMixin, StampMixin, FinishMixin):
     """A KiCad 10 board file, edited in memory and saved once through ``kicad-cli pcb
     upgrade``. Use it inside ``with kat.pcb.edit(PCB) as b:``. Coordinates in mm, y grows
     downwards, angles in degrees. Pads are named ``"REF.NUMBER"`` (``"U1.8"``).
     Methods by phase: setup (outline, layers, plane, zone, keepout, netclass, rules,
     mounting_hole), placement (move, move_many, place_near, align, distribute, blocks,
-    replicate), structure (track, via, fanout, stitch, lock, remove_tracks), finishing
+    replicate), structure (track, via, fanout, stitch, lock, remove_tracks), blocks (stamp,
+    instances), finishing
     (place_refs, board_text, title_from_schematic, fiducials)."""
 
     def __init__(self, path: Path | str):

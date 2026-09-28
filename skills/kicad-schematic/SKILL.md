@@ -128,6 +128,10 @@ and outward directions while computing coordinates. Try a large pass with
 - Finish the sheet: `s.title(title=..., rev=..., date=..., comments={1: ...})`, notes and
   headings with `s.text("J1: rows 1-5", (x, y), size=2.54)`, paper with `s.page("A2")`.
 - Part data such as MPN belongs in SKiDL (`part.fields["MPN"] = "..."`); sync carries it.
+- Many instances of a library block on one flat sheet: arrange the block's own schematic
+  once (its harness connected by labels only), then `kat stamp SCH NAME all --at X,Y
+  --step DX,DY --expect design.net` draws every instance like it, framed with its name
+  (SPEC §4.20). `kat frame SCH CH_A` frames any block instance.
 - Hierarchical sheets can be drawn by hand (`s.sheet(...)`, `s.port(...)`, pins as
   `"CH_A.IN"`, parameters as sheet fields used as `${NAME}` inside); run
   `kat.hierarchy.annotate(root)` after each change of the tree (SPEC §4.17). `kat sync` does

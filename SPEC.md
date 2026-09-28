@@ -419,11 +419,92 @@ kat.hierarchy.annotate("top/top.kicad_sch")            # after every change of t
   `instances` for the root's project. Other projects' entries are kept, so a block keeps
   its own numbering; annotate the block as its own root with `per_page=0`.
 
+### 4.18 Stamping block layouts
 
+A block is laid out once on its own board, checked (DRC clean), and then stamped onto each
+of its instances in a design:
 
-Library: `kat.new`, `kat.load`, `kat.edit`, `kat.sync`, `kat.check`, `kat.snapshot`, `kat.view`,
+```python
+kat.pcb.block_environment("blocks/RC/RC.kicad_pcb", ["env GND In1"])  # not part of the block
+with kat.pcb.edit("top/top.kicad_pcb") as b:
+    b.stamp("blocks/RC/RC.kicad_pcb", {"/CH_A/RC1": (103, 103), "/CH_B/RC1": ((130, 118), 180)})
+```
+
+- **Instances** are paths, `/CH_A/RC1`. Hierarchical design: a sheet instance; a part pairs
+  with the block part whose footprint path is the end of its own path. Flat design: a
+  SKiDL block (`Block` field); a part pairs with the block part whose tag is the same
+  relative to its instance (`CH_A/RC1/r` ↔ `DUT/r`). `b.instances(block)` lists them.
+- **Environment:** parts on the block board outside the block instance (a SKiDL test
+  harness) are not copied, nor are tracks ending on their pads or items only on their
+  nets; neither are the zones named with `block_environment` (`NAME.block.json`).
+- **Copied:** the parts' positions, rotations and sides; tracks, arcs, vias (locked unless
+  `lock=False`), zones and keep-outs (named `/CH_A/RC1: out node`), graphics not on
+  Edge.Cuts, board-only parts (new references). The block board's own groups become
+  sub-groups of the instance group `"/CH_A (NAME)"`.
+- **Transform:** the block origin (top-left of its outline) goes to `at`, turned by 0, 90,
+  180 or 270 degrees. The same side as on the block board; a mirrored block is a separate
+  block board.
+- **Refused:** unpaired parts on either side, another footprint, an instance wired
+  differently from the block (a net mapping to two nets), copper layers the design lacks.
+- **Stamping again** removes the instance group's copied items first and places anew.
+- The design is judged as usual: `kat pcb check`, then route what is left
+  (`kat pcb route` keeps the locked block copper).
+
+### 4.19 Block library
+
+Each block is a project of its own in `blocks/NAME/` (`KAT_BLOCKS`, else the nearest
+`blocks/` folder of the working directory or above):
+
+| File | Content |
+|---|---|
+| `NAME.py` | the SKiDL block function; under `__main__` a test harness calling it with `tag="DUT"` |
+| `NAME.kicad_pro/.kicad_sch/.kicad_pcb` | the block's project, synced from the harness |
+| `NAME.block.json` | type, instance (`DUT`), ports, parameters, environment zones, last check |
+| `NAME_REPORT.md` | the block's journal |
+
+- `kat block new NAME` creates it from a template; `kat block build NAME` runs the harness,
+  syncs schematic and board, and records type, ports and parameters.
+- The harness parts (outside `DUT`) are the block's **environment**: they are on the
+  block's board so that it can be checked, but `stamp` does not copy them.
+- `kat block check NAME`: the schematic check against the harness netlist, the gate's part
+  data (MPN by default) and the board check. Open connections to the environment are
+  expected; anything else counts. The result is stored with the files' times; `stamp` warns
+  (`warnings`) when a block changed since its last clean check.
+- A design uses the function (`rc = kat.blocks.use("RC")`, then
+  `rc(inp=a, out=b, gnd=gnd, tag="CH_A")`) and stamps the layout by name
+  (`b.stamp("RC", {"/CH_A": (x, y)})`, `kat pcb stamp PCB RC all --at X,Y --step DX,DY`).
+
+### 4.20 Flat sheets with many blocks
+
+Small blocks read best on one flat sheet, each instance drawn the same way. After `kat
+sync` (which places the parts of one block together), each instance is drawn like the
+block's own checked schematic:
+
+```
+kat stamp top.kicad_sch RC all --at 50.8,50.8 --step 0,40.64 --expect design.net
+```
+
+- **Pairs** by `Block` + tag, as on the board (§4.18). Every pin of the instance's parts is
+  detached, the parts are placed, turned and mirrored as in the block, with its field
+  positions.
+- **Copied:** the block's drawing: every wire reachable from its pins, and the labels,
+  junctions, no-connects and power symbols on them. Labels are renamed to the design's net
+  names for this instance. PWR_FLAGs are not copied (one per net, added where ERC needs it).
+- **The block's harness must connect to it by labels**: a wire from a block pin to a
+  harness pin is refused (the harness is not part of the block's drawing).
+- Afterwards whatever the design still misses is attached as `sync` would, and the sheet
+  must match `--expect`; otherwise the file is put back and the command fails.
+- A warning names parts that the stamped drawing now covers; move them, or stamp elsewhere.
+- **Frames:** each stamped instance gets a dashed frame with the heading `CH_A (rc)` above
+  it; `kat frame SCH CH_A` / `s.frame("CH_A")` draws one for any block instance. Drawing
+  it again replaces it.
+
+## 5. Command reference
+
+Library: `kat.new`, `kat.load`, `kat.edit`, `kat.sync`, `kat.stamp`, `kat.check`, `kat.snapshot`, `kat.view`,
 `kat.ready`, `kat.pcb.sync` / `edit` / `check` / `snapshot` / `view` / `route` / `refill` / `fab` /
-`ready` / `drc` (board), `kat.nets`, `kat.lib_search`, `kat.lib_show`, `kat.comment`,
+`ready` / `drc` / `stamp` / `instances` / `block_environment` (board), `kat.hierarchy`,
+`kat.skidl_blocks`, `kat.blocks`, `kat.nets`, `kat.lib_search`, `kat.lib_show`, `kat.comment`,
 `kat.batch_exec`, `kat.open_kicad`, and the `kat.Sheet` / `kat.pcb.Board` methods; each returns
 what the matching command prints. `kat api NAME` shows any of them (§4.14).
 
@@ -444,6 +525,10 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `pcb fab PCB` / `pcb ready PCB` | fabrication set / release gate (§4.11) |
 | `pcb route PCB [--passes] [--net NAME] [--install]` | Freerouting through kat's DSN/SES, then the board check (§4.10) |
 | `pcb check PCB` / `pcb snapshot PCB` / `pcb view PCB ...` | board DRC + findings, history step with pictures, zoomed view (§4.12) |
+| `pcb stamp PCB BLOCK_PCB INSTANCE... --at X,Y [--step DX,DY] [--rot R] [--no-lock]` | copy a checked block layout onto instances (`all`), then the board check (§4.18) |
+| `pcb instances PCB BLOCK_PCB` / `pcb environment BLOCK_PCB ZONE...` | a block's instances in a design / its test-environment zones |
+| `block new/build/check NAME [--lib DIR]`, `block list` | the block library (§4.19); BLOCK_PCB above may be a block name |
+| `stamp SCH BLOCK INSTANCE... --at X,Y [--step DX,DY] --expect NETLIST [--no-frame]` / `frame SCH BLOCK` | draw block instances like the block's schematic, framed (§4.20) |
 | `snapshot SCH [--slug] [--note] [--expect] [--tiles] [--finding-crops N]` | SVG + trimmed PNG + check into `history/`; tiles and finding close-ups |
 | `view SCH --around REF / --at X,Y / --region X,Y,W,H` | zoomed PNG of one region into `views/` |
 | `add`, `wire`, `connect`, `label`, `power`, `nc` | draw |
@@ -510,6 +595,7 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
 | SKiDL random tags / automatic references break identity across revisions | `tag=` (and `ref=`) on every part; `sync` matches tag first |
 | `kicad-cli sch upgrade` silently drops a sheet's instance entry whose path is not the parent's real path (e.g. `/` in a sub-sheet) | `annotate` writes `/<root uuid>/<parent sheet uuids>` |
 | KiCad re-saves sheet boxes in its own order | pages are numbered from the boxes' positions (reading order), not the file order |
+| Stamping a block drawing that contains its PWR_FLAG gives one flag per instance: ERC `pin_to_pin` (two power outputs) | flags are not copied; `stamp` adds one per net where ERC needs it |
 | SKiDL tags are local to a `@subcircuit`: two instances both have tag `r`, and matching by the bare tag pairs the wrong parts | the tag is qualified by the instance path (`CH_A/RC1/r`) from the netlist's sheet path |
 | Moving a part whose wires end on shared T-points leaves steps (like KiCad's drag) | `detach` + `connect` the affected pins |
 | A part moved onto another part's pin joined the nets silently; moving the other part later dragged wires between them (LED matrix: rows 9/10 shorted to GND) | `move` refuses pin-on-pin/wire/label contact (`allow_contact` to override); `move_many` moves parts simultaneously, so they can take each other's places without parking |
@@ -546,7 +632,8 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
 
 ## 8. Open points
 
-- Hierarchical sheets, buses, global labels across sheets in `sync`.
+- `sync` into hierarchical sheets (drawing and annotating them works, §4.17), buses, global
+  labels across sheets.
 - Teardrops, length tuning, differential pairs and impedance-controlled stack-ups are not
   automated; set them in KiCad or as custom rules.
 - Live mode with kicad-python (editor open) is not implemented; the pipeline is headless.

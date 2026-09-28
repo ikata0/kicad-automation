@@ -1,10 +1,11 @@
 """Nested SKiDL blocks for the block tests: top -> 2x ch (Interface) -> 3x rc (RC low-pass).
 
-    python blocks_design.py VARIANT OUT.net      VARIANT: base | value | untagged
+    python blocks_design.py VARIANT OUT.net      VARIANT: base | value | untagged | rc
 
 - base: CH_A/CH_B, first stage ra = 1k / 3k3
 - value: CH_B's first stage becomes 6k8 (a design change inside one instance)
 - untagged: no tag= and positional arguments (the block record warns)
+- rc: the RC block alone with a harness connector (the block board's design)
 Writes OUT.net and OUT.blocks.json.
 """
 import os
@@ -47,6 +48,19 @@ def ch(io, ra, rb="2k2"):
     n3 += r[1]
     r[2] += io.out
 
+
+if variant == "rc":
+    # the RC block on its own: a harness connector (its environment) and one instance
+    gnd, a, b = Net("GND"), Net("IN"), Net("OUT")
+    j = Part("Connector_Generic", "Conn_01x03", footprint="Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical",
+             tag="j")
+    j[1] += a
+    j[2] += b
+    j[3] += gnd
+    rc(inp=a, out=b, gnd=gnd, tag="DUT")
+    generate_netlist(file_=out)
+    kat.skidl_blocks.write(out)
+    sys.exit(0)
 
 gnd = Net("GND")
 j = Part("Connector_Generic", "Conn_01x05", footprint="Connector_PinHeader_2.54mm:PinHeader_1x05_P2.54mm_Vertical",

@@ -21,7 +21,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from . import checks, gate, hierarchy, library, netlist, pcb, report, skidl_blocks, syncer
+from . import blocks, checks, gate, hierarchy, library, netlist, pcb, report, skidl_blocks, syncer
 from .env import KatError, tidy
 from .history import restore as _restore
 from .history import snapshot as _snapshot
@@ -30,8 +30,8 @@ from .report import batch_exec, comment
 from .sheet import Sheet
 from .views import view as _view
 
-__all__ = ["KatError", "Sheet", "batch_exec", "check", "comment", "edit", "hierarchy", "lib_search", "lib_show",
-           "load", "nets", "new", "open_kicad", "pcb", "ready", "restore", "skidl_blocks", "snapshot", "sync",
+__all__ = ["KatError", "Sheet", "batch_exec", "blocks", "check", "comment", "edit", "hierarchy", "lib_search", "lib_show",
+           "load", "nets", "new", "open_kicad", "pcb", "ready", "restore", "skidl_blocks", "snapshot", "stamp", "sync",
            "view"]
 
 
@@ -56,6 +56,47 @@ def sync(sch: Path | str, design: Path | str, dry_run: bool = False) -> dict:
     """Bring a design netlist (e.g. from SKiDL) into the schematic, keeping the arrangement."""
     report.touch(sch)
     return tidy(syncer.run(Path(sch), Path(design), dry_run))
+
+
+def stamp(sch: Path | str, block: str, instances: str | list[str], at: tuple[float, float],
+          design: Path | str, step: tuple[float, float] = (0.0, 0.0), frame: bool = True) -> dict:
+    """Copy a block's checked drawing (library name or .kicad_sch) onto block instances of a
+    flat sheet (``Sheet.stamp``): the n-th instance goes to ``at + n * step`` (mm),
+    ``instances`` a Block path (``/CH_A``), a list, or ``"all"`` (every instance whose parts
+    pair with the block). With ``frame`` each gets a dashed frame and heading. Then the
+    sheet is checked against ``design``; if its connectivity differs, the file is put
+    back and KatError explains why."""
+    from . import sch_stamp
+    report.touch(sch)
+    sch = Path(sch)
+    before = sch.read_text(encoding="utf-8")
+    s = Sheet(sch)
+    if instances == "all":
+        names = sorted({x.field("Block") for x in s.schematic.symbols() if x.field("Block")})
+        found = []
+        for n in {"/".join(b.split("/")[:i]) for b in names for i in range(1, b.count("/") + 2)}:
+            try:
+                sch_stamp._pair_only(s.schematic, block, n)
+                found.append("/" + n)
+            except KatError:
+                continue
+        instances = sorted(found)
+    names = [instances] if isinstance(instances, str) else list(instances)
+    done = []
+    for k, name in enumerate(names):
+        done.append(sch_stamp.stamp(s.schematic, block, name, (at[0] + k * step[0], at[1] + k * step[1]),
+                                    design))
+        if frame:
+            sch_stamp.frame(s.schematic, name)
+    s.save()
+    c = checks.run(sch, Path(design))
+    if not c["netlist_vs_expected"]["match"]:
+        sch.write_text(before, encoding="utf-8")
+        raise KatError(f"stamping {block} broke the connectivity (put back): "
+                       f"{c['netlist_vs_expected']}")
+    return tidy({"file": str(sch), "instances": done,
+                 "check": {k: c[k] for k in ("ok", "clean")} | {"erc_errors": c["erc"]["errors"],
+                                                              "overlaps": len(c["overlaps"])}})
 
 
 def check(sch: Path | str, expect: Path | str | None = None) -> dict:

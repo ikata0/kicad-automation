@@ -183,7 +183,8 @@ class Syncer:
 
     def _order(self, comps: list[Component]) -> list[list[Component]]:
         """Natural reference order (R2 before R10), with parts that share an unnamed two-pin
-        net placed next to each other (D1 then R1), so that net can be a short wire."""
+        net placed next to each other (D1 then R1), so that net can be a short wire, and
+        the parts of one block instance together (top level first, then by block path)."""
         by_ref = {c.ref: c for c in comps}
         partners: dict[str, list[str]] = {r: [] for r in by_ref}
         for name, pins in self.nets.items():
@@ -203,7 +204,9 @@ class Syncer:
                 stack += sorted(partners[r], key=natural_key, reverse=True)
             if group:
                 groups.append(group)
-        return groups
+        # parts of one block instance (SKiDL subcircuit) stay together, blocks in path order
+        order = {id(g): i for i, g in enumerate(groups)}
+        return sorted(groups, key=lambda g: (g[0].block, order[id(g)]))
 
     def _place_new(self, comps: list[Component], units: list[int] | None = None) -> None:
         """Put new parts in uniform rows in a free area below everything already drawn. If

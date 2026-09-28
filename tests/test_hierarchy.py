@@ -33,7 +33,8 @@ def set_vars(sch: Path, **values) -> None:
 
 
 def build(root: Path) -> dict:
-    """top/top.kicad_sch, top/BLOCK1.kicad_sch, blocks/RC/RC.kicad_sch (own project)."""
+    """A block library and a design: blocks/RC/RC.kicad_sch and blocks/BLOCK1/BLOCK1.kicad_sch
+    (each its own project) and top/top.kicad_sch."""
     rc = new(root / "blocks" / "RC" / "RC.kicad_sch")
     set_vars(rc, R_VAL="10k")
     with kat.edit(rc) as s:
@@ -45,15 +46,29 @@ def build(root: Path) -> dict:
         s.port("OUT", (121.92, 50.8), angle=0, shape="output")
         s.wire(s.point("C1.1"), (111.76, 50.8), (121.92, 50.8))
         s.power("GND", "C1.2", stub=(0, 2.54))
+    b1 = new(root / "blocks" / "BLOCK1" / "BLOCK1.kicad_sch")
+    set_vars(b1, RA="1k")
+    with kat.edit(b1) as s:
+        s.port("IN", (60.96, 60.96), angle=180, shape="input")
+        prev = (60.96, 60.96)
+        for k, val in enumerate(("${RA}", "2k2", "4k7")):
+            name = f"RC{k + 1}"
+            s.sheet(name, "../RC/RC.kicad_sch", (71.12 + 30.48 * k, 58.42), size=(15.24, 7.62),
+                    left={"IN": "input"}, right={"OUT": "output"}, fields={"R_VAL": val})
+            s.connect(prev, f"{name}.IN")
+            prev = s.point(f"{name}.OUT")
+        s.add("Device:R", 170.18, 60.96, rot=90, value="100", footprint=R_FP)
+        s.connect(prev, "R1.1")
+        s.port("OUT", (180.34, 60.96), angle=0, shape="output")
+        s.connect("R1.2", (180.34, 60.96))
     top = new(root / "top" / "top.kicad_sch")
     set_vars(top, RA="1k")
-    b1 = root / "top" / "BLOCK1.kicad_sch"
     with kat.edit(top) as s:
         s.add("Connector_Generic:Conn_01x05", 50.8, 76.2, mirror="y", value="Conn",
               footprint="Connector_PinHeader_2.54mm:PinHeader_1x05_P2.54mm_Vertical")
         for i, ch in enumerate("AB"):
             y = 60.96 + 30.48 * i
-            s.sheet(f"CH_{ch}", "BLOCK1.kicad_sch", (91.44, y), size=(20.32, 10.16),
+            s.sheet(f"CH_{ch}", "../blocks/BLOCK1/BLOCK1.kicad_sch", (91.44, y), size=(20.32, 10.16),
                     left={"IN": "input"}, right={"OUT": "output"},
                     fields={"RA": "1k" if ch == "A" else "3k3"})
             s.label(f"IN_{ch}", f"CH_{ch}.IN", stub=(-5.08, 0))
@@ -62,20 +77,6 @@ def build(root: Path) -> dict:
             s.label(f"OUT_{ch}", f"J1.{2 * i + 2}", stub=(7.62, 0))
         s.power("GND", "J1.5", stub=(5.08, 0), rot=90)
         s.power("PWR_FLAG", "J1.5", stub=(5.08, 0))
-    with kat.edit(b1) as s:
-        rc_rel = "../blocks/RC/RC.kicad_sch"
-        s.port("IN", (60.96, 60.96), angle=180, shape="input")
-        prev = (60.96, 60.96)
-        for k, val in enumerate(("${RA}", "2k2", "4k7")):
-            name = f"RC{k + 1}"
-            s.sheet(name, rc_rel, (71.12 + 30.48 * k, 58.42), size=(15.24, 7.62),
-                    left={"IN": "input"}, right={"OUT": "output"}, fields={"R_VAL": val})
-            s.connect(prev, f"{name}.IN")
-            prev = s.point(f"{name}.OUT")
-        s.add("Device:R", 170.18, 60.96, rot=90, value="100", footprint=R_FP)
-        s.connect(prev, "R1.1")
-        s.port("OUT", (180.34, 60.96), angle=0, shape="output")
-        s.connect("R1.2", (180.34, 60.96))
     return {"top": top, "block1": b1, "rc": rc}
 
 
@@ -137,4 +138,4 @@ def test_sheet_pins_and_refusals(design):
     with pytest.raises(kat.KatError, match="no pin"):
         s.point("CH_A.NOPE")
     with pytest.raises(kat.KatError, match="exists"):
-        s.sheet("CH_A", "BLOCK1.kicad_sch", (0, 0))
+        s.sheet("CH_A", "../blocks/BLOCK1/BLOCK1.kicad_sch", (0, 0))
