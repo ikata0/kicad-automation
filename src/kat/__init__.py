@@ -106,12 +106,23 @@ def stamp(sch: Path | str, block: str, instances: str | list[str],
     names = [instances] if isinstance(instances, str) else list(instances)
     # free all instances first: their old wiring must not stand where another one goes
     batch: dict[str, set[str]] = {}
+    here: dict[str, tuple] = {}
     for name in names:
         *_, pairs = sch_stamp._pair_only(s.schematic, block, name)
         batch[name] = {tx.ref for _, tx in pairs.values()}
-        for _, tx in pairs.values():
-            for p in s.schematic.pins(tx):
-                s.schematic.detach(tx.ref, p["number"])
+        here[name] = sch_stamp._region(s.schematic, [tx for _, tx in pairs.values()])
+        s.schematic.detach_many([(tx.ref, p["number"]) for _, tx in pairs.values()
+                                 for p in s.schematic.pins(tx)])
+    s.schematic.prune_dangling()          # e.g. labels that sat mid-wire between own parts
+    if len(names) > 1:
+        # park the instances beside the page, as they stand: none can touch a part of
+        # another while each is stamped in turn (and none is in another's way)
+        from .schematic import snap
+        from .syncer import paper_size
+        dx = snap(paper_size(s.schematic)[0] + 100)
+        s.schematic.move_symbols([dict(ref=x.ref, unit=x.unit, dx=dx, dy=0) for x in s.schematic.symbols()
+                                  if any(x.ref in refs for refs in batch.values())],
+                                 drag=False, allow_contact=True)
     if at is not None and len(at) and not isinstance(at[0], (int, float)):
         if len(at) != len(names):
             raise KatError(f"{len(at)} positions for {len(names)} instances")
@@ -124,7 +135,8 @@ def stamp(sch: Path | str, block: str, instances: str | list[str],
         reserved = [b for j, b in enumerate(fixed) if b and j != k] + [d["area"] for d in done]
         skip = set().union(*(refs for n, refs in batch.items() if n != name))
         done.append(sch_stamp.stamp(s.schematic, block, name, spots[k], design, make_room=make_room,
-                                    reserved=reserved, skip=skip, plan=plan))
+                                    reserved=reserved, skip=skip, plan=plan, detached=True,
+                                    here=here[name]))
         if frame and not plan:
             for sub in sch_stamp.sub_frames(s.schematic, block):     # as framed in the block
                 sch_stamp.frame(s.schematic, f"{name.strip('/')}/{sub}")

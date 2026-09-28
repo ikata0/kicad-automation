@@ -13,7 +13,7 @@ import pytest
 import kat
 from kat import blocks, cli, hierarchy
 from kat.pcb.syncer import read_design
-from kat.schematic import Schematic
+from kat.schematic import Schematic, snap
 from kat.sexpr import find, find_all
 
 sys.path.insert(0, str(Path(__file__).parent))
@@ -78,6 +78,57 @@ j[5] += gnd
 generate_netlist(file_="design.net")
 kat.skidl_blocks.write("design.net")
 '''
+
+
+CELL_PY = '''"""Block CELL: R then LED, the inner net named (as in the LED matrix)."""
+import os
+import sys
+
+os.environ.setdefault("KICAD10_SYMBOL_DIR", "/usr/share/kicad/symbols")
+from skidl import KICAD10, Net, Part, generate_netlist, set_default_tool, subcircuit  # noqa: E402
+import kat  # noqa: E402
+
+
+@subcircuit
+def cell(inp, gnd):
+    a = Net("LED_A")
+    r = Part("Device", "R", value="150", footprint="Resistor_SMD:R_0402_1005Metric", tag="r")
+    d = Part("Device", "LED", value="green", footprint="LED_SMD:LED_0603_1608Metric", tag="d")
+    inp += r[1]
+    r[2] += a
+    a += d[2]
+    d[1] += gnd
+
+
+if __name__ == "__main__":
+    set_default_tool(KICAD10)
+    inp, gnd = Net("IN"), Net("GND")
+    j = Part("Connector_Generic", "Conn_01x02", tag="j",
+             footprint="Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical")
+    j[1] += inp
+    j[2] += gnd
+    cell(inp=inp, gnd=gnd, tag="DUT")
+    net = sys.argv[1] if len(sys.argv) > 1 else "CELL.net"
+    generate_netlist(file_=net)
+    kat.skidl_blocks.write(net)
+'''
+
+PAIR_PY = CELL_PY.replace("CELL", "PAIR").replace('''@subcircuit
+def cell(inp, gnd):
+    a = Net("LED_A")
+    r = Part("Device", "R", value="150", footprint="Resistor_SMD:R_0402_1005Metric", tag="r")
+    d = Part("Device", "LED", value="green", footprint="LED_SMD:LED_0603_1608Metric", tag="d")
+    inp += r[1]
+    r[2] += a
+    a += d[2]
+    d[1] += gnd''', '''cell = kat.blocks.use("CELL")
+
+
+@subcircuit
+def pair(inp, gnd):
+    for i in range(2):
+        cell(inp=inp, gnd=gnd, tag=f"CELL{i}")''').replace("    cell(inp=inp, gnd=gnd, tag=\"DUT\")",
+                                                     "    pair(inp=inp, gnd=gnd, tag=\"DUT\")")
 
 
 @pytest.fixture
@@ -162,7 +213,6 @@ def test_design_draws_block_instances_as_sheets(lib, tmp_path):
     assert c["drc_errors"] == 0 and c["parity"] == 0 and c["unconnected"] == 4, c
 
 
-
 def test_nested_blocks_pass_parameters_down(lib, tmp_path):
     blocks.build("RC", force=True)
     blocks.new("CH")
@@ -206,6 +256,30 @@ def test_a_block_changed_after_its_build_is_caught(lib, tmp_path):
     assert all(p["drawn"] == "100n" and p["design"] == "220n" for p in rep["check"]["parts"])
 
 
+def test_a_design_using_a_block_does_not_make_it_stale(lib, tmp_path):
+    """I9: syncing a design writes its instance data into the library's block sheet; the
+    block's check still holds, and its flat drawing is not re-stamped for that."""
+    blocks.build("RC", force=True)
+    blocks.new("CH")
+    (lib / "CH" / "CH.py").write_text(CH_PY)
+    blocks.build("CH", force=True)
+    blocks.check("RC", require=())        # no board yet: the checks fail, but are recorded
+    before_stale = blocks.stale(lib / "RC")
+    sheet = lib / "RC" / "RC_block.kicad_sch"
+    before = sheet.read_text()
+    d = tmp_path / "design"
+    d.mkdir()
+    (d / "design.py").write_text(TOP_PY)
+    subprocess.run([sys.executable, "design.py"], cwd=d, check=True, capture_output=True)
+    sch = d / "top" / "top.kicad_sch"
+    assert cli.main(["new", str(sch)]) == 0
+    assert kat.sync(sch, d / "design.net", sheets=["ch", "rc"])["check"]["ok"]
+    assert sheet.read_text() != before                      # KiCad's instance data was added
+    assert blocks.stale(lib / "RC") == before_stale and "changed" not in before_stale
+    assert not blocks.check("CH", require=()).get("warnings")
+    assert blocks.build("CH", force=True)["flat"]["restamped"] == []
+
+
 def test_boxes_are_arranged_and_keep_hand_changes(lib, tmp_path):
     blocks.build("RC", force=True)
     d = tmp_path / "design"
@@ -232,54 +306,6 @@ def test_boxes_are_arranged_and_keep_hand_changes(lib, tmp_path):
     assert kat.check(sch, d / "design.net")["netlist_vs_expected"]["match"]
 
 
-def test_a_nested_block_gets_a_flat_drawing_for_flat_designs(lib, tmp_path):
-    blocks.build("RC", force=True)
-    blocks.new("CH")
-    (lib / "CH" / "CH.py").write_text(CH_PY)
-    res = blocks.build("CH", force=True)
-    flat = lib / "CH" / "CH_flat.kicad_sch"
-    assert res["flat"]["created"] and res["flat"]["ok"] and flat.exists()
-    chk = blocks.check("CH", require=())
-    assert chk["flat"]["ok"] and not chk.get("warnings")
-    s = Schematic(flat)
-    tags = {x.field("SKiDL Tag"): x for x in s.symbols() if not x.ref.startswith("#")}
-    assert {t.rsplit("/", 1)[0] for t in tags if t != "j"} == {"DUT", "DUT/RC1", "DUT/RC2", "DUT/RC3"}
-
-    # a flat design: one stamp per channel, RC stages framed inside
-    d = tmp_path / "design"
-    d.mkdir()
-    (d / "design.py").write_text(TOP_PY)
-    subprocess.run([sys.executable, "design.py"], cwd=d, check=True, capture_output=True)
-    sch = d / "flat" / "flat.kicad_sch"
-    assert cli.main(["new", str(sch)]) == 0
-    kat.sync(sch, d / "design.net")
-    out = kat.stamp(sch, "CH", "all", design=d / "design.net", make_room=True)
-    assert [i["instance"] for i in out["instances"]] == ["/CH_A", "/CH_B"]
-    assert out["check"]["erc_errors"] == 0 and out["check"]["clean"]
-    assert kat.check(sch, d / "design.net")["netlist_vs_expected"]["match"]
-    texts = {str(t[1]) for t in Schematic(sch).tree if isinstance(t, list) and str(t[0]) == "text"}
-    assert {"CH_A (ch)", "CH_B (ch)", "CH_A/RC1 (rc)", "CH_B/RC3 (rc)"} <= texts
-
-    # RC's drawing changes, rout was moved by hand: a rebuild re-stamps only the RC stages
-    rout = next(x.ref for x in s.symbols() if x.field("SKiDL Tag") == "DUT/rout")
-    with kat.edit(flat) as e:
-        e.move(rout, by=(0, -5.08))
-    moved = next(x.place for x in Schematic(flat).symbols() if x.ref == rout)
-    rc_sheet = lib / "RC" / "RC_block.kicad_sch"
-    c1 = next(x.ref for x in Schematic(rc_sheet).symbols() if (x.field("SKiDL Tag") or "").endswith("/c"))
-    with kat.edit(rc_sheet) as e:
-        e.move(c1, by=(-5.08, 0))
-    assert "RC" in blocks.check("CH", require=())["warnings"][0]
-    res = blocks.build("CH", force=True)
-    assert not res["flat"]["created"] and res["flat"]["restamped"] == ["RC"] and res["flat"]["ok"]
-    s = Schematic(flat)
-    assert next(x.place for x in s.symbols() if x.ref == rout) == moved
-    by_tag = {x.field("SKiDL Tag"): x.place for x in s.symbols() if x.field("SKiDL Tag")}
-    src = {x.field("SKiDL Tag").rsplit("/", 1)[1]: x.place for x in Schematic(rc_sheet).symbols()
-           if x.field("SKiDL Tag")}
-    for i in (1, 2, 3):
-        r, c = by_tag[f"DUT/RC{i}/r"], by_tag[f"DUT/RC{i}/c"]
-        assert (r.x - c.x, r.y - c.y) == pytest.approx((src["r"].x - src["c"].x, src["r"].y - src["c"].y))
 
 def test_renamed_nets_and_removed_boxes_leave_nothing_behind(lib, tmp_path):
     """B3: a renamed net that ends on a root part (J1) and on sheet pins is renamed at the
@@ -337,3 +363,93 @@ def test_skidl_nc_pins_get_no_connect_flags(lib, tmp_path):
         assert flags == [(pytest.approx(pin["x"]), pytest.approx(pin["y"]))], (name, flags)
         again = kat.sync(sch, d / "design.net")
         assert len(list(find_all(Schematic(sch).tree, "no_connect"))) == 1
+
+def test_a_nested_block_gets_a_flat_drawing_for_flat_designs(lib, tmp_path):
+    blocks.build("RC", force=True)
+    blocks.new("CH")
+    (lib / "CH" / "CH.py").write_text(CH_PY)
+    res = blocks.build("CH", force=True)
+    flat = lib / "CH" / "CH_flat.kicad_sch"
+    assert res["flat"]["created"] and res["flat"]["ok"] and flat.exists()
+    assert res["flat"]["off_page"] == 0 and not res["flat"].get("warnings"), res["flat"]   # B15
+    s = Schematic(flat)
+    j = s.body_box(next(x for x in s.symbols() if x.field("SKiDL Tag") == "j"))
+    others = [s.body_box(x) for x in s.symbols() if x.field("Block") and s.body_box(x)]
+    assert all(j[2] < b[0] or b[2] < j[0] or j[3] < b[1] or b[3] < j[1] for b in others)
+    chk = blocks.check("CH", require=())
+    assert chk["flat"]["ok"] and not chk.get("warnings")
+    s = Schematic(flat)
+    tags = {x.field("SKiDL Tag"): x for x in s.symbols() if not x.ref.startswith("#")}
+    assert {t.rsplit("/", 1)[0] for t in tags if t != "j"} == {"DUT", "DUT/RC1", "DUT/RC2", "DUT/RC3"}
+
+    # a flat design: one stamp per channel, RC stages framed inside
+    d = tmp_path / "design"
+    d.mkdir()
+    (d / "design.py").write_text(TOP_PY)
+    subprocess.run([sys.executable, "design.py"], cwd=d, check=True, capture_output=True)
+    sch = d / "flat" / "flat.kicad_sch"
+    assert cli.main(["new", str(sch)]) == 0
+    kat.sync(sch, d / "design.net")
+    out = kat.stamp(sch, "CH", "all", design=d / "design.net", make_room=True)
+    assert [i["instance"] for i in out["instances"]] == ["/CH_A", "/CH_B"]
+    assert out["check"]["erc_errors"] == 0 and out["check"]["clean"]
+    assert kat.check(sch, d / "design.net")["netlist_vs_expected"]["match"]
+    texts = {str(t[1]) for t in Schematic(sch).tree if isinstance(t, list) and str(t[0]) == "text"}
+    assert {"CH_A (ch)", "CH_B (ch)", "CH_A/RC1 (rc)", "CH_B/RC3 (rc)"} <= texts
+
+    # RC's drawing changes, rout was moved by hand: a rebuild re-stamps only the RC stages
+    rout = next(x.ref for x in s.symbols() if x.field("SKiDL Tag") == "DUT/rout")
+    with kat.edit(flat) as e:
+        e.move(rout, by=(0, -5.08))
+    moved = next(x.place for x in Schematic(flat).symbols() if x.ref == rout)
+    rc_sheet = lib / "RC" / "RC_block.kicad_sch"
+    c1 = next(x.ref for x in Schematic(rc_sheet).symbols() if (x.field("SKiDL Tag") or "").endswith("/c"))
+    with kat.edit(rc_sheet) as e:
+        e.move(c1, by=(-5.08, 0))
+    assert "RC" in blocks.check("CH", require=())["warnings"][0]
+    res = blocks.build("CH", force=True)
+    assert not res["flat"]["created"] and res["flat"]["restamped"] == ["RC"] and res["flat"]["ok"]
+    s = Schematic(flat)
+    assert next(x.place for x in s.symbols() if x.ref == rout) == moved
+    by_tag = {x.field("SKiDL Tag"): x.place for x in s.symbols() if x.field("SKiDL Tag")}
+    src = {x.field("SKiDL Tag").rsplit("/", 1)[1]: x.place for x in Schematic(rc_sheet).symbols()
+           if x.field("SKiDL Tag")}
+    for i in (1, 2, 3):
+        r, c = by_tag[f"DUT/RC{i}/r"], by_tag[f"DUT/RC{i}/c"]
+        assert (r.x - c.x, r.y - c.y) == pytest.approx((src["r"].x - src["c"].x, src["r"].y - src["c"].y))
+
+
+def test_a_changed_cell_is_restamped_in_its_own_place(lib, tmp_path):
+    """B1: the instance's own wiring (R -> LED with its LED_A label) is no obstacle when
+    the block is re-stamped where it stands."""
+    blocks.new("CELL")
+    (lib / "CELL" / "CELL.py").write_text(CELL_PY)
+    blocks.build("CELL", force=True)
+    blocks.new("PAIR")
+    (lib / "PAIR" / "PAIR.py").write_text(PAIR_PY)
+    res = blocks.build("PAIR", force=True)
+    assert res["flat"]["created"] and res["flat"]["ok"], res["flat"]
+    flat = lib / "PAIR" / "PAIR_flat.kicad_sch"
+    with kat.edit(flat) as e:             # R -> LED by one wire, LED_A mid-wire (as in the matrix)
+        s = e.schematic
+        for i in range(2):
+            r, d = (next(x for x in s.symbols() if x.field("SKiDL Tag") == f"DUT/CELL{i}/{k}") for k in "rd")
+            net = next(str(n[1]) for n in find_all(s.tree, "label") if str(n[1]).startswith("LED_A")
+                       and any(abs(float(find(n, "at")[1]) - p["x"]) + abs(float(find(n, "at")[2]) - p["y"]) < 3
+                               for p in s.pins(r) if p["number"] == "2"))
+            s.detach(r.ref, "2")
+            s.detach(d.ref, "2")
+            rp = next(p for p in s.pins(r) if p["number"] == "2")
+            dp = next(p for p in s.pins(d) if p["number"] == "2")
+            corner = (rp["x"], dp["y"])
+            s.add_wire([(rp["x"], rp["y"]), corner, (dp["x"], dp["y"])])
+            s.add_label(net, snap((corner[0] + dp["x"]) / 2), dp["y"])
+    assert kat.check(flat, lib / "PAIR" / "PAIR.net")["netlist_vs_expected"]["match"]
+    cell_sheet = lib / "CELL" / "CELL_block.kicad_sch"
+    d = next(x.ref for x in Schematic(cell_sheet).symbols() if (x.field("SKiDL Tag") or "").endswith("/d"))
+    with kat.edit(cell_sheet) as e:
+        e.move(d, by=(0, 5.08))
+    res = blocks.build("PAIR", force=True)
+    assert res["flat"]["restamped"] == ["CELL"] and res["flat"]["ok"], res["flat"]
+    plan = kat.stamp(flat, "CELL", "all", design=lib / "PAIR" / "PAIR.net", plan=True)
+    assert plan["free"], plan

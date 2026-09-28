@@ -79,6 +79,10 @@ class Room:
     obstacles (the instances being stamped, freed of their wiring)."""
 
     def __init__(self, s: Schematic, skip: set[str] = frozenset(), skip_frames: set[str] = frozenset()):
+        with s.frozen():
+            self._build(s, skip, skip_frames)
+
+    def _build(self, s: Schematic, skip, skip_frames) -> None:
         self.s, self.skip = s, set(skip)
         fields = defaultdict(list)
         for t in text_items(s):
@@ -204,20 +208,23 @@ def make_room(s: Schematic, region: Box, skip: set[str] = frozenset(), reserved:
                     cands.append((d, ux * d, uy * d))
                     break
                 d += 5.08
+        refused = []
         for _, dx, dy in sorted(cands):
             moves = [dict(ref=r, unit=u, dx=dx, dy=dy) for r, u in g["parts"]] + \
                 [dict(ref=n, dx=dx, dy=dy) for n in g["sheets"]]
             try:
-                s.move_symbols(moves, drag=True)
-            except env.KatError:
+                s.move_symbols(moves, drag=True, ignore=skip)
+            except env.KatError as e:
+                refused.append(f"by {dx:g},{dy:g}: {e}")
                 continue                      # a pin would land on something: next candidate
             if g["frame"]:
                 frame(s, g["frame"])
             moved.append({"what": describe(g), "by": [dx, dy], "box": _shifted(b, dx, dy)})
             break
         else:
-            raise env.KatError(f"no room to move {describe(g)} out of the way on {s.path.name}: "
-                               f"make the page bigger (kat page A3) or stamp elsewhere")
+            why = f" (tried {'; '.join(refused[:3])})" if refused else ""
+            raise env.KatError(f"no room to move {describe(g)} out of the way on {s.path.name}{why}: "
+                               f"{bigger_page(s)} or stamp elsewhere")
     s.fix_junctions()
     left = Room(s, skip, skip_frames)
     rest = [describe(g) for g in left.occupants(region)] + left.loose(region)
@@ -259,5 +266,15 @@ def free_spot(s: Schematic, size: tuple[float, float], skip: set[str] = frozense
                 return x, y
             x += 5.08
         y += 5.08
-    raise env.KatError(f"no free area of {size[0]:g} x {size[1]:g} mm on {s.path.name}: make the "
-                       f"page bigger (kat page A3), make room, or pass at")
+    raise env.KatError(f"no free area of {size[0]:g} x {size[1]:g} mm on {s.path.name}: "
+                       f"{bigger_page(s)}, make room, or pass at")
+
+
+def bigger_page(s: Schematic) -> str:
+    """The hint for more room: the next paper size, or that there is none."""
+    p = find(s.tree, "paper")
+    size = str(p[1]) if p is not None and len(p) > 1 else ""
+    order = ["A5", "A4", "A3", "A2", "A1", "A0"]
+    if size in order[:-1]:
+        return f"make the page bigger (kat page {order[order.index(size) + 1]})"
+    return f"the page ({size or 'custom'}) is the largest: split the drawing"

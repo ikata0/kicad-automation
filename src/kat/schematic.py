@@ -11,6 +11,7 @@ import math
 import re
 import uuid as uuidlib
 from collections import Counter, defaultdict
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -37,6 +38,16 @@ def same(a: tuple[float, float], b: tuple[float, float]) -> bool:
 def key(p: tuple[float, float]) -> tuple[int, int]:
     """Hashable point identity (0.01 mm); all drawn points sit on the 1.27 mm grid."""
     return round(p[0] * 100), round(p[1] * 100)
+
+
+class _Anchors:
+    """Points that stop a private run: a pin of any part other than ``me``."""
+
+    def __init__(self, owners: dict, me: int | None):
+        self.owners, self.me = owners, me
+
+    def __contains__(self, k) -> bool:
+        return any(o != self.me for o in self.owners.get(k, ()))
 
 
 class SegIndex:
@@ -134,6 +145,7 @@ class Schematic:
         self.tree = loads(self.path.read_text(encoding="utf-8"))
         self._pin_cache: dict = {}
         self._sym_cache: dict = {}
+        self._frozen: dict | None = None
         if head(self.tree) != "kicad_sch":
             raise env.KatError(f"{path} is not a KiCad schematic")
 
@@ -191,7 +203,33 @@ class Schematic:
         find(self.tree, "lib_symbols").append(s)
         return s
 
+    @contextmanager
+    def frozen(self):
+        """A read-only phase (e.g. finding what occupies the sheet): symbols, wires and the
+        indexes of ``private_run`` / ``_items_at`` are computed once. Nothing may change
+        the drawing inside it."""
+        outer = self._frozen
+        if outer is None:
+            self._frozen = {}
+        try:
+            yield self
+        finally:
+            if outer is None:
+                self._frozen = None
+
+    def _memo(self, name: str, fn):
+        if self._frozen is None:
+            return fn()
+        if name not in self._frozen:
+            self._frozen[name] = fn()
+        return self._frozen[name]
+
     def symbols(self) -> list[PlacedSymbol]:
+        if self._frozen is not None:
+            return list(self._memo("symbols", self._symbols))
+        return self._symbols()
+
+    def _symbols(self) -> list[PlacedSymbol]:
         out = []
         cache = self._sym_cache
         for n in find_all(self.tree, "symbol"):
@@ -430,14 +468,16 @@ class Schematic:
         self.move_symbols([dict(ref=ref, x=x, y=y, dx=dx, dy=dy, rot=rot, mirror=mirror, unit=unit)],
                           drag, allow_contact)
 
-    def move_symbols(self, moves: list[dict], drag: bool = True, allow_contact: bool = False) -> None:
+    def move_symbols(self, moves: list[dict], drag: bool = True, allow_contact: bool = False,
+                     ignore: set[str] = frozenset()) -> None:
         """Move several parts *simultaneously*: every decision (what is carried, what is
         dragged, what would touch) is made on the drawing before any part moves. Each move
         is a dict with ref and optionally x, y (absolute), dx, dy, rot, mirror, unit.
 
         Unless ``allow_contact``, refuses when a pin would land on another part's pin, a
         wire, a label or a power symbol it does not carry: that contact would join nets
-        silently (and a later move would drag wires between them)."""
+        silently (and a later move would drag wires between them). Pins of the parts in
+        ``ignore`` are no contacts (detached parts that move away themselves next)."""
         todo = []
         for m in moves:
             if not any(x.ref == m["ref"] for x in self.symbols()) and (box := self.sheet_box(m["ref"])) is not None:
@@ -508,7 +548,7 @@ class Schematic:
                             drags.append((bp, (bp[0] + delta[0], bp[1] + delta[1])))
 
         if not allow_contact:
-            self._check_contacts(todo, moving, carried | boundary_ids, carried_items, translate)
+            self._check_contacts(todo, moving, carried | boundary_ids, carried_items, translate, ignore)
 
         # --- apply ---
         for s, new, _, _, reorient in todo:
@@ -545,12 +585,12 @@ class Schematic:
             self.route(old, new_p, first="v")
 
     def _check_contacts(self, todo, moving: set[int], own_wires: set[int], own_items: set[int],
-                        carried: list = ()) -> None:
+                        carried: list = (), ignore: set[str] = frozenset()) -> None:
         """Raise if a moved pin, or a wire or label it carries along (``carried``: [(wires,
         items, delta)]), would touch something it does not bring along."""
         taken: dict[tuple[int, int], tuple[int, str]] = {}  # point -> (owner node id, what)
         for o in self.symbols():
-            if id(o.node) in moving or id(o.node) in own_items:
+            if id(o.node) in moving or id(o.node) in own_items or o.ref in ignore:
                 continue
             for p in self.pins(o):
                 taken.setdefault(key((p["x"], p["y"])), (id(o.node), f"pin {o.ref}.{p['number']}"))
@@ -622,19 +662,22 @@ class Schematic:
         the first point that is another part's pin, a branch (3+ wire ends) or a T-join.
         Returns (private wires, points reached, boundary wires as (near point, wire)).
         Stacked identical wires count as one wire (and are all taken or all boundary)."""
-        groups: dict[tuple, list] = {}
-        for w, seg in zip(self.wires(), self.segments()):
-            if id(w) not in skip:
-                groups.setdefault(tuple(sorted((key(seg[0]), key(seg[1])))), [seg, []])[1].append(w)
-        anchors = {key((p["x"], p["y"])) for o in self.symbols()
-                   if o.node is not owner and not o.ref.startswith("#") for p in self.pins(o)}
-        anchors |= {key(p) for b in self.sheet_boxes() if b.node is not owner for p in b.pins().values()}
-        ends = Counter(pk for gk in groups for pk in gk)
-        at_end = defaultdict(list)
-        for g in groups.values():
-            for k in {key(g[0][0]), key(g[0][1])}:
-                at_end[k].append(g)
-        index = SegIndex([g[0] for g in groups.values()])
+        def wiring():
+            groups: dict[tuple, list] = {}
+            for w, seg in zip(self.wires(), self.segments()):
+                if id(w) not in skip:
+                    groups.setdefault(tuple(sorted((key(seg[0]), key(seg[1])))), [seg, []])[1].append(w)
+            ends = Counter(pk for gk in groups for pk in gk)
+            at_end = defaultdict(list)
+            for g in groups.values():
+                for k in {key(g[0][0]), key(g[0][1])}:
+                    at_end[k].append(g)
+            return ends, at_end, SegIndex([g[0] for g in groups.values()])
+
+        ends, at_end, index = self._memo("wiring", wiring) if not skip else wiring()
+        owners = self._pin_owners()
+        me = id(owner) if owner is not None else None
+        anchors = _Anchors(owners, me)
         points, taken, frontier, boundary, seen = [start], [], [start], [], set()
         while frontier:
             p = frontier.pop()
@@ -656,13 +699,38 @@ class Schematic:
                 frontier.append(q)
         return taken, points, boundary
 
+    def _pin_owners(self) -> dict[tuple[int, int], set[int]]:
+        """Point -> the nodes of the parts (not power symbols) and sheet boxes with a pin there."""
+        def build():
+            out = defaultdict(set)
+            for o in self.symbols():
+                if not o.ref.startswith("#"):
+                    for p in self.pins(o):
+                        out[key((p["x"], p["y"]))].add(id(o.node))
+            for b in self.sheet_boxes():
+                for p in b.pins().values():
+                    out[key(p)].add(id(b.node))
+            return out
+        return self._memo("pin_owners", build)
+
     def _items_at(self, points: list[tuple[float, float]], exclude: list | None = None):
         """Labels/no-connects and power-type symbols (#PWR, #FLG) located on ``points``."""
-        marks = [n for kind in ("label", "global_label", "hierarchical_label", "no_connect")
-                 for n in find_all(self.tree, kind)
-                 if any(same((float(find(n, "at")[1]), float(find(n, "at")[2])), p) for p in points)]
-        powers = [o for o in self.symbols() if o.ref.startswith("#") and o.node is not exclude
-                  and any(same((pp["x"], pp["y"]), p) for pp in self.pins(o) for p in points)]
+        def index():
+            marks, powers = defaultdict(list), defaultdict(list)
+            for kind in ("label", "global_label", "hierarchical_label", "no_connect"):
+                for n in find_all(self.tree, kind):
+                    at = find(n, "at")
+                    marks[key((float(at[1]), float(at[2])))].append(n)
+            for o in self.symbols():
+                if o.ref.startswith("#"):
+                    for pp in self.pins(o):
+                        powers[key((pp["x"], pp["y"]))].append(o)
+            return marks, powers
+
+        by_mark, by_power = self._memo("items_at", index)
+        keys = list(dict.fromkeys(key(p) for p in points))
+        marks = list({id(n): n for k in keys for n in by_mark.get(k, ())}.values())
+        powers = list({id(o.node): o for k in keys for o in by_power.get(k, ()) if o.node is not exclude}.values())
         return marks, powers
 
     def pin_owner(self, ref: str, pin: str) -> tuple[PlacedSymbol, dict]:
@@ -679,10 +747,28 @@ class Schematic:
     def detach(self, ref: str, pin: str) -> dict:
         """Disconnect a pin: remove its private wire run plus the wire leading from it into
         shared circuitry, and labels / power symbols / flags / no-connects on that run."""
+        return self.detach_many([(ref, pin)])[0]
+
+    def detach_many(self, pins: list[tuple[str, str]]) -> list[dict]:
+        """``detach`` for several pins, one after the other, tidying the junctions once."""
+        outs = []
+        with self.frozen():
+            for ref, pin in pins:
+                outs.append(self._detach(ref, pin))
+                for k in ("wiring", "items_at"):
+                    self._frozen.pop(k, None)
+                if outs[-1]["power_symbols"]:
+                    self._frozen.pop("symbols", None)
+        self._prune_lib_symbols()
+        self.fix_junctions()
+        return outs
+
+    def _detach(self, ref: str, pin: str) -> dict:
         owner, p = self.pin_owner(ref, pin)
         start = (p["x"], p["y"])
-        foreign = [o.ref for o in self.symbols() if o.node is not owner.node and not o.ref.startswith("#")
-                   and any(same((q["x"], q["y"]), start) for q in self.pins(o))]
+        k = key(start)
+        others = self._pin_owners().get(k, set()) - {id(owner.node)}
+        foreign = [o.ref for o in self.symbols() if id(o.node) in others]
         if foreign:
             raise env.KatError(f"{ref}.{pin} touches {foreign} directly; move one of the parts first")
         taken, points, boundary = self.private_run(start, owner.node)
@@ -690,8 +776,6 @@ class Schematic:
         doomed = {id(w) for w in taken} | {id(w) for _, w in boundary} | {id(n) for n in marks} \
             | {id(o.node) for o in powers}
         self.tree[:] = [c for c in self.tree if id(c) not in doomed]
-        self._prune_lib_symbols()
-        self.fix_junctions()
         out = {"pin": f"{ref}.{pin}", "wires": len(taken) + len(boundary), "labels": len(marks),
                "power_symbols": [o.ref for o in powers]}
         flags = [o.ref for o in powers if o.lib_id == "power:PWR_FLAG"]

@@ -204,8 +204,12 @@ def test_design_uses_the_block_and_stamps_it_by_name(lib, tmp_path, capsys):
     assert c["drc_errors"] == 0 and c["parity"] == 0 and c["unconnected"] == 4, c
     # the block changes: stamping warns until it is checked again
     rc_pcb = lib / "RC" / "RC.kicad_pcb"
-    with kat.pcb.edit(rc_pcb) as b:
+    with kat.pcb.edit(rc_pcb) as b:          # saved unchanged: still clean (I9, content not time)
         b.footprint("R1").place(102, 101.5, 0)
+    with kat.pcb.edit(pcb) as b:
+        assert "warnings" not in b.stamp("RC", "/CH_A", at=(110, 103))
+    with kat.pcb.edit(rc_pcb) as b:
+        b.footprint("R1").place(102, 101.0, 0)
     with kat.pcb.edit(pcb) as b:
         again = b.stamp("RC", "/CH_A", at=(110, 103))
     assert "changed since its last clean check (pcb)" in again["warnings"][0]
@@ -226,3 +230,40 @@ def test_stamp_finds_free_areas_itself(lib, tmp_path, capsys):
     room = sch_room.Room(s, {x.ref for x in s.symbols() if x.field("Block")}, {"CH_A", "CH_B"})
     assert not room.occupants(a) and not room.occupants(b)     # J1 was left alone, and is outside
     assert res["check"]["clean"] and res["check"]["erc_errors"] == 0
+
+
+def test_stamp_without_a_free_area_makes_room_in_place(lib, tmp_path, capsys, monkeypatch):
+    """B8: no free area anywhere: with make_room the instance is stamped where it stands;
+    without, the error's hint fits the page (no "kat page A3" on an A0 page)."""
+    from kat import sch_room
+    from kat.schematic import Schematic
+    sch = design(tmp_path, capsys)
+    net = tmp_path / "design" / "design.net"
+
+    def full(*a, **k):
+        raise kat.KatError("no free area of 1 x 1 mm on x: " + sch_room.bigger_page(Schematic(sch)))
+    monkeypatch.setattr(sch_room, "free_spot", full)
+    with pytest.raises(kat.KatError, match="kat page A3"):
+        kat.stamp(sch, "RC", "/CH_A", design=net)
+    res = kat.stamp(sch, "RC", "/CH_A", design=net, make_room=True)
+    assert res["check"]["erc_errors"] == 0
+    with kat.edit(sch) as e:
+        e.page("A0")
+    with pytest.raises(kat.KatError, match="largest"):
+        kat.stamp(sch, "RC", "/CH_B", design=net)
+
+
+def test_contacts_with_ignored_parts_are_allowed(tmp_path):
+    """B7: a batch stamp moves parts of instances that are detached and about to move
+    themselves: their pins are no contacts."""
+    sch = tmp_path / "c" / "c.kicad_sch"
+    kat.new(sch)
+    with kat.edit(sch) as e:
+        e.add("Device:R", 100, 80, ref="R1")
+        e.add("Device:R", 120, 80, ref="R2")
+        s = e.schematic
+        p1, p2 = ({p["number"]: (p["x"], p["y"]) for p in s.pins(s.find_symbols(r)[0])} for r in ("R1", "R2"))
+        d = (p2["1"][0] - p1["1"][0], p2["1"][1] - p1["1"][1])
+        with pytest.raises(kat.KatError, match="R2.1"):
+            s.move_symbols([dict(ref="R1", dx=d[0], dy=d[1])])
+        s.move_symbols([dict(ref="R1", dx=d[0], dy=d[1])], ignore={"R2"})

@@ -102,10 +102,12 @@ def _drawing(src: Schematic, block_syms, env_syms) -> tuple[list, list, tuple]:
                 todo += [a, b]
     pts = [(float(x), float(y)) for x, y in seen_pts]
     items = list(wires)
+    own = [s for w, s in segs if any(w is x for x in wires)]
     for n in src.tree:
         if head(n) in ("junction", "no_connect", "label", "global_label", "hierarchical_label"):
             p = _points(n)[0]
-            if any(same(p, q) for q in pts):
+            # a label may sit anywhere on a wire, not only on its ends
+            if any(same(p, q) for q in pts) or (head(n) != "no_connect" and any(_on_interior(p, s) for s in own)):
                 items.append(n)
     powers = [x for x in src.symbols() if x.ref.startswith("#")
               and any(same((p["x"], p["y"]), q) for p in src.pins(x) for q in pts)]
@@ -215,14 +217,17 @@ def room_of(s: Schematic, block: Path | str, instance: str, at: tuple[float, flo
 
 def stamp(s: Schematic, block: Path | str, instance: str, at: tuple[float, float] | None,
           design: Path | str, source_instance: str | None = None, make_room: bool = False,
-          reserved: list = (), skip: set[str] = frozenset(), plan: bool = False) -> dict:
+          reserved: list = (), skip: set[str] = frozenset(), plan: bool = False,
+          detached: bool = False, here: tuple | None = None) -> dict:
     """Copy a block's drawing onto one instance on this (flat) sheet; see the module text.
     ``at``: where the top-left corner of the block region goes (mm); None: the first free
     area (the instance's current place if free). ``design``: the design netlist (names the
     labels, and completes the connections afterwards). The area must be free of other
     drawing: else refused, or with ``make_room`` the occupants are moved out of it.
     ``reserved``: areas to keep free; ``skip``: parts that are no obstacles (other
-    instances about to be stamped). ``plan``: only report the area and what is in it."""
+    instances about to be stamped). ``plan``: only report the area and what is in it.
+    ``detached``: the caller has already detached the instance's pins. ``here``: the
+    instance's region before the caller moved it (its preferred place)."""
     from . import sch_room
     from .syncer import Syncer, _clean, drawn_nets
     src, src_path, sname, keyed, env_syms, pairs = _pair_only(s, block, instance, source_instance)
@@ -231,16 +236,23 @@ def stamp(s: Schematic, block: Path | str, instance: str, at: tuple[float, float
     items, powers, region = _drawing(src, list(keyed.values()), env_syms)
     room = _room(src, list(keyed.values()), items, powers, region, sname)
     mine = {tx.ref for _, tx in pairs.values()}
-    here = _region(s, [tx for _, tx in pairs.values()])     # where the instance is now
-    for _, tx in pairs.values():          # the instance's old wiring is no obstacle
-        for p in s.pins(tx):
-            s.detach(tx.ref, p["number"])
+    if here is None:
+        here = _region(s, [tx for _, tx in pairs.values()])  # where the instance is now
+    if not detached:
+        # the instance's old wiring is no obstacle
+        s.detach_many([(tx.ref, p["number"]) for _, tx in pairs.values() for p in s.pins(tx)])
+        s.prune_dangling()                # e.g. a label that sat mid-wire between its own parts
     others = set(skip) | mine
     frames = {name} | {b for b in _frame_names(s) if b.startswith(name + "/")}
     if at is None:
         size = (room[2] - room[0], room[3] - room[1])
         prefer = (here[0] - (region[0] - room[0]), here[1] - (region[1] - room[1]))
-        x, y = sch_room.free_spot(s, size, others, reserved, prefer, frames)
+        try:
+            x, y = sch_room.free_spot(s, size, others, reserved, prefer, frames)
+        except env.KatError:
+            if not make_room:
+                raise
+            x, y = prefer              # no free area anywhere: make room where it stands
         at = (x + region[0] - room[0], y + region[1] - room[1])
     dx, dy = snap(at[0] - region[0]), snap(at[1] - region[1])
     target = (room[0] + dx, room[1] + dy, room[2] + dx, room[3] + dy)

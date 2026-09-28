@@ -188,8 +188,29 @@ def _children(d: Path, rec: dict) -> dict[str, list[str]]:
     return out
 
 
-def _child_times(d: Path, children: dict) -> dict[str, float]:
-    return {c: sheet_of(c, near=d)[0].stat().st_mtime for c in children}
+def content_hash(path: Path) -> str:
+    """Hash of a file's content. For a schematic, KiCad's per-project instance data is
+    left out (``(instances ...)`` and each placed symbol's Reference, which every project
+    using the sheet rewrites on annotation): a design annotating a library sheet does not
+    change the block."""
+    import hashlib
+    path = Path(path)
+    if path.suffix != ".kicad_sch":
+        return hashlib.sha1(path.read_bytes()).hexdigest()
+    from .sexpr import dumps, find, head, loads
+
+    def strip(node):
+        out = [strip(c) if isinstance(c, list) else c for c in node
+               if not (isinstance(c, list) and head(c) in ("instances", "sheet_instances", "symbol_instances"))]
+        if head(node) == "symbol" and find(node, "lib_id") is not None:
+            out = [[*c[:2], "", *c[3:]] if isinstance(c, list) and head(c) == "property"
+                   and len(c) > 2 and str(c[1]) == "Reference" else c for c in out]
+        return out
+    return hashlib.sha1(dumps(strip(loads(path.read_text(encoding="utf-8")))).encode()).hexdigest()
+
+
+def _child_hashes(d: Path, children: dict) -> dict[str, str]:
+    return {c: content_hash(sheet_of(c, near=d)[0]) for c in children}
 
 
 def _build_flat(d: Path, rec: dict) -> dict | None:
@@ -200,20 +221,21 @@ def _build_flat(d: Path, rec: dict) -> dict | None:
     sync the changes and re-stamp only instances whose block drawing changed."""
     import kat
     from . import hierarchy, sch_stamp
-    from .schematic import Schematic
+    from .schematic import Schematic, snap
     f = _files(d)
     if not f["block"].exists() or not _has_sheets(f["block"]):
         return None
     info = _info(d)
     inst = info.get("instance", HARNESS)
     children = _children(d, rec)
-    times = _child_times(d, children)
+    times = _child_hashes(d, children)
     first = not f["flat"].exists()
+    warnings: list[str] = []
     if first:
         Schematic.create(f["flat"])
     sync = kat.sync(f["flat"], f["net"])
-    restamp = list(children) if first else [c for c in children if times[c] > info.get("flat", {}).get(
-        "children", {}).get(c, 0) + 1e-3]
+    restamp = list(children) if first else [c for c in children if times[c] != info.get("flat", {}).get(
+        "children", {}).get(c)]
     if first:
         s = kat.load(f["flat"]).schematic
         block = Schematic(f["block"])
@@ -241,12 +263,26 @@ def _build_flat(d: Path, rec: dict) -> dict | None:
         # everything to the page's upper left, below the frame headings
         pts = list(spots.values()) + [m["to"] for m in moves]
         sx, sy = 38.1 - min(p[0] for p in pts), 38.1 - min(p[1] for p in pts)
-        if moves:
-            with kat.edit(f["flat"]) as sh:
+        # the paper the spread drawing needs (plus a column for the harness on the right)
+        ends = [(spots[p][0] + sx + size[0], spots[p][1] + sy + size[1]) for p, (_, size, _) in rooms.items()]
+        ends += [(m["to"][0] + sx + 25.4, m["to"][1] + sy + 25.4) for m in moves]
+        right, bottom = max(e[0] for e in ends), max(e[1] for e in ends)
+        paper = _paper_for(right + 76.2, bottom + 38.1)
+        harness = [x for x in s.symbols() if not x.ref.startswith("#")
+                   and (x.field("Block") or "") != inst and not (x.field("Block") or "").startswith(inst + "/")]
+        with kat.edit(f["flat"]) as sh:
+            sh.page(paper)
+            if moves:
                 try:
                     sh.move_many([dict(m, to=(m["to"][0] + sx, m["to"][1] + sy)) for m in moves])
-                except env.KatError:
-                    pass                                  # stays where sync put it; make_room decides
+                except env.KatError as e:          # stays where sync put it; make_room decides
+                    warnings.append(f"the block's own parts stay where sync put them: {e}")
+            if harness:                            # the harness to the right of the drawing
+                try:
+                    sh.move_many([{"ref": x.ref, "unit": x.unit, "to": (snap(right + 25.4), snap(38.1 + 25.4 * k))}
+                                  for k, x in enumerate(harness)])
+                except env.KatError as e:
+                    warnings.append(f"the harness stays where sync put it: {e}")
         for c, paths in children.items():
             at = [(spots[p][0] + sx + rooms[p][2][0], spots[p][1] + sy + rooms[p][2][1]) for p in paths]
             kat.stamp(f["flat"], c, paths, at=at, design=f["net"], make_room=True)
@@ -259,7 +295,18 @@ def _build_flat(d: Path, rec: dict) -> dict | None:
     _write_info(d, info)
     return {"file": f["flat"].name, "created": first, "restamped": restamp if not first else [],
             "synced": {k: len(sync.get(k) or []) for k in ("added", "removed", "updated")},
-            "ok": check["netlist_vs_expected"]["match"] and check["erc"]["errors"] == 0}
+            "ok": check["netlist_vs_expected"]["match"] and check["erc"]["errors"] == 0,
+            "off_page": len(check["off_page"]), **({"warnings": warnings} if warnings else {})}
+
+
+def _paper_for(w: float, h: float) -> str:
+    """The smallest ISO paper (landscape) that holds ``w`` x ``h`` mm, A0 at most."""
+    from .syncer import PAPER
+    for name in ("A4", "A3", "A2", "A1", "A0"):
+        pw, ph = PAPER[name]
+        if w <= pw and h <= ph:
+            return name
+    return "A0"
 
 
 def _env_refs(d: Path) -> set[str]:
@@ -309,12 +356,12 @@ def check(name: str, lib: Path | str | None = None, require: tuple[str, ...] = (
         from .netlist import blocks_file
         rec = json.loads(blocks_file(f["net"]).read_text())
         seen = info.get("flat", {}).get("children", {})
-        newer = [c for c, m in _child_times(d, _children(d, rec)).items() if m > seen.get(c, 0) + 1e-3]
+        newer = [c for c, h in _child_hashes(d, _children(d, rec)).items() if h != seen.get(c)]
         if newer:
             warnings.append(f"{', '.join(newer)} changed after the flat drawing was made: kat block build {name}")
-    keys = ("py", "sch", "pcb") + (("flat",) if flat else ())
+    keys = tuple(k for k in ("py", "sch", "block", "pcb") if f[k].exists()) + (("flat",) if flat else ())
     info["checked"] = {"ok": ok, "time": dt.datetime.now().isoformat(timespec="seconds"),
-                       "mtimes": {k: f[k].stat().st_mtime for k in keys}}
+                       "hashes": {k: content_hash(f[k]) for k in keys}}
     _write_info(d, info)
     return {"block": name, "ok": ok, "schematic_ok": sch["ok"], **({"flat": flat} if flat else {}),
             **({"warnings": warnings} if warnings else {}), "gate": g["ready"],
@@ -333,7 +380,9 @@ def stale(d: Path) -> str | None:
     if not c["ok"]:
         return "its last check failed"
     f = _files(d)
-    changed = [k for k in ("py", "sch", "pcb", "flat") if f[k].exists() and f[k].stat().st_mtime > c["mtimes"].get(k, 0) + 1e-3]
+    if "hashes" not in c:
+        return "checked by an older kat (kat block check)"
+    changed = [k for k in ("py", "sch", "block", "pcb", "flat") if f[k].exists() and content_hash(f[k]) != c["hashes"].get(k)]
     return f"changed since its last clean check ({', '.join(changed)})" if changed else None
 
 
