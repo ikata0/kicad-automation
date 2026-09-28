@@ -230,7 +230,7 @@ def cmd_view(a):
 
 
 def cmd_sync(a):
-    return kat.sync(a.sch, a.netlist, a.dry_run)
+    return kat.sync(a.sch, a.netlist, a.dry_run, a.sheets.split(",") if a.sheets else None)
 
 
 # --- parser -------------------------------------------------------------------
@@ -459,10 +459,15 @@ def build_parser() -> argparse.ArgumentParser:
             "  - removed parts are deleted together with wires/labels left dangling\n"
             "  - pins on the wrong net are cut loose and re-attached to the right one\n"
             "  - PWR_FLAGs are added where ERC reports undriven power nets\n"
-            "Running it twice changes nothing. Review the reported spots afterwards.",
-            ["kat sync tia.kicad_sch tia_design.net", "kat sync tia.kicad_sch tia_design.net --dry-run"])
+            "Running it twice changes nothing. Review the reported spots afterwards.\n"
+            "--sheets TYPE,...: instances of these SKiDL block types become hierarchical sheets\n"
+            "that use the block library's own drawing (kat block build); references follow the\n"
+            "design. The choice is remembered in NAME.kat.json.",
+            ["kat sync tia.kicad_sch tia_design.net", "kat sync tia.kicad_sch tia_design.net --dry-run",
+             "kat sync top.kicad_sch design.net --sheets ch,rc"])
     q.add_argument("netlist", metavar="NETLIST", help="KiCad s-expression netlist, e.g. SKiDL generate_netlist()")
     q.add_argument("--dry-run", action="store_true", help="report what would change, save nothing")
+    q.add_argument("--sheets", metavar="TYPE,...", help="block types drawn as hierarchical sheets")
 
     # --- editing ---
     q = cmd("add", cmd_add, "Place a library symbol.",

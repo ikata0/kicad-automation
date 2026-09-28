@@ -90,9 +90,8 @@ def lib(tmp_path, monkeypatch, capsys):
     built = run(capsys, "block", "build", "RC", "--force")
     assert built["type"] == "rc" and built["ports"] == ["gnd", "inp", "out"]
     assert built["params"] == {"r_val": "10k"} and built["warnings"] == []
-    with kat.edit(tmp_path / "blocks" / "RC" / "RC.kicad_sch") as s:   # arrangement pass
+    with kat.edit(tmp_path / "blocks" / "RC" / "RC_block.kicad_sch") as s:   # arrangement pass
         s.move("R1", by=(7.62, 0))
-        s.move("J1", to=(50.8, 101.6))            # the harness away from the block
     pcb = tmp_path / "blocks" / "RC" / "RC.kicad_pcb"
     with kat.pcb.edit(pcb) as b:
         env_board(b, 14, 10)
@@ -152,7 +151,7 @@ def test_flat_sheet_gets_the_block_drawing(lib, tmp_path, capsys):
     c = kat.check(sch, net)
     assert c["netlist_vs_expected"]["match"], c["netlist_vs_expected"]
     # both instances drawn like the block: same relative placement as R1/C1 there
-    src = {x.field("SKiDL Tag").split("/")[-1]: x.place for x in Schematic(lib / "RC" / "RC.kicad_sch").symbols()
+    src = {x.field("SKiDL Tag").split("/")[-1]: x.place for x in Schematic(lib / "RC" / "RC_block.kicad_sch").symbols()
            if (x.field("Block") or "") == "DUT"}
     got = Schematic(sch)
     for ch in ("CH_A", "CH_B"):

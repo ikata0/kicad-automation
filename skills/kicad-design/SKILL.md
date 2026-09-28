@@ -40,6 +40,11 @@ NAME`, arrange its schematic, lay out its board (kicad-layout), and repeat until
 board gets the checked layout with `kat pcb stamp`. Fix a block in the library (build,
 check, stamp again), never in a stamped copy.
 
+**Flat or sheets.** Small blocks read best flat: `kat sync`, then `kat stamp` draws each
+instance like the block (SPEC §4.20). Large or deeply nested blocks go on sheets:
+`kat sync SCH design.net --sheets TYPE,...` (§4.21). Ask the user when unsure; the board
+flow (`kat pcb stamp`) is the same for both.
+
 **Look it up, and let KiCad look.** `kat api NAME` shows any call's signature and
 documentation. Before handing over, `kat open FILE --verify` opens the schematic and the
 board in KiCad's own editors; then ask the user to open them too.

@@ -94,7 +94,7 @@ def _files(d: Path) -> dict[str, Path]:
     n = d.name
     return {k: d / f"{n}{ext}" for k, ext in (
         ("py", ".py"), ("sch", ".kicad_sch"), ("pcb", ".kicad_pcb"), ("net", ".net"),
-        ("info", ".block.json"))}
+        ("info", ".block.json"), ("block", "_block.kicad_sch"))}
 
 
 def _info(d: Path) -> dict:
@@ -149,11 +149,21 @@ def build(name: str, lib: Path | str | None = None, force: bool = False) -> dict
     me = rec["instances"][inst]
     info.update(type=me["type"], ports=sorted(me["ports"]), params=me["params"])
     _write_info(d, info)
-    sch = kat.sync(f["sch"], f["net"])
+    from . import syncer_hier
+    # blocks used inside this one that the library has are sheets too (nested blocks)
+    known = {json.loads(p.read_text()).get("type") for p in d.parent.glob("*/*.block.json")
+             if p.parent != d}
+    inner = {i["type"] for p, i in rec["instances"].items() if p.startswith(inst + "/")} & known
+    sch = syncer_hier.run(f["sch"], f["net"], sorted({me["type"]} | inner), generate={inst: f["block"]})
+    if sch["parameters"]:                 # the defaults, when the block is opened on its own
+        pro = f["sch"].with_suffix(".kicad_pro")
+        data = json.loads(pro.read_text())
+        data["text_variables"] = {**data.get("text_variables", {}), **sch["parameters"]}
+        pro.write_text(json.dumps(data, indent=2) + "\n")
     pcb = kat.pcb.sync(f["pcb"], force=force)
     return {"block": name, "type": me["type"], "ports": info["ports"], "params": info["params"],
             "warnings": rec["warnings"],
-            "schematic": {k: sch.get(k) for k in ("added", "removed", "updated")} | {
+            "schematic": {k: sch.get(k) for k in ("added", "removed", "updated", "parameters")} | {
                 "ok": (sch.get("check") or {}).get("ok")},
             "board": {k: pcb.get(k) for k in ("added", "removed", "updated", "check")}}
 
@@ -251,7 +261,8 @@ def sheet_of(name_or_path: Path | str, near: Path | str | None = None) -> tuple[
         info = p.with_suffix(".block.json")
         return p, (json.loads(info.read_text()).get("instance") if info.exists() else None)
     d = find(str(name_or_path), library(near))
-    return _files(d)["sch"], _info(d).get("instance", HARNESS)
+    f = _files(d)
+    return (f["block"] if f["block"].exists() else f["sch"]), _info(d).get("instance", HARNESS)
 
 
 def board_of(name_or_path: Path | str, near: Path | str | None = None) -> tuple[Path, str | None]:

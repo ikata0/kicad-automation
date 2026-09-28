@@ -12,8 +12,8 @@ with the KiCad GUI closed, such that
 - **design changes** do not throw away the arrangement work already done.
 
 In scope: single-sheet schematics, SKiDL as design language, KiCad 10 files.
-Out of scope for now: buses, and `sync` into hierarchical sheets (sheets can be drawn and
-annotated, §4.17); PCB layout is being added (§4.6, §8).
+Out of scope for now: buses. Hierarchical sheets: drawn by hand (§4.17) or synced from SKiDL
+blocks of the block library (§4.21).
 
 Terms: **arrangement** is placing parts, labels, wires and fields on the schematic sheet so
 it reads well; an **arrangement pass** is one script doing that. **Layout** always means
@@ -458,12 +458,20 @@ Each block is a project of its own in `blocks/NAME/` (`KAT_BLOCKS`, else the nea
 | File | Content |
 |---|---|
 | `NAME.py` | the SKiDL block function; under `__main__` a test harness calling it with `tag="DUT"` |
-| `NAME.kicad_pro/.kicad_sch/.kicad_pcb` | the block's project, synced from the harness |
+| `NAME.kicad_sch` | the harness, with the block as the sheet `DUT` |
+| `NAME_block.kicad_sch` | the block's drawing: its parts, ports as hierarchical labels, parameters as `${name}`; designs use this file |
+| `NAME.kicad_pro/.kicad_pcb` | the block's project (`text_variables`: parameter defaults) and its layout |
 | `NAME.block.json` | type, instance (`DUT`), ports, parameters, environment zones, last check |
 | `NAME_REPORT.md` | the block's journal |
 
 - `kat block new NAME` creates it from a template; `kat block build NAME` runs the harness,
-  syncs schematic and board, and records type, ports and parameters.
+  syncs the harness and the block sheet (§4.21: the block instance is written into
+  `NAME_block.kicad_sch`) and the board, and records type, ports and parameters.
+- **Ports** are the block call's net arguments (power nets such as GND stay global and get
+  no port). **Parameters**: a part value (or a nested block's parameter) equal to a
+  parameter's value in the harness call becomes `${param}`; the harness value is the
+  project's default. Give parameters distinct default values.
+- Blocks used inside a block that are themselves in the library are drawn as nested sheets.
 - The harness parts (outside `DUT`) are the block's **environment**: they are on the
   block's board so that it can be checked, but `stamp` does not copy them.
 - `kat block check NAME`: the schematic check against the harness netlist, the gate's part
@@ -490,14 +498,38 @@ kat stamp top.kicad_sch RC all --at 50.8,50.8 --step 0,40.64 --expect design.net
 - **Copied:** the block's drawing: every wire reachable from its pins, and the labels,
   junctions, no-connects and power symbols on them. Labels are renamed to the design's net
   names for this instance. PWR_FLAGs are not copied (one per net, added where ERC needs it).
-- **The block's harness must connect to it by labels**: a wire from a block pin to a
-  harness pin is refused (the harness is not part of the block's drawing).
+- The source is the block's own drawing, `NAME_block.kicad_sch` (its ports become labels
+  with the instance's net names). For a block schematic without that file, the harness
+  must connect to the block by labels: a wire from a block pin to a harness pin is refused.
 - Afterwards whatever the design still misses is attached as `sync` would, and the sheet
   must match `--expect`; otherwise the file is put back and the command fails.
 - A warning names parts that the stamped drawing now covers; move them, or stamp elsewhere.
 - **Frames:** each stamped instance gets a dashed frame with the heading `CH_A (rc)` above
   it; `kat frame SCH CH_A` / `s.frame("CH_A")` draws one for any block instance. Drawing
   it again replaces it.
+
+### 4.21 Hierarchical sync from SKiDL
+
+```
+kat sync top/top.kicad_sch design.net --sheets ch,rc      # remembered in top.kat.json
+```
+
+- Instances of the listed block types (SKiDL function names, from `design.blocks.json`)
+  become sheet boxes named by their instance tag (`CH_A`), pointing to the library's
+  `NAME_block.kicad_sch` (relative path). The block's checked drawing is used as it is;
+  a type without a library block is refused. Everything else is synced flat, as before.
+- **Pins** are the block sheet's ports, wired by labels to the caller's nets. **Fields**
+  are the instance's parameters (`ra: 3k3`), used inside as `${ra}` and passed down to
+  nested blocks.
+- **References follow the design:** every instance gets the SKiDL reference of its part
+  (annotation per instance), so KiCad's netlist and `design.net` compare 1:1, and the
+  block keeps its own references in its own project.
+- **Checked** (`check` in the result): connectivity against the design, and value and
+  footprint of every part. A block that changed after its build shows up as `value`
+  differences ("make it a parameter", or rebuild the block).
+- Sheet boxes are updated in place (their uuid, and with it the board's footprint paths,
+  stays); boxes of instances that are gone are removed.
+- Snapshots show one page per instance.
 
 ## 5. Command reference
 
@@ -517,7 +549,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `new PATH` | project + empty sheet |
 | `lib search WORDS` / `lib show LIB:NAME` | find symbols; units, pins, body |
 | `list SCH [--near X,Y --radius R]` / `pins SCH REF` / `netlist SCH` | inspect placement (or what is near a point, with uuids), pin positions + outward direction, KiCad's nets |
-| `sync SCH NETLIST [--dry-run]` | bring the design into the drawing (§4.4) |
+| `sync SCH NETLIST [--dry-run] [--sheets TYPE,...]` | bring the design into the drawing (§4.4); block types as sheets (§4.21) |
 | `check SCH [--expect NETLIST]` | ERC + netlist comparison + drawing findings |
 | `ready SCH [--expect NETLIST] [--require-field NAME]` | gate before the PCB layout (§6.1) |
 | `pcb sync PCB [--sch] [--dry-run] [--force] [--rip-stale]` | parts and nets onto the board (§4.6) |
@@ -632,8 +664,8 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
 
 ## 8. Open points
 
-- `sync` into hierarchical sheets (drawing and annotating them works, §4.17), buses, global
-  labels across sheets.
+- Buses, global labels across sheets; hierarchical sync of block types that are not in the
+  block library (§4.21 refuses them).
 - Teardrops, length tuning, differential pairs and impedance-controlled stack-ups are not
   automated; set them in KiCad or as custom rules.
 - Live mode with kicad-python (editor open) is not implemented; the pipeline is headless.

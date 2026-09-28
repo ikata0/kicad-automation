@@ -52,10 +52,17 @@ def edit(path: Path | str, dry_run: bool = False) -> Iterator[Sheet]:
         s.save()
 
 
-def sync(sch: Path | str, design: Path | str, dry_run: bool = False) -> dict:
-    """Bring a design netlist (e.g. from SKiDL) into the schematic, keeping the arrangement."""
+def sync(sch: Path | str, design: Path | str, dry_run: bool = False,
+         sheets: list[str] | None = None) -> dict:
+    """Bring a design netlist (e.g. from SKiDL) into the schematic, keeping the arrangement.
+    ``sheets``: SKiDL block types (function names) drawn as hierarchical sheets from the
+    block library; remembered for later syncs. Without it the sheet is flat."""
+    from . import syncer_hier
     report.touch(sch)
-    return tidy(syncer.run(Path(sch), Path(design), dry_run))
+    sch = Path(sch)
+    if sheets or syncer_hier.remembered_sheets(sch):
+        return tidy(syncer_hier.run(sch, Path(design), sheets, dry_run))
+    return tidy(syncer.run(sch, Path(design), dry_run))
 
 
 def stamp(sch: Path | str, block: str, instances: str | list[str], at: tuple[float, float],

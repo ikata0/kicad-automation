@@ -117,7 +117,7 @@ def add_sheet(s: Schematic, name: str, file: Path | str, x: float, y: float,
             pin_txt.append(f'(pin "{esc}" {shape} (at {num(px)} {num(py)} {ang}) (uuid "{new_uuid()}") '
                            f'(effects (font (size 1.27 1.27)) (justify {just})))')
     extra = "".join(
-        f'(property "{k}" "{v}" (at {num(x)} {num(y + h + 2.54 * (i + 2))} 0) '
+        f'(property "{k}" "{v}" (at {num(x)} {num(y + h + 2.54 * (i + 2))} 0) (show_name yes) '
         f'(effects (font (size 1.27 1.27)) (justify left top)))'
         for i, (k, v) in enumerate((fields or {}).items()))
     page = len(sheets(s)) + 2
@@ -165,12 +165,14 @@ def instance(root: Path | str, path: str) -> dict:
     raise env.KatError(f"no sheet instance {want} under {Path(root).name}")
 
 
-def annotate(root: Path | str, per_page: int = 100) -> dict:
+def annotate(root: Path | str, per_page: int = 100,
+             refs: dict[str, dict[str, str]] | None = None) -> dict:
     """Number every instance and write the per-instance data for the root's project:
     pages in reading order (root = 1), references ``prefix + page * per_page + n``
-    (R301 = first R on page 3; ``per_page=0``: plain numbering per file). Entries of other
-    projects are kept, so a block file keeps its own numbering. Returns the pages and the
-    references per instance."""
+    (R301 = first R on page 3; ``per_page=0``: plain numbering per file), or the ones
+    given in ``refs`` ({instance path: {symbol uuid: reference}}, e.g. the design's).
+    Entries of other projects are kept, so a block file keeps its own numbering. Returns
+    the pages and the references per instance."""
     from .gui import guard
     root = Path(root).resolve()
     guard(root)
@@ -197,7 +199,7 @@ def annotate(root: Path | str, per_page: int = 100) -> dict:
     for (pfile, box), entries in boxes.items():
         node = next(sh["node"] for sh in sheets(load(pfile)) if sh["uuid"] == box)
         _set_instances(node, project, [_sexp(f'(path "{pp}" (page "{pg}"))') for pp, pg in entries])
-    refs: dict[str, dict[str, str]] = {}
+    given, refs = refs or {}, {}
     for file, uses in by_file.items():
         s = load(file)
         count: dict[str, int] = {}
@@ -208,7 +210,8 @@ def annotate(root: Path | str, per_page: int = 100) -> dict:
             n = count[prefix]
             paths = []
             for use in uses:
-                ref = f"{prefix}{use['page'] * per_page + n if per_page else n}"
+                ref = given.get(use["path"], {}).get(sym.uuid) or \
+                    f"{prefix}{use['page'] * per_page + n if per_page else n}"
                 refs.setdefault(use["path"], {})[sym.uuid] = ref
                 paths.append(_sexp(f'(path "/{top.root_uuid}{use["uuids"]}" (reference "{ref}") '
                                    f'(unit {sym.unit}))'))

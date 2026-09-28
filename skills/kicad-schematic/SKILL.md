@@ -129,13 +129,15 @@ and outward directions while computing coordinates. Try a large pass with
   headings with `s.text("J1: rows 1-5", (x, y), size=2.54)`, paper with `s.page("A2")`.
 - Part data such as MPN belongs in SKiDL (`part.fields["MPN"] = "..."`); sync carries it.
 - Many instances of a library block on one flat sheet: arrange the block's own schematic
-  once (its harness connected by labels only), then `kat stamp SCH NAME all --at X,Y
+  once (`blocks/NAME/NAME_block.kicad_sch`), then `kat stamp SCH NAME all --at X,Y
   --step DX,DY --expect design.net` draws every instance like it, framed with its name
   (SPEC §4.20). `kat frame SCH CH_A` frames any block instance.
 - Hierarchical sheets can be drawn by hand (`s.sheet(...)`, `s.port(...)`, pins as
   `"CH_A.IN"`, parameters as sheet fields used as `${NAME}` inside); run
-  `kat.hierarchy.annotate(root)` after each change of the tree (SPEC §4.17). `kat sync` does
-  not write into sub-sheets yet.
+  `kat.hierarchy.annotate(root)` after each change of the tree (SPEC §4.17).
+- Library blocks as sheets instead of flat: `kat sync SCH design.net --sheets ch,rc` (SPEC
+  §4.21). The sheets are the library's drawings: arrange and fix them in the block
+  (`blocks/NAME/NAME_block.kicad_sch`, then `kat block check`), not in the design.
 
 ## Setup
 

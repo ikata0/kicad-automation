@@ -158,10 +158,21 @@ class StampMixin:
         if prefix is not None:
             mode = "hierarchical"
             by_path = {f.path: f for f in self.footprints() if f.path}
+            # a library block board: the block is the sheet instance /DUT, the rest harness
+            sprefix = ""
+            if source_instance and src.path.with_suffix(".kicad_sch").exists():
+                from .. import hierarchy
+                try:
+                    sprefix = hierarchy.instance(src.path.with_suffix(".kicad_sch"), source_instance)["uuids"]
+                except env.KatError:
+                    sprefix = ""
+            if sprefix:
+                environment = [sf for sf in parts if not sf.path.startswith(sprefix + "/")]
+                parts = [sf for sf in parts if sf.path.startswith(sprefix + "/")]
             for sf in parts:
-                tf = by_path.get(prefix + sf.path)
+                tf = by_path.get(prefix + sf.path[len(sprefix):])
                 if tf is None:
-                    raise env.KatError(f"{sf.ref}: no part {prefix + sf.path} in {instance} "
+                    raise env.KatError(f"{sf.ref}: no part {prefix + sf.path[len(sprefix):]} in {instance} "
                                        f"(is {instance} an instance of this block?)")
                 pairs[sf.uuid] = tf
             inside_ = [f for f in self.footprints() if f.path.startswith(prefix + "/")]
@@ -215,10 +226,12 @@ class StampMixin:
         from .board import Board
         block_pcb, lib_instance = lib.board_of(block_pcb, near=self.path)
         source_instance = source_instance or lib_instance
-        sch, bsch = self._design_sheet(), block_pcb.with_suffix(".kicad_sch").resolve()
+        sch = self._design_sheet()
+        bsch = {block_pcb.with_suffix(".kicad_sch").resolve(),
+                block_pcb.with_name(block_pcb.stem + "_block.kicad_sch").resolve()}
         if sch.exists():
             found = [i["path"] for i in hierarchy.tree(sch)
-                     if Path(i["file"]).resolve() == bsch and i["path"] != "/"]
+                     if Path(i["file"]).resolve() in bsch and i["path"] != "/"]
             if found:
                 return found
         src = Board(block_pcb)
