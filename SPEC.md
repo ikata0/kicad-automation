@@ -504,6 +504,12 @@ kat stamp top.kicad_sch RC all --at 50.8,50.8 --step 0,40.64 --expect design.net
 - Afterwards whatever the design still misses is attached as `sync` would, and the sheet
   must match `--expect`; otherwise the file is put back and the command fails.
 - A warning names parts that the stamped drawing now covers; move them, or stamp elsewhere.
+  Stamping several instances detaches all of them first, so their old wiring is out of the
+  way; other parts (a connector placed by `sync`) must be moved by hand.
+- Only blocks without nested sheets can be drawn this way: for a block made of blocks,
+  stamp the inner blocks (`/CH_A/RC1`, ...) and frame the outer instance (`kat frame SCH
+  CH_A`). The board stamp has no such limit: a nested block board is stamped onto flat
+  designs too (a part's key is then its sheet path in the block plus its tag, `RC1/r`).
 - **Frames:** each stamped instance gets a dashed frame with the heading `CH_A (rc)` above
   it; `kat frame SCH CH_A` / `s.frame("CH_A")` draws one for any block instance. Drawing
   it again replaces it.

@@ -189,9 +189,11 @@ class StampMixin:
                     return tag[len(root) + 1:]
                 return tag or None
 
+            hier_keys = _hier_source_keys(src, sname)
+
             keys: dict[str, object] = {}
             for sf in parts:
-                k = local(sf, sname)
+                k = hier_keys.get(sf.uuid, None) if hier_keys else local(sf, sname)
                 if k is None:
                     environment.append(sf)
                     continue
@@ -483,6 +485,36 @@ class StampMixin:
         name = f"{instance} ({block})"
         self._insert([Sym("group"), name, [Sym("uuid"), new_uuid()], [Sym("members"), *top]])
         return [name] + names
+
+
+def _hier_source_keys(src, sname: str) -> dict[str, str]:
+    """For a block board whose schematic has sheets (a library block with nested blocks):
+    footprint uuid -> key relative to the block instance, ``RC1/r`` (sheet path + the
+    part's own tag), because a shared sheet file gives every instance the same fields.
+    Empty if the schematic has no sheets below the block instance."""
+    from .. import hierarchy
+    sch = src.path.with_suffix(".kicad_sch")
+    if not sname or not sch.exists():
+        return {}
+    tree = hierarchy.tree(sch)
+    base = "/" + sname
+    below = [i for i in tree if i["path"] == base or i["path"].startswith(base + "/")]
+    if not any(i["path"].startswith(base + "/") for i in below):
+        return {}
+    out = {}
+    for f in src.footprints():
+        if f.board_only or not f.path:
+            continue
+        inst = max((i for i in below if f.path.startswith(i["uuids"] + "/")),
+                   key=lambda i: len(i["uuids"]), default=None)
+        if inst is None:
+            continue                                  # the harness: environment
+        tag, block = f.field("SKiDL Tag") or "", f.field("Block") or ""
+        seg = block.split("/")[0]
+        own = tag[len(seg) + 1:] if seg and tag.startswith(seg + "/") else tag
+        rel = inst["path"][len(base):].strip("/")
+        out[f.uuid] = f"{rel}/{own}" if rel else own
+    return out
 
 
 def _parts_box(src, pairs) -> tuple[float, float, float, float]:

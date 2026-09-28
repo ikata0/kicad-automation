@@ -89,6 +89,12 @@ def stamp(sch: Path | str, block: str, instances: str | list[str], at: tuple[flo
                 continue
         instances = sorted(found)
     names = [instances] if isinstance(instances, str) else list(instances)
+    # free all instances first: their old wiring must not stand where another one goes
+    for name in names:
+        *_, pairs = sch_stamp._pair_only(s.schematic, block, name)
+        for _, tx in pairs.values():
+            for p in s.schematic.pins(tx):
+                s.schematic.detach(tx.ref, p["number"])
     done = []
     for k, name in enumerate(names):
         done.append(sch_stamp.stamp(s.schematic, block, name, (at[0] + k * step[0], at[1] + k * step[1]),
