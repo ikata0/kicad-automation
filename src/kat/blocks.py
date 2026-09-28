@@ -124,7 +124,7 @@ def new(name: str, lib: Path | str | None = None) -> dict:
     project.new(f["sch"])
     f["py"].write_text(TEMPLATE.format(name=name, func=name.lower(), harness=HARNESS))
     _write_info(d, {"name": name, "type": name.lower(), "instance": HARNESS, "environment": []})
-    return {"block": name, "dir": str(d), "files": {k: str(v) for k, v in f.items()},
+    return {"block": name, "dir": str(d), "files": {k: str(v) for k, v in f.items() if v.exists()},
             "next": f"edit {f['py'].name}, then kat block build {name}"}
 
 
@@ -147,7 +147,11 @@ def build(name: str, lib: Path | str | None = None, force: bool = False) -> dict
         raise env.KatError(f"the harness in {f['py'].name} has no block instance tag={inst!r} "
                            f"(found: {sorted(rec['instances']) or 'none'})")
     me = rec["instances"][inst]
-    info.update(type=me["type"], ports=sorted(me["ports"]), params=me["params"])
+    from .syncer import power_names
+    power = power_names()
+    info.update(type=me["type"], params=me["params"],
+                ports=sorted(k for k, v in me["ports"].items() if not (isinstance(v, str) and v in power)),
+                power=sorted(k for k, v in me["ports"].items() if isinstance(v, str) and v in power))
     _write_info(d, info)
     from . import syncer_hier
     # blocks used inside this one that the library has are sheets too (nested blocks)
@@ -162,7 +166,8 @@ def build(name: str, lib: Path | str | None = None, force: bool = False) -> dict
         pro.write_text(json.dumps(data, indent=2) + "\n")
     flat = _build_flat(d, rec)
     pcb = kat.pcb.sync(f["pcb"], force=force)
-    return {"block": name, "type": me["type"], "ports": info["ports"], "params": info["params"],
+    return {"block": name, "type": me["type"], "ports": info["ports"], "power": info["power"],
+            "params": info["params"],
             "warnings": rec["warnings"], **({"flat": flat} if flat else {}),
             "schematic": {k: sch.get(k) for k in ("added", "removed", "updated", "parameters")} | {
                 "ok": (sch.get("check") or {}).get("ok")},

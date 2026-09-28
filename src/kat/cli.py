@@ -212,7 +212,7 @@ def cmd_netlist(a):
 
 
 def cmd_check(a):
-    return kat.check(a.sch, a.expect)
+    return kat.check(a.sch, a.expect, a.full)
 
 
 def cmd_ready(a):
@@ -391,8 +391,10 @@ def build_parser() -> argparse.ArgumentParser:
             "items outside the page frame and items drawn twice on one spot.\n"
             "  ok    = ERC has no errors and the netlist matches\n"
             "  clean = ok and no drawing findings\n"
-            "The overlap estimate ignores pin names/numbers: always look at the snapshot too.",
+            "The overlap estimate ignores pin names/numbers: always look at the snapshot too.\n"
+            "Netlist differences are listed up to 10 per kind (totals in counts); --full lists all.",
             ["kat check tia.kicad_sch", "kat check tia.kicad_sch --expect tia_design.net"])
+    q.add_argument("--full", action="store_true", help="list every netlist difference")
     q.add_argument("--expect", metavar="NETLIST",
                    help="KiCad s-expression netlist (e.g. from SKiDL) the drawing must match")
 

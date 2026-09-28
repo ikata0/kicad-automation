@@ -7,6 +7,7 @@ Parts are matched by the hidden ``SKiDL Tag`` field first, then by reference.
 
 from __future__ import annotations
 
+import json
 import math
 import re
 import tempfile
@@ -61,6 +62,14 @@ def _drawn_erc(s: Schematic) -> dict:
         return checks.erc(tmp)
 
 
+def read_no_connect(design: Path) -> set[tuple[str, str]]:
+    """Pins tied to SKiDL's ``NC``, from the design's block record (``kat.skidl_blocks``)."""
+    f = netlist.blocks_file(Path(design))
+    if not f.exists():
+        return set()
+    return {tuple(x.rsplit(".", 1)) for x in json.loads(f.read_text()).get("no_connect", [])}
+
+
 def power_names() -> set[str]:
     libs = env.symbol_libraries()
     if "power" not in libs:
@@ -73,15 +82,17 @@ def _dir_angle(d) -> float:
 
 
 class Syncer:
-    def __init__(self, s: Schematic, design: Path):
+    def __init__(self, s: Schematic, design: Path, no_connect: set[tuple[str, str]] | None = None):
         self.s = s
         self.comps, raw_nets = netlist.read_design(design)
+        self.no_connect = no_connect if no_connect is not None else read_no_connect(design)
         self.nets = {_clean(k): v for k, v in raw_nets.items()}
         self.power = power_names()
         self.report: dict[str, list] = {k: [] for k in (
             "added", "removed", "renamed", "updated", "replaced", "detached", "attached",
-            "named", "wired", "flags", "paper", "unresolved")}
+            "named", "wired", "flags", "no_connect", "paper", "unresolved")}
         self.new_refs: set[str] = set()
+        self._attached_at: set[tuple[str, float, float]] = set()
 
     # --- parts ----------------------------------------------------------------------
 
@@ -136,6 +147,8 @@ class Syncer:
                 continue
             for field, want in (("Value", c.value), ("Footprint", c.footprint)):
                 have = syms[0].field(field) or ""
+                if field == "Value" and re.fullmatch(r"\$\{\w+\}", have):
+                    continue    # a block parameter (kat block build): the instance's value comes from it
                 if want != have and (want or field == "Footprint"):
                     s.set_field(ref, field, want)
                     self.report["updated"].append({"ref": ref, "field": field, "from": have, "to": want})
@@ -377,6 +390,13 @@ class Syncer:
         s = self.s
         _, p = s.pin_owner(ref, pin)
         at, d = (p["x"], p["y"]), p["dir"]
+        key = (net, round(at[0], 2), round(at[1], 2))
+        if key in self._attached_at:
+            # a stacked pin (several pins on one spot, e.g. a QFN's GND pins): the pin
+            # under it already got the net's symbol or label
+            self.report["attached"].append({"pin": f"{ref}.{pin}", "net": net, "stacked": True})
+            return
+        self._attached_at.add(key)
         if net in self.power:
             reach = self._neighbour_reach(ref, p)
             if reach:
@@ -508,11 +528,34 @@ class Syncer:
                 return True
         return False
 
+    def no_connects(self) -> None:
+        """A no-connect flag on every pin the design ties to SKiDL's ``NC`` (the netlist
+        leaves them out), and none on a pin that is on a net now."""
+        s = self.s
+        flags = {(round(float(find(n, "at")[1]), 2), round(float(find(n, "at")[2]), 2)): n
+                 for n in find_all(s.tree, "no_connect")}
+        on_net = {p for pins in self.nets.values() if len(pins) > 1 for p in pins}
+        doomed = []
+        for sym in s.symbols():
+            if sym.ref.startswith("#"):
+                continue
+            for p in s.pins(sym):
+                key, at = (sym.ref, p["number"]), (round(p["x"], 2), round(p["y"], 2))
+                if key in self.no_connect and at not in flags:
+                    s.add_no_connect(p["x"], p["y"])
+                    flags[at] = None
+                    self.report["no_connect"].append(f"{sym.ref}.{p['number']}")
+                elif key in on_net and flags.get(at) is not None:
+                    doomed.append(id(flags.pop(at)))
+        if doomed:
+            s.tree[:] = [c for c in s.tree if id(c) not in doomed]
+
     # --- driver -------------------------------------------------------------------------
 
     def run(self) -> dict:
         self.sync_parts()
         self.reconcile()
+        self.no_connects()
         self.power_flags()
         self.s.fix_junctions()
         return self.report

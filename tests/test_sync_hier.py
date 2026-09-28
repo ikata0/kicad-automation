@@ -14,6 +14,7 @@ import kat
 from kat import blocks, cli, hierarchy
 from kat.pcb.syncer import read_design
 from kat.schematic import Schematic
+from kat.sexpr import find, find_all
 
 sys.path.insert(0, str(Path(__file__).parent))
 from test_blocks import DESIGN_PY, RC_PY  # noqa: E402
@@ -106,6 +107,10 @@ def test_block_build_writes_the_block_as_a_sheet_with_ports_and_parameters(lib):
     assert res["schematic"]["ok"], res
     c = kat.check(root, d / "RC.net")
     assert c["netlist_vs_expected"]["match"] and c["erc"]["errors"] == 0, c
+    # B18: gnd is a power port, not a port; the ${r_val} value is not reported as a change
+    assert res["ports"] == ["inp", "out"] and res["power"] == ["gnd"], res
+    again = blocks.build("RC", force=True)
+    assert not again["schematic"]["updated"], again["schematic"]
 
 
 def test_design_draws_block_instances_as_sheets(lib, tmp_path):
@@ -155,6 +160,7 @@ def test_design_draws_block_instances_as_sheets(lib, tmp_path):
     assert [(r["mode"], r["footprints"]) for r in res] == [("hierarchical", 2)] * 2
     c = check(pcb)
     assert c["drc_errors"] == 0 and c["parity"] == 0 and c["unconnected"] == 4, c
+
 
 
 def test_nested_blocks_pass_parameters_down(lib, tmp_path):
@@ -274,3 +280,60 @@ def test_a_nested_block_gets_a_flat_drawing_for_flat_designs(lib, tmp_path):
     for i in (1, 2, 3):
         r, c = by_tag[f"DUT/RC{i}/r"], by_tag[f"DUT/RC{i}/c"]
         assert (r.x - c.x, r.y - c.y) == pytest.approx((src["r"].x - src["c"].x, src["r"].y - src["c"].y))
+
+def test_renamed_nets_and_removed_boxes_leave_nothing_behind(lib, tmp_path):
+    """B3: a renamed net that ends on a root part (J1) and on sheet pins is renamed at the
+    connector too, and the sync says so. B6: a box that goes away takes its pin stubs and
+    labels with it."""
+    blocks.build("RC", force=True)
+    d = tmp_path / "design"
+    d.mkdir()
+    (d / "design.py").write_text(DESIGN_PY)
+    subprocess.run([sys.executable, "design.py"], cwd=d, check=True, capture_output=True)
+    sch = d / "top" / "top.kicad_sch"
+    assert cli.main(["new", str(sch)]) == 0
+    assert kat.sync(sch, d / "design.net", sheets=["rc"])["check"]["ok"]
+
+    (d / "design.py").write_text(DESIGN_PY.replace('Net(f"IN_{ch}")', 'Net(f"SIG_{ch}")'))
+    subprocess.run([sys.executable, "design.py"], cwd=d, check=True, capture_output=True)
+    rep = kat.sync(sch, d / "design.net")
+    assert rep["check"]["ok"], rep["check"]
+    assert {(r["from"], r["to"]) for r in rep["renamed"]} >= {("IN_A", "SIG_A"), ("IN_B", "SIG_B")}
+    texts = {l["text"] for l in Schematic(sch).labels()}
+    assert not texts & {"IN_A", "IN_B"}, texts
+    assert kat.check(sch, d / "design.net")["netlist_vs_expected"]["match"]
+
+    (d / "design.py").write_text(DESIGN_PY.replace('Net(f"IN_{ch}")', 'Net(f"SIG_{ch}")')
+                                 .replace('enumerate("AB")', 'enumerate("A")'))
+    subprocess.run([sys.executable, "design.py"], cwd=d, check=True, capture_output=True)
+    before = [l["text"] for l in Schematic(sch).labels()]
+    rep = kat.sync(sch, d / "design.net")
+    assert rep["removed"] == ["sheet CH_B"], rep["removed"]
+    texts = [l["text"] for l in Schematic(sch).labels()]
+    # the box's labels are gone; J1's now unconnected pins keep theirs (as in a flat sync)
+    assert before.count("SIG_B") == 2 and texts.count("SIG_B") == 1, texts
+    assert before.count("OUT_B") == 2 and texts.count("OUT_B") == 1, texts
+    assert kat.check(sch, d / "design.net")["netlist_vs_expected"]["match"]
+
+
+def test_skidl_nc_pins_get_no_connect_flags(lib, tmp_path):
+    """B11: SKiDL leaves NC pins out of the netlist; the block record carries them and
+    sync draws a flag on each, flat and hierarchical."""
+    blocks.build("RC", force=True)
+    d = tmp_path / "design"
+    d.mkdir()
+    (d / "design.py").write_text(DESIGN_PY.replace("Conn_01x05", "Conn_01x06")
+                                 .replace("j[5] += gnd", "j[5] += gnd\nj[6] += NC"))
+    subprocess.run([sys.executable, "design.py"], cwd=d, check=True, capture_output=True)
+    assert json.loads((d / "design.blocks.json").read_text())["no_connect"] == ["J1.6"]
+    for name, sheets in (("flat", None), ("top", ["rc"])):
+        sch = d / name / f"{name}.kicad_sch"
+        assert cli.main(["new", str(sch)]) == 0
+        rep = kat.sync(sch, d / "design.net", sheets=sheets)
+        assert rep["check"]["ok"], rep["check"]
+        s = Schematic(sch)
+        pin = next(p for p in s.pins(s.find_symbols("J1")[0]) if p["number"] == "6")
+        flags = [(float(find(n, "at")[1]), float(find(n, "at")[2])) for n in find_all(s.tree, "no_connect")]
+        assert flags == [(pytest.approx(pin["x"]), pytest.approx(pin["y"]))], (name, flags)
+        again = kat.sync(sch, d / "design.net")
+        assert len(list(find_all(Schematic(sch).tree, "no_connect"))) == 1

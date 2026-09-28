@@ -15,6 +15,8 @@ the end of the SKiDL script, after ``generate_netlist``::
 - parameters: arguments that are numbers or strings, plus the defaults left unset
 - arguments passed by position are not recorded by SKiDL: reported as a warning, and the
   defaults of that call are then left out (it is unknown which ones were used)
+- ``no_connect``: pins joined to SKiDL's ``NC`` (``REF.PIN``). The netlist leaves them out
+  entirely; sync draws a no-connect flag on each.
 """
 
 from __future__ import annotations
@@ -94,7 +96,10 @@ def record(circuit=None) -> dict:
         if other:
             entry["other"] = other
         instances[path] = entry
-    return {"instances": instances, "warnings": warnings}
+    from skidl.net import NCNet
+    nc = sorted(f"{part.ref}.{pin.num}" for part in circuit.parts for pin in part.pins
+                if any(isinstance(n, NCNet) for n in pin.nets))
+    return {"instances": instances, "warnings": warnings, "no_connect": nc}
 
 
 def write(netlist: Path | str, circuit=None) -> dict:

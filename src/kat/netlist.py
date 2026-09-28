@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -98,9 +99,27 @@ def _auto(name: str) -> bool:
     return base.startswith(("Net-(", "unconnected-(", "N$", "NET_")) or base == ""
 
 
-def compare(actual: dict[str, Net], expected: dict[str, Net]) -> dict:
+_COUNTER = re.compile(r"^(.*?)_?\d+$")
+
+
+def _numbered(a: str, e: str) -> bool:
+    """SKiDL numbers a net name that repeats across block instances (``LED_A`` in the
+    second instance becomes ``LED_A1``, ``SW0`` becomes ``SW0_1``), while KiCad keeps the
+    block's own name under the instance's sheet path (``/ROW0/CELL1/LED_A``). Such a pair
+    is the same name. Only a name under a sheet path counts, so ``/SIG`` vs ``SIG2`` on
+    the root sheet still differs."""
+    for local, counted in ((a, e), (e, a)):
+        m = _COUNTER.match(counted.rsplit("/", 1)[-1])
+        if m and local.count("/") >= 2 and m.group(1) == local.rsplit("/", 1)[-1]:
+            return True
+    return False
+
+
+def compare(actual: dict[str, Net], expected: dict[str, Net], limit: int | None = 10) -> dict:
     """Compare connectivity as a partition of pins; names only matter when both sides
-    chose them deliberately. Single-pin nets (unconnected pins) are ignored."""
+    chose them deliberately (SKiDL's instance numbering of block-local names does not
+    count). Single-pin nets (unconnected pins) are ignored. ``counts`` has the length of
+    every list; the lists are cut to ``limit`` entries (None: all)."""
     def groups(nets):
         return {pins: name for name, pins in nets.items() if len(pins) > 1}
 
@@ -110,9 +129,15 @@ def compare(actual: dict[str, Net], expected: dict[str, Net]) -> dict:
     renamed, unnamed = [], []
     for p in set(a) & set(e):
         an, en = a[p].rsplit("/", 1)[-1], e[p].rsplit("/", 1)[-1]
-        if an != en and not _auto(an) and not _auto(en):
+        if an != en and not _auto(an) and not _auto(en) and not _numbered(a[p], e[p]):
             renamed.append({"pins": sorted(p), "expected": en, "actual": an})
         elif _auto(an) and not _auto(en):
             unnamed.append(en)  # connected correctly, but the design's net name is not shown
-    return {"match": not missing and not extra, "missing": missing, "extra": extra,
-            "name_differences": renamed, "unnamed": sorted(unnamed)}
+    out = {"match": not missing and not extra, "missing": missing, "extra": extra,
+           "name_differences": sorted(renamed, key=lambda r: r["expected"]),
+           "unnamed": sorted(unnamed)}
+    out["counts"] = {k: len(v) for k, v in out.items() if isinstance(v, list)}
+    if limit is not None:
+        for k in out["counts"]:
+            out[k] = out[k][:limit]
+    return out

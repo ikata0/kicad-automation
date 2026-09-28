@@ -107,3 +107,15 @@ def test_gate_blocks_until_ready(project, tmp_path, capsys):
     assert cli.main(["pcb", "sync", str(board_of(project)), "--force"]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["ok"] and len(out["added"]) == 3
+
+
+def test_gate_compares_with_the_remembered_design(project, tmp_path):
+    """I7: the board sync's gate compares the schematic with the netlist it was synced
+    from; a design changed since then blocks the board."""
+    net = design(project, tmp_path)
+    assert pcb_ok(project)["gate"]["ready"]
+    changed = dict(BASE_NETS)
+    changed["VSUP"] = changed.pop("VIN")
+    write_netlist(net, BASE_PARTS, changed, GOOD_FP, MPN)       # same file, not synced
+    r = kat.pcb.sync(board_of(project))
+    assert not r["ok"] and r["gate"]["by_problem"].get("schematic_not_clean") == 1, r["gate"]

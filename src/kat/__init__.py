@@ -17,6 +17,7 @@ editing verbs and SPEC.md for the workflow.
 
 from __future__ import annotations
 
+import os
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -56,13 +57,18 @@ def sync(sch: Path | str, design: Path | str, dry_run: bool = False,
          sheets: list[str] | None = None) -> dict:
     """Bring a design netlist (e.g. from SKiDL) into the schematic, keeping the arrangement.
     ``sheets``: SKiDL block types (function names) drawn as hierarchical sheets from the
-    block library; remembered for later syncs. Without it the sheet is flat."""
+    block library; remembered for later syncs. Without it the sheet is flat. The design's
+    path is remembered too (``<sheet>.kat.json``): ``kat pcb sync`` compares with it."""
     from . import syncer_hier
     report.touch(sch)
     sch = Path(sch)
     if sheets or syncer_hier.remembered_sheets(sch):
-        return tidy(syncer_hier.run(sch, Path(design), sheets, dry_run))
-    return tidy(syncer.run(sch, Path(design), dry_run))
+        out = syncer_hier.run(sch, Path(design), sheets, dry_run)
+    else:
+        out = syncer.run(sch, Path(design), dry_run)
+    if not dry_run:       # the board sync's gate compares with it (kat pcb sync)
+        syncer_hier.remember(sch, design=os.path.relpath(Path(design).resolve(), sch.parent.resolve()))
+    return tidy(out)
 
 
 def stamp(sch: Path | str, block: str, instances: str | list[str],
@@ -137,10 +143,12 @@ def stamp(sch: Path | str, block: str, instances: str | list[str],
                                                               "overlaps": len(c["overlaps"])}})
 
 
-def check(sch: Path | str, expect: Path | str | None = None) -> dict:
-    """ERC, netlist comparison with ``expect`` and drawing findings (``ok`` / ``clean``)."""
+def check(sch: Path | str, expect: Path | str | None = None, full: bool = False) -> dict:
+    """ERC, netlist comparison with ``expect`` and drawing findings (``ok`` / ``clean``).
+    Lists of the comparison are cut to 10 entries with totals in ``counts``; ``full``
+    lists them all."""
     report.touch(sch)
-    return tidy(checks.run(Path(sch), Path(expect) if expect else None))
+    return tidy(checks.run(Path(sch), Path(expect) if expect else None, full))
 
 
 def ready(sch: Path | str, expect: Path | str | None = None,

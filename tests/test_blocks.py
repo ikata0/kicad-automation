@@ -86,9 +86,10 @@ def lib(tmp_path, monkeypatch, capsys):
     monkeypatch.chdir(tmp_path)
     made = run(capsys, "block", "new", "RC")
     assert Path(made["dir"]) == tmp_path / "blocks" / "RC"
+    assert "flat" not in made["files"] and "py" in made["files"]         # B18: only files that exist
     (tmp_path / "blocks" / "RC" / "RC.py").write_text(RC_PY)
     built = run(capsys, "block", "build", "RC", "--force")
-    assert built["type"] == "rc" and built["ports"] == ["gnd", "inp", "out"]
+    assert built["type"] == "rc" and built["ports"] == ["inp", "out"] and built["power"] == ["gnd"]
     assert built["params"] == {"r_val": "10k"} and built["warnings"] == []
     with kat.edit(tmp_path / "blocks" / "RC" / "RC_block.kicad_sch") as s:   # arrangement pass
         s.move("R1", by=(7.62, 0))

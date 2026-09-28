@@ -25,10 +25,10 @@ import tempfile
 from pathlib import Path
 
 from . import env, hierarchy, netlist
-from .schematic import Schematic, snap, text_width
+from .schematic import Schematic, same, snap, text_width
 from .sexpr import Sym, dumps, find, find_all, head, loads
 
-SETTINGS = ".kat.json"          # <root stem>.kat.json: {"sheets": [...]}
+SETTINGS = ".kat.json"          # <root stem>.kat.json: {"sheets": [...], "design": "..."}
 
 
 # --- settings -----------------------------------------------------------------------------
@@ -40,6 +40,21 @@ def settings_file(root: Path) -> Path:
 def remembered_sheets(root: Path) -> list[str] | None:
     f = settings_file(root)
     return json.loads(f.read_text()).get("sheets") if f.exists() else None
+
+
+def remember(root: Path, **values) -> None:
+    """Merge ``values`` into the sheet's ``.kat.json``."""
+    f = settings_file(root)
+    data = json.loads(f.read_text()) if f.exists() else {}
+    f.write_text(json.dumps(data | values, indent=2) + "\n")
+
+
+def remembered_design(root: Path) -> Path | None:
+    """The design netlist the sheet was last synced from, if it still exists."""
+    f = settings_file(root)
+    rel = json.loads(f.read_text()).get("design") if f.exists() else None
+    p = (root.parent / rel).resolve() if rel else None
+    return p if p and p.exists() else None
 
 
 # --- the design, cut into scopes ----------------------------------------------------------
@@ -54,6 +69,8 @@ class Design:
             raise env.KatError(f"{rec_file.name} is missing: end the SKiDL script with "
                                f"kat.skidl_blocks.write({self.path.name!r})")
         self.rec = json.loads(rec_file.read_text())["instances"]
+        from .syncer import read_no_connect
+        self.no_connect = read_no_connect(self.path)
         unknown = sorted(sheets - {i["type"] for i in self.rec.values()})
         if unknown:
             raise env.KatError(f"no block instances of type {', '.join(unknown)} in the design")
@@ -153,9 +170,10 @@ def _flat(s: Schematic, design: Design, parts: list, rename: dict[str, str], pow
     try:
         with tempfile.TemporaryDirectory() as d:
             net = design.reduced(parts, rename, Path(d) / "scope.net")
-            sync = Syncer(s, net)
+            sync = Syncer(s, net, design.no_connect)
             sync.sync_parts()
             sync.reconcile()
+            sync.no_connects()
             if power_flags:
                 sync.power_flags()
             s.fix_junctions()
@@ -172,10 +190,12 @@ def _boxes(s: Schematic, design: Design, within: str, rename: dict[str, str], ne
     want = {p.rsplit("/", 1)[-1]: p for p in design.children(within)}
     for sh in hierarchy.sheets(s):
         if sh["name"] not in want:
+            _remove_box_wiring(s, sh)
             s.tree.remove(sh["node"])
             report["removed"].append(f"sheet {sh['name']}")
     have = {sh["name"]: sh for sh in hierarchy.sheets(s)}
     labelled: set[str] = set()
+    relabelled: dict[str, str] = {}
     row: list = []                     # boxes placed in this run (see _next_spot)
     for name, path in sorted(want.items()):
         inst = design.rec[path]
@@ -224,9 +244,40 @@ def _boxes(s: Schematic, design: Design, within: str, rename: dict[str, str], ne
             if isinstance(net, list):
                 raise env.KatError(f"port {pin} of {path} is a bus; buses are not supported")
             net = rename.get(_clean(net), _clean(net))
-            _label_at(s, (v["x"], v["y"]), -1 if abs(v["x"] - box["at"][0]) < 1e-6 else 1, net)
+            old_name = _label_at(s, (v["x"], v["y"]), -1 if abs(v["x"] - box["at"][0]) < 1e-6 else 1, net)
+            if old_name:
+                relabelled[old_name] = net
             labelled.add(net)
+    # a renamed net also ends on this sheet's own parts (a root connector): their labels
+    # still carry the old name, which no port uses any more
+    for old_name, net in sorted(relabelled.items()):
+        if old_name in labelled:
+            continue
+        n_other = 0
+        for kind in ("label", "global_label"):
+            for n in find_all(s.tree, kind):
+                if str(n[1]) == old_name:
+                    n[1] = net
+                    n_other += 1
+        report["renamed"].append({"from": old_name, "to": net, "sheet": s.path.name,
+                                  "labels": n_other})
     _attach_lone(s, design, within, rename, labelled, report)
+
+
+def _remove_box_wiring(s: Schematic, sh: dict) -> None:
+    """The stub and label ``_label_at`` drew on each pin of a sheet box that goes away."""
+    doomed = set()
+    for v in sh["pins"].values():
+        pt = (v["x"], v["y"])
+        for w, seg in zip(s.wires(), s.segments()):
+            for a, b in (seg, seg[::-1]):
+                if same(a, pt) and abs(a[1] - b[1]) < 1e-6 and abs(abs(a[0] - b[0]) - 2.54) < 1e-3:
+                    doomed.add(id(w))
+                    for n in find_all(s.tree, "label"):
+                        at = find(n, "at")
+                        if same((float(at[1]), float(at[2])), b):
+                            doomed.add(id(n))
+    s.tree[:] = [c for c in s.tree if id(c) not in doomed]
 
 
 def _attach_lone(s: Schematic, design: Design, within: str, rename: dict[str, str],
@@ -306,8 +357,9 @@ def _next_spot(s: Schematic, row: list, left: dict, right: dict, nets: dict[str,
     return (x0, y), (w, h), y + below
 
 
-def _label_at(s: Schematic, pin: tuple[float, float], side: int, net: str) -> None:
-    """A stub and a label ``net`` on a sheet pin, unless one is there already."""
+def _label_at(s: Schematic, pin: tuple[float, float], side: int, net: str) -> str | None:
+    """A stub and a label ``net`` on a sheet pin, unless one is there already. Returns the
+    old name when an existing label was renamed."""
     end = (pin[0] + side * 2.54, pin[1])
     for l in s.labels():
         if l["kind"] == "label" and abs(l["x"] - end[0]) < 1e-3 and abs(l["y"] - pin[1]) < 1e-3:
@@ -315,7 +367,8 @@ def _label_at(s: Schematic, pin: tuple[float, float], side: int, net: str) -> No
                 for n in find_all(s.tree, "label"):
                     if find(n, "uuid") is not None and str(find(n, "uuid")[1]) == l["uuid"]:
                         n[1] = net
-            return
+                return l["text"]
+            return None
     s.add_wire([pin, end], junctions=False)
     s.add_label(net, end[0], end[1], 0 if side > 0 else 180)
 
@@ -378,7 +431,7 @@ def run(root: Path, design_path: Path, sheets: list[str] | None = None, dry_run:
         return dict(report, dry_run=True)
     for s in files.values():
         s.save()
-    settings_file(root).write_text(json.dumps({"sheets": sorted(sheets)}, indent=2) + "\n")
+    remember(root, sheets=sorted(sheets))
     refs = _design_refs(root, design)
     hierarchy.annotate(root, refs=refs)
     report["check"] = verify(root, design)

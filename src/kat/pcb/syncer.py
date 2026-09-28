@@ -353,7 +353,8 @@ def run(pcb: Path, sch: Path | None = None, dry_run: bool = False, force: bool =
     sch = Path(sch) if sch else pcb.with_suffix(".kicad_sch")
     if not sch.exists():
         raise env.KatError(f"schematic {sch} not found")
-    ready = gate.run(sch, None, require)
+    from ..syncer_hier import remembered_design
+    ready = gate.run(sch, remembered_design(sch), require)
     summary = {"ready": ready["ready"], "by_problem": ready["by_problem"]}
     if not ready["ready"] and not force:
         return {"board": str(pcb), "gate": summary, "changed": False, "ok": False,

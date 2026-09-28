@@ -82,6 +82,24 @@ def test_power_flag_added_once(project, tmp_path):
     assert len(flags) == 1
 
 
+
+def test_stacked_power_pins_get_one_symbol(project, tmp_path):
+    """B12: MAX14662's GND pins 11/25/29 sit on one spot. Added to a GND net that is
+    already drawn with more pins, they get one GND symbol, not three."""
+    caps = {f"C{i}": ("Device", "C", "100n", f"tag-c{i}") for i in range(1, 4)}
+    gnd = BASE_NETS["GND"] + [(c, "2") for c in caps]
+    nets = dict(BASE_NETS, GND=gnd, VIN=BASE_NETS["VIN"] + [(c, "1") for c in caps])
+    parts = dict(BASE_PARTS, **caps)
+    sync_ok(project, write_netlist(tmp_path / "a.net", parts, nets))
+
+    def gnd_symbols():
+        return len([x for x in Schematic(project).symbols() if x.lib_id == "power:GND"])
+    before = gnd_symbols()
+    parts["U1"] = ("Analog_Switch", "MAX14662", "MAX14662", "tag-u1")
+    nets["GND"] = gnd + [("U1", "11"), ("U1", "25"), ("U1", "29")]
+    kat.sync(project, write_netlist(tmp_path / "b.net", parts, nets))   # ERC: open inputs
+    assert gnd_symbols() == before + 1
+
 def test_rename_by_tag_keeps_position(project, tmp_path):
     sync_ok(project, write_netlist(tmp_path / "a.net", BASE_PARTS, BASE_NETS))
     before = positions(project)

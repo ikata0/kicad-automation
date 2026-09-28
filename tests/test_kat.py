@@ -168,6 +168,25 @@ def test_compare_ignores_generated_names():
     assert r["name_differences"] == [{"pins": [("C1", "2"), ("D1", "1")], "expected": "0V", "actual": "GND"}]
 
 
+
+def test_compare_accepts_skidl_instance_numbering():
+    """B2: SKiDL numbers a block-local name per instance (LED_A, LED_A1, SW0_1); KiCad
+    keeps the name under the sheet path. I13: long lists are cut, counts stay."""
+    a = {"/ROW0/CELL1/LED_A": frozenset({("R1", "2"), ("D1", "2")}),
+         "/ROW0/SW0": frozenset({("U1", "3"), ("R2", "1")}),
+         "/SIG": frozenset({("R3", "1"), ("D3", "1")})}
+    e = {"LED_A7": frozenset({("R1", "2"), ("D1", "2")}),
+         "SW0_1": frozenset({("U1", "3"), ("R2", "1")}),
+         "SIG2": frozenset({("R3", "1"), ("D3", "1")})}
+    r = netlist.compare(a, e)
+    assert r["match"]
+    assert [d["expected"] for d in r["name_differences"]] == ["SIG2"]   # root sheet: a real rename
+    many = {f"/N{i}": frozenset({("R", str(i)), ("C", str(i))}) for i in range(30)}
+    named = {f"M{i}": v for i, v in enumerate(many.values())}
+    r = netlist.compare(many, named)
+    assert r["counts"]["name_differences"] == 30 and len(r["name_differences"]) == 10
+    assert len(netlist.compare(many, named, limit=None)["name_differences"]) == 30
+
 @needs_kicad
 def test_detach_removes_stacked_duplicates(tmp_path):
     """B3: a pin with the same stub + label drawn three times is detached completely."""

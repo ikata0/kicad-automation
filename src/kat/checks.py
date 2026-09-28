@@ -149,17 +149,19 @@ def duplicates(s: Schematic) -> list[str]:
     return out
 
 
-def run(sch: Path, expect: Path | None = None) -> dict:
+def run(sch: Path, expect: Path | None = None, full: bool = False) -> dict:
     """``ok``: electrically right (ERC errors 0, netlist matches ``expect``).
     ``clean``: ``ok`` and no drawing findings (text overlaps, body overlaps, off-page items,
-    duplicated items, design net names missing from or different in the drawing)."""
+    duplicated items, design net names missing from or different in the drawing).
+    The comparison's lists are cut to 10 entries each (``counts`` has the totals) unless
+    ``full``."""
     s = Schematic(sch)  # parse error -> exception
     result: dict = {"file": str(sch)}
     result["erc"] = erc(sch)  # also proves KiCad can load it
     nets = netlist.from_schematic(sch)
     result["nets"] = len([n for n in nets.values() if len(n) > 1])
     if expect:
-        result["netlist_vs_expected"] = netlist.compare(nets, netlist.read(expect))
+        result["netlist_vs_expected"] = netlist.compare(nets, netlist.read(expect), None if full else 10)
     result["overlaps"] = overlaps(s)
     result["body_overlaps"] = body_overlaps(s)
     result["off_page"] = off_page(s)
