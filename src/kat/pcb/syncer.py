@@ -213,7 +213,7 @@ class BoardSync:
             have = f.field(k)
             if have != v:
                 note(k, have or "", v)
-                f.set_field(k, v, hide=True)
+                f.set_field(k, v)          # new: hidden; existing: as the user left it
         for k in list(f.fields()):
             if k not in KEEP and k not in p.fields:
                 note(k, f.field(k), None)
@@ -238,7 +238,7 @@ class BoardSync:
         find(node, "uuid")[1] = f.uuid  # same part: its pads keep their identity for copper checks
         new = Footprint(node)
         for k, v in f.fields().items():
-            new.set_field(k, v, hide=True)
+            new.set_field(k, v)
         idx = board.tree.index(f.node)
         board.tree[idx] = node
         self.report["replaced"].append({"ref": p.ref, "from": f.lib_id, "to": p.footprint})

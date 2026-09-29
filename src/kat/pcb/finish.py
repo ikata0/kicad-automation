@@ -42,6 +42,9 @@ class FinishMixin:
         reference finds no spot are listed in ``failed`` (then shown on the fab layer only)."""
         fps = [f for f in self.footprints() if refs is None or f.ref in refs]
         pads = [(p.box, p) for p in self.pads()]
+        # every part's silkscreen drawing (outlines, pin-1 marks): a reference on it is a
+        # silk_overlap finding. A line drawing is its own thin box, not the whole outline
+        silk = [(f.side, b) for f in self.footprints() for b in f.graphics_boxes("SilkS")]
         edge = self.outline_box()
         taken = []   # boxes of references already placed (this call and untouched ones)
         mine = {f.ref for f in fps}
@@ -69,6 +72,8 @@ class FinishMixin:
                        p.kind == "thru_hole"):
                     continue
                 if any(overlap(box, t, 0.1) for t in taken):
+                    continue
+                if any(side == f.side and overlap(box, sb, 0.1) for side, sb in silk):
                     continue
                 self._set_ref(f, x, y, angle, size, visible=True)
                 taken.append(box)

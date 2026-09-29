@@ -169,9 +169,13 @@ def fab(pcb: Path | str, out: Path | str | None = None, step: bool = True, three
     return tidy(_fab.fab(Path(pcb), out, step, three_d))
 
 
-def ready(pcb: Path | str, fab_dir: Path | str | None = None) -> dict:
+def ready(pcb: Path | str, fab_dir: Path | str | None = None, accept: dict[str, str] | None = None,
+          overhang: list[str] | None = None) -> dict:
     """Release gate: board check clean, title and revision set, fabrication set complete
-    and newer than the board."""
+    and newer than the board. ``accept``: DRC warning kinds judged harmless, with the
+    reason ({"via_dangling": "port vias joined on one layer"}); ``overhang``: parts
+    meant to reach beyond the board edge (edge-mount connectors). The result lists what
+    was accepted; errors are never accepted."""
     report.touch(pcb)
     from . import fabrication as _fab
-    return tidy(_fab.ready(Path(pcb), fab_dir))
+    return tidy(_fab.ready(Path(pcb), fab_dir, accept, overhang))

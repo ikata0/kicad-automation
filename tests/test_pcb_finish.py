@@ -32,6 +32,41 @@ def test_place_refs_clears_the_silkscreen_findings(placed):
     assert sum(after.values()) <= sum(before.values()) and not after.get("silk_over_copper"), (before, after)
 
 
+def test_place_refs_keeps_off_other_parts_silkscreen(placed):
+    """B17: D2's silkscreen outline right where R2's reference would go first (above):
+    the reference goes elsewhere."""
+    from kat.pcb.geometry import overlap
+    b = Board(placed)
+    cy = b.footprint("R2").box()
+    with kat.pcb.edit(placed) as b:
+        d2 = b.footprint("D2")
+        d2.node[:] = [c for c in d2.node if not (isinstance(c, list) and str(c[0]) == "pad")]   # silk only
+        d2.set_field("Reference", d2.ref, hide=True)                   # its own text is elsewhere
+        sb = d2.graphics_box("SilkS")
+        # its lower silk line through the middle of the spot above R2
+        d2.place(d2.x + (cy[0] + cy[2]) / 2 - (sb[0] + sb[2]) / 2, d2.y + cy[1] - 0.73 - sb[3])
+        b.place_refs(["R2"])
+    b = Board(placed)
+    ref = b._ref_box(b.footprint("R2"))
+    assert ref and not any(overlap(ref, s) for s in b.footprint("D2").graphics_boxes("SilkS")), ref
+
+
+def test_set_field_hides_and_shows_an_existing_field(placed):
+    """B16: hide=True / False acts on an existing field; None leaves it."""
+    with kat.pcb.edit(placed) as b:
+        b.footprint("R1").set_field("Value", "10k", hide=True)
+    def hidden():
+        p = Board(placed).footprint("R1")._prop("Value")
+        return any(isinstance(c, list) and str(c[0]) == "hide" and str(c[1]) == "yes" for c in p)
+    assert hidden()
+    with kat.pcb.edit(placed) as b:
+        b.footprint("R1").set_field("Value", "10k")
+    assert hidden()
+    with kat.pcb.edit(placed) as b:
+        b.footprint("R1").set_field("Value", "10k", hide=False)
+    assert not hidden()
+
+
 def test_board_text_title_and_fiducials(placed, project):
     with kat.edit(project) as s:
         s.title(title="LED driver", rev="A", date="2026-09-26")

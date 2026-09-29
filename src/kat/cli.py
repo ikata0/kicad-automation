@@ -144,7 +144,10 @@ def cmd_pcb(a):
     if a.pcb_cmd == "fab":
         return kat.pcb.fab(a.pcb, a.out, not a.no_step, not a.no_3d)
     if a.pcb_cmd == "ready":
-        return kat.pcb.ready(a.pcb, a.fab)
+        accept = dict(x.split("=", 1) if "=" in x else (x, "") for x in (a.accept or []))
+        if any(not r.strip() for r in accept.values()):
+            raise env.KatError("--accept KIND=REASON: give the reason the warnings are harmless")
+        return kat.pcb.ready(a.pcb, a.fab, accept, a.overhang or [])
     if a.pcb_cmd == "route":
         if a.install and not a.pcb:
             from kat.pcb import router as _route
@@ -742,9 +745,14 @@ def build_parser() -> argparse.ArgumentParser:
     s7 = psp.add_parser("ready", formatter_class=_Fmt, help="release gate before ordering",
                         description="ready = board check clean (no DRC errors or warnings, parity 0,\n"
                                     "nothing unconnected, nothing outside the outline), title and revision\n"
-                                    "set, fabrication set complete and newer than the board.")
+                                    "set, fabrication set complete and newer than the board. Warnings judged\n"
+                                    "harmless pass with --accept KIND=REASON, edge-mount parts with --overhang.")
     s7.add_argument("pcb", metavar="PCB")
     s7.add_argument("--fab", help="fabrication directory (default fab/<name>-<rev>/)")
+    s7.add_argument("--accept", action="append", metavar="KIND=REASON",
+                    help="accept DRC warnings of KIND (e.g. via_dangling) for REASON (repeatable)")
+    s7.add_argument("--overhang", action="append", metavar="REF",
+                    help="a part meant to reach beyond the edge, pads inside (repeatable)")
     s9 = psp.add_parser("stamp", formatter_class=_Fmt, help="copy a checked block layout onto instances",
                         description="Places the instance's parts as on the block board and copies its tracks,\n"
                                     "vias, zones, keep-outs, graphics and board-only parts with the instance's\n"

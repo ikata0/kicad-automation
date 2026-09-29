@@ -49,7 +49,8 @@ ISLAND_TYPES = ("starved_thermal", "isolated_copper", "zone_has_empty_net")
 
 def run(pcb: Path) -> dict:
     """KiCad's DRC (zones refilled in memory, parity against the schematic) plus kat's
-    findings: board outline missing, parts outside the outline.
+    findings: board outline missing, parts outside the outline (``outside_outline``: pads
+    outside; ``overhang``: pads inside, only the body beyond the edge).
 
     ``ok``: no DRC errors, parity 0, nothing unconnected, outline present.
     ``clean``: ``ok`` and no DRC warnings and no kat findings."""
@@ -58,24 +59,37 @@ def run(pcb: Path) -> dict:
     b = Board(pcb)
     d = drc(pcb, parity=pcb.with_suffix(".kicad_sch").exists(), refill=True)
     outline = b.outline_box()
-    outside = []
+    outside, overhang = [], []
     if outline:
+        from .geometry import inside
+        from .specctra import _outline_points
+        poly = _outline_points(b)
+        rect = len(poly) == 4 and poly == [(outline[0], outline[1]), (outline[2], outline[1]),
+                                           (outline[2], outline[3]), (outline[0], outline[3])]
+
+        def within(pt) -> bool:
+            if rect:
+                return outline[0] - 1e-6 <= pt[0] <= outline[2] + 1e-6 and outline[1] - 1e-6 <= pt[1] <= outline[3] + 1e-6
+            return inside(poly, pt)
+
         for f in b.footprints():
             box = f.box()
-            if box and not (box[0] >= outline[0] and box[1] >= outline[1]
-                            and box[2] <= outline[2] and box[3] <= outline[3]):
-                outside.append(f.ref)
+            if not box or all(within(c) for c in ((box[0], box[1]), (box[2], box[1]), (box[2], box[3]), (box[0], box[3]))):
+                continue
+            # pads inside, only the body beyond the edge: an edge-mount part (overhang)
+            pads_in = all(within(q) for p in f.pads() for q in p.outline)
+            (overhang if pads_in and f.pads() else outside).append(f.ref)
     islands = [v for v in d["violations"] if v["type"] in ISLAND_TYPES]
     result = {"file": str(pcb), "outline": list(outline) if outline else None,
               "footprints": len(b.footprints()), "tracks": len(b.tracks()), "vias": len(b.vias()),
               "drc_errors": d["errors"], "drc_warnings": d["warnings"], "by_type": d["by_type"],
               "unconnected": len(d["unconnected"]), "parity": len(d["parity"]),
-              "islands": len(islands), "outside_outline": outside,
+              "islands": len(islands), "outside_outline": outside, "overhang": overhang,
               "violations": d["violations"], "unconnected_items": d["unconnected"],
               "parity_items": d["parity"]}
     ok = bool(outline) and d["errors"] == 0 and not d["parity"] and not d["unconnected"]
     result["ok"] = ok
-    result["clean"] = ok and d["warnings"] == 0 and not outside
+    result["clean"] = ok and d["warnings"] == 0 and not outside and not overhang
     return result
 
 

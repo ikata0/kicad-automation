@@ -103,11 +103,20 @@ class Footprint:
         """All properties, name -> value."""
         return {str(p[1]): str(p[2]) for p in find_all(self.node, "property")}
 
-    def set_field(self, name: str, value: str, hide: bool = True) -> None:
-        """Set a property; a new one is hidden on the fab layer of the footprint's side."""
+    def set_field(self, name: str, value: str, hide: bool | None = None) -> None:
+        """Set a property. ``hide``: True / False hides or shows it; None leaves an existing
+        one as it is and hides a new one (on the fab layer of the footprint's side)."""
         p = self._prop(name)
         if p is not None:
             p[2] = value
+            if hide is not None:
+                p[:] = [c for c in p if not (isinstance(c, list) and head(c) == "hide")]
+                eff = find(p, "effects")
+                if eff is not None:
+                    eff[:] = [c for c in eff if str(c) != "hide"]
+                if hide:
+                    p.insert(next((i for i, c in enumerate(p) if isinstance(c, list) and head(c) == "uuid"),
+                                  len(p)), [Sym("hide"), Sym("yes")])
             return
         from ..schematic import new_uuid
         effects = [Sym("effects"), [Sym("font"), [Sym("size"), Sym("1"), Sym("1")],
@@ -116,7 +125,7 @@ class Footprint:
             effects.append([Sym("justify"), Sym("mirror")])
         at = [Sym("at"), Sym("0"), Sym("0")] + ([num(self.rot)] if self.rot else [])
         new = [Sym("property"), name, value, at, [Sym("layer"), f"{self.side}.Fab"]]
-        if hide:
+        if hide is not False:
             new.append([Sym("hide"), Sym("yes")])
         new += [[Sym("uuid"), new_uuid()], effects]
         props = find_all(self.node, "property")
@@ -160,8 +169,12 @@ class Footprint:
 
     def graphics_box(self, layer_suffix: str) -> Box | None:
         """Box of the footprint's graphics on its side's ``layer_suffix`` layer (e.g. CrtYd)."""
+        return union(self.graphics_boxes(layer_suffix))
+
+    def graphics_boxes(self, layer_suffix: str) -> list[Box]:
+        """One box per graphic item on its side's ``layer_suffix`` layer (e.g. SilkS)."""
         layer = f"{self.side}.{layer_suffix}"
-        pts = []
+        out = []
         for g in self.node:
             h = head(g)
             if not h or not h.startswith("fp_") or h in ("fp_text", "fp_text_box"):
@@ -173,7 +186,7 @@ class Footprint:
                 c, e = find(g, "center"), find(g, "end")
                 cx, cy = self.to_board(float(c[1]), float(c[2]))
                 r = ((float(e[1]) - float(c[1])) ** 2 + (float(e[2]) - float(c[2])) ** 2) ** 0.5
-                pts += [(cx - r, cy - r), (cx + r, cy + r)]
+                out.append((cx - r, cy - r, cx + r, cy + r))
                 continue
             local = [(float(n[1]), float(n[2])) for k in ("start", "mid", "end") if (n := find(g, k))]
             if h == "fp_rect" and len(local) == 2:
@@ -181,8 +194,9 @@ class Footprint:
                 local = [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
             if h == "fp_poly":
                 local = [(float(xy[1]), float(xy[2])) for xy in find_all(find(g, "pts") or [], "xy")]
-            pts += [self.to_board(x, y) for x, y in local]
-        return box_of(pts) if pts else None
+            if local:
+                out.append(box_of([self.to_board(x, y) for x, y in local]))
+        return out
 
     def courtyard(self) -> Box | None:
         """Courtyard bounding box in board mm, or None without a courtyard."""

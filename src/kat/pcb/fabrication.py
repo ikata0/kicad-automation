@@ -77,19 +77,33 @@ REQUIRED = {"gerber copper": ("gerbers", "Cu"), "gerber outline": ("gerbers", "E
             "gerber mask": ("gerbers", "Mask"), "drill": ("gerbers", ".drl")}
 
 
-def ready(pcb: Path | str, fab_dir: Path | str | None = None) -> dict:
+def ready(pcb: Path | str, fab_dir: Path | str | None = None, accept: dict[str, str] | None = None,
+          overhang: list[str] | None = None) -> dict:
     """Release gate. Errors: board check not clean (DRC errors or warnings, parity,
     unconnected, parts outside the outline), title or revision empty, fabrication set
     missing or incomplete (Gerbers for copper, mask and outline, drill, position file,
-    BOM, IPC-D-356), or older than the board."""
+    BOM, IPC-D-356), or older than the board. ``accept``: DRC warning kinds judged
+    harmless, each with its reason ({"via_dangling": "..."}); ``overhang``: parts meant to
+    reach beyond the edge (pads inside). Both are listed in the result; DRC errors can
+    never be accepted."""
     pcb = Path(pcb)
     b = Board(pcb)
     c = checks.run(pcb)
+    accept, overhang = dict(accept or {}), list(overhang or [])
     errors = []
-    if not c["clean"]:
+    warn_kinds = {v["type"]: 0 for v in c["violations"] if v["severity"] == "warning"}
+    for v in c["violations"]:
+        if v["severity"] == "warning":
+            warn_kinds[v["type"]] += 1
+    left_warnings = {k: n for k, n in warn_kinds.items() if k not in accept}
+    left_overhang = [r for r in c["overhang"] if r not in overhang]
+    if not c["ok"] or left_warnings or c["outside_outline"] or left_overhang:
         errors.append({"problem": "check_not_clean",
-                       "detail": {k: c[k] for k in ("drc_errors", "drc_warnings", "unconnected", "parity",
-                                                    "islands", "outside_outline", "by_type")}})
+                       "detail": {**{k: c[k] for k in ("drc_errors", "unconnected", "parity", "islands",
+                                                        "outside_outline")},
+                                  "warnings": left_warnings, "overhang": left_overhang}})
+    accepted = {"warnings": {k: {"count": warn_kinds[k], "reason": r} for k, r in accept.items() if k in warn_kinds},
+                "overhang": [r for r in overhang if r in c["overhang"]]}
     t = _title(b)
     for key in ("title", "rev"):
         if not t.get(key):
@@ -112,5 +126,6 @@ def ready(pcb: Path | str, fab_dir: Path | str | None = None) -> dict:
         if newest and pcb.stat().st_mtime > newest:
             errors.append({"problem": "fab_outdated", "detail": "the board changed after kat pcb fab"})
     return {"file": str(pcb), "ready": not errors, "errors": errors, "fab_dir": str(d),
+            **({"accepted": accepted} if accepted["warnings"] or accepted["overhang"] else {}),
             "check": {k: c[k] for k in ("ok", "clean", "drc_errors", "drc_warnings", "unconnected",
                                         "parity", "islands")}}
