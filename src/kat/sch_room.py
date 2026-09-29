@@ -247,14 +247,16 @@ def free_spot(s: Schematic, size: tuple[float, float], skip: set[str] = frozense
     reading order (5.08 mm steps)."""
     room = Room(s, skip, skip_frames)
     page = page_box(s)
-    taken = room.obstacles() + list(reserved)
+    taken = room.obstacles()
     loose_boxes = [_union([(*a, *a), (*b, *b)]) for w, (a, b) in zip(s.wires(), s.segments())
                    if id(w) not in room.owned]
     taken += loose_boxes
 
     def free(x: float, y: float) -> bool:
         b = (x, y, x + size[0], y + size[1])
-        return inside(b, page) and not any(hits(b, t, GAP) for t in taken)
+        # reserved areas are whole rooms (frame and heading included): they may touch
+        return inside(b, page) and not any(hits(b, t, GAP) for t in taken) \
+            and not any(hits(b, r) for r in reserved)
 
     if prefer is not None and free(snap(prefer[0]), snap(prefer[1])):
         return snap(prefer[0]), snap(prefer[1])

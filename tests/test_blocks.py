@@ -264,6 +264,19 @@ def test_port_points_are_checked_and_stamped(lib, tmp_path, capsys):
     assert kat.pcb.Board(pcb).ports("/CH_B") == got["ports"]
 
 
+def test_a_block_board_is_routed_without_its_harness(lib, tmp_path):
+    """The harness J1 joins no net in the router's design (its routes would not be
+    stamped); it stays an obstacle."""
+    from kat.pcb import Board, specctra
+    from kat.blocks import _env_refs
+    rc = lib / "RC" / "RC.kicad_pcb"
+    assert _env_refs(rc.parent) == {"J1"}
+    specctra.write_dsn(Board(rc), tmp_path / "rc.dsn", skip_pins=_env_refs(rc.parent))
+    dsn = (tmp_path / "rc.dsn").read_text()
+    network = dsn[dsn.index("(network"):]
+    assert "J1-" not in network and "img_J1" in dsn
+
+
 def test_stamp_finds_free_areas_itself(lib, tmp_path, capsys):
     from kat import sch_room
     from kat.schematic import Schematic

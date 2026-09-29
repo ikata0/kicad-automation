@@ -250,7 +250,8 @@ def stamp(s: Schematic, block: Path | str, instance: str, at: tuple[float, float
         try:
             x, y = sch_room.free_spot(s, size, others, reserved, prefer, frames)
         except env.KatError:
-            if not make_room:
+            box = (prefer[0], prefer[1], prefer[0] + size[0], prefer[1] + size[1])
+            if not make_room or any(sch_room.hits(box, r) for r in reserved):
                 raise
             x, y = prefer              # no free area anywhere: make room where it stands
         at = (x + region[0] - room[0], y + region[1] - room[1])

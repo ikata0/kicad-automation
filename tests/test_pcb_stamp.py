@@ -197,17 +197,19 @@ def test_parts_in_the_way_are_refused_or_moved(hier, tmp_path):
 
 def test_net_classes_stricter_than_the_blocks_are_refused(hier, tmp_path):
     """I4: the block was routed with 0.2 mm clearance; a design class of 0.3 on its port
-    nets would make the stamped copper DRC errors. A looser class is only a warning."""
+    nets would make the stamped copper DRC errors. Another width is only a warning (DRC
+    checks a class's clearance, not its width)."""
     pcb = copy_of(hier, tmp_path)["top"]
     with kat.pcb.edit(pcb) as b:
         b.netclass("WIDE", track=0.25, clearance=0.3, nets=["/IN_A"])
-    with pytest.raises(kat.KatError, match=r"/IN_A \(WIDE: track 0.25 > block 0.2, clearance 0.3"):
+    with pytest.raises(kat.KatError, match=r"/IN_A \(WIDE: clearance 0.3 > block 0.2\)"):
         with kat.pcb.edit(pcb) as b:
             b.stamp(hier["b1"], "/CH_A", at=(112, 102))
     with kat.pcb.edit(pcb) as b:
-        b.netclass("WIDE", track=0.2, clearance=0.15, nets=["/IN_A"])
+        b.netclass("WIDE", track=0.3, clearance=0.2, nets=["/IN_A"])
         res = b.stamp(hier["b1"], "/CH_A", at=(112, 102))
-    assert any("looser" in w and "/IN_A" in w for w in res["warnings"]), res
+    assert any("differ" in w and "/IN_A" in w for w in res["warnings"]), res
+    assert check(pcb)["drc_errors"] == 0
 
 
 @pytest.mark.skipif(not __import__("kat.pcb.router", fromlist=["x"]).jar_path().exists()

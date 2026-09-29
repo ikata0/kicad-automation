@@ -76,6 +76,13 @@ def test_router_keeps_class_layers_class_clearance_and_hole_clearance(placed):
     assert "(use_layer F.Cu) (use_layer In2.Cu)" in dsn and "(class_class (classes OTHER SIG)" in dsn
     assert "(clearance 250 (type via_wire))" in dsn       # 0.4 - (0.6 - 0.3) / 2 = 0.25 mm
     assert dsn.count("wire_keepout") >= 4 * 4             # the edge band: 4 edges x 4 layers
+    with kat.pcb.edit(placed) as b:
+        b.mounting_hole((36, 21), "M2")                  # no copper: a keep-out for the router
+    before = dsn.count("wire_keepout")
+    specctra.write_dsn(Board(placed), placed.parent / "t.dsn")
+    assert (placed.parent / "t.dsn").read_text().count("wire_keepout") == before + 4
+    part = specctra.write_dsn(Board(placed), placed.parent / "p.dsn", nets=["/A1"])   # SIG only
+    assert part["class_clearance_not_applied"][0].startswith("OTHER SIG")
     r = kat.pcb.route(placed, passes=10, timeout=300)
     c = r["check"]
     assert c["unconnected"] == 0 and c["drc_errors"] == 0, r

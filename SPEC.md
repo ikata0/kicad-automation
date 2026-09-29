@@ -280,13 +280,18 @@ runs `kat pcb check`. No pcbnew involved.
 - What the router knows beyond width and clearance: a class's `layers` (`use_layer`),
   `class_clearance` (`class_class`), the hole clearance (as the vias' copper clearance,
   hole clearance minus the via ring) and the edge clearance (a keep-out band along the
-  outline). Checked with Freerouting 2.4.1; DRC still judges.
+  outline). Checked with Freerouting 2.4.1; DRC still judges. With `--net` the router
+  knows only the classes of the nets it routes: a class-to-class rule needs a net of each
+  class in the run (`class_clearance_not_applied` in the result says when it did not).
 - Before routing, `fine_pitch` in the result lists nets whose class width plus clearance
   does not fit beside a neighbouring pad (the router would neck them down or give up), with
   the widest width that fits.
 - Freerouting's log is written while it runs (`history/<stamp>_route/freerouting.log`);
   each pass is echoed on stderr.
 - `--net` limits routing to some nets; the others and their pads stay obstacles.
+- On a library block's board the harness parts join no net for the router (their routes
+  are not stamped anyway); they stay obstacles. Holes without copper (mounting holes) are
+  keep-outs of hole radius plus hole clearance.
 - DSN, SES and the Freerouting log go to `history/<stamp>_route/`.
 - Freerouting (Java 21+, GPL-3) is an external program: `kat pcb route --install`
   downloads the pinned release once into kat's cache, checked by SHA-256
@@ -478,9 +483,10 @@ with kat.pcb.edit("top/top.kicad_pcb") as b:
   `b.ports(instance)` reads them back (`<board>.stamps.json`). The design's top level
   then connects known points instead of pins deep inside a dense block.
 - **Net classes:** the block was routed and checked with its board's classes. A design
-  class on one of its nets that asks a wider track or more clearance than the block's is
-  refused (the stamped copper would be DRC errors); give those nets matching classes or
-  route the block with the design's. A looser class is a warning.
+  class on one of its nets that asks more clearance than the block's is refused (the
+  stamped copper would be DRC errors); give those nets classes with the block's clearance
+  or route the block with the design's. Another track width is a warning only: DRC checks
+  a class's clearance, its width is what the router lays.
 - **Room:** design parts where the block's parts go (courtyards on the same side) are
   refused; `make_room=True` / `--make-room` pushes unlocked ones aside. Parts of block
   instances not stamped yet are no obstacle.
@@ -782,13 +788,15 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
 | A batch stamp's plan found free areas, but the moves then landed on pins of instances not stamped yet | the instances are parked beside the page and stamped back one by one |
 | KiCad writes a design's instance data (and references) into the library's block sheets: block change detection by file time called every used block "changed" | content hashes without instance data and references |
 | The router left a block's harness routes behind in the stamp: stubs from the block pads that shorted into the neighbouring rows | copper that only serves the harness is not stamped |
-| A design's stricter net class on a block's port nets made the stamped copper DRC errors (208 in the LED matrix) | stamp compares the classes and refuses a stricter one |
+| A design's stricter net class on a block's port nets made the stamped copper DRC errors (208 in the LED matrix) | stamp compares the classes and refuses more clearance (a wider track is no DRC error: a warning) |
 | Freerouting knows neither KiCad's hole clearance nor class layers or class-to-class clearance: SPI routed on the analog layer, 60 violations of a 1 mm rule, 73 hole-clearance errors | the DSN carries `use_layer`, `class_class`, via clearances from the hole clearance and an edge band; set them with `netclass(layers=)`, `class_clearance`, `constraints` |
 | A custom DRC rule cannot ask less than the board minimum (edge-mount SMA needed edge clearance 0) | `constraints(edge_exempt=[...])`: minimum 0 plus a generated rule for the rest; `rules()` warns below a minimum |
 | A part on B is mirrored top to bottom, not left to right: a horizontal two-pad part keeps its pad order at rot 0, while pins off its axis swap sides and angles turn the other way | check a bottom part's pads with the board view (`pcb view PCB --around REF --layers bottom`), not by analogy with the top side (§4.8) |
 | The widened neck of a routed track came 0.087 mm from a via the router had just added | the router's vias and wires go in before any widening |
 | Freerouting routes pins to locked port vias of the net; KiCad warns `via_dangling` for such a via joined on one layer only | judge it; `kat pcb ready --accept via_dangling=REASON` |
 | `kat pcb ready` refused an edge-mount connector (outside the outline) and any warning | `overhang` (pads inside) and `--overhang REF`, `--accept KIND=REASON`; errors never pass |
+| Routing a block board with its harness spent the router's passes on links below the neighbour keep-outs: 7 of the block's own connections stayed open | the router leaves harness pins out of its nets |
+| Freerouting ran tracks through the M2 mounting holes: kat's DSN described only copper pads | holes without copper are keep-outs in the DSN |
 
 ## 8. Open points
 

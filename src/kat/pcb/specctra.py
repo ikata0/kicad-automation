@@ -61,9 +61,10 @@ def _poly(layer: str, pts, width: float = 0) -> str:
     return f"(polygon {_q(layer)} {_um(width)} " + " ".join(_xy(x, y) for x, y in pts) + ")"
 
 
-def write_dsn(b: Board, path: Path, nets: list[str] | None = None) -> dict:
+def write_dsn(b: Board, path: Path, nets: list[str] | None = None, skip_pins: set[str] = frozenset()) -> dict:
     """Write the board as a Specctra design. ``nets``: route only these (the others stay
-    as they are; their pads are still obstacles)."""
+    as they are; their pads are still obstacles). ``skip_pins``: parts whose pins join no
+    net (a block's harness: obstacles only)."""
     copper = b.copper_layers()
     lines = [f"(pcb {_q(b.path.stem)}",
              '  (parser (string_quote ") (space_in_quoted_tokens on) (host_cad "kat") (host_version "1"))',
@@ -77,7 +78,6 @@ def write_dsn(b: Board, path: Path, nets: list[str] | None = None) -> dict:
     # the board's edge clearance: a band along every outline edge the router keeps out of
     edge = b.board_minimums().get("min_copper_edge_clearance", 0) or 0
     if edge > 0:
-        import math
         for (ax, ay), (bx, by) in zip(outline, outline[1:] + outline[:1]):
             length = math.hypot(bx - ax, by - ay)
             if length < 1e-9:
@@ -105,6 +105,16 @@ def write_dsn(b: Board, path: Path, nets: list[str] | None = None) -> dict:
             for layer in _zone_layers(z):
                 if layer in copper:
                     lines.append(f"    (plane {_q(str(net[1]))} {_poly(layer, pts)})")
+    # holes without copper (mounting holes): the router has no pin for them; keep it
+    # (tracks and vias) the hole clearance away
+    hole_cl = b.board_minimums().get("min_hole_clearance", 0.25)
+    for pad in b.pads():
+        if pad.kind == "np_thru_hole" and pad.drill:
+            r = pad.drill / 2 + hole_cl
+            circle = [(pad.x + r * math.cos(a * math.pi / 8), pad.y + r * math.sin(a * math.pi / 8)) for a in range(16)]
+            for layer in copper:
+                lines.append(f'    (wire_keepout "" {_poly(layer, circle)})')
+                lines.append(f'    (via_keepout "" {_poly(layer, circle)})')
     default = b.net_rules("")
     lines.append(f'    (via "{_via_name(default["via"], default["via_drill"])}")')
     # KiCad's hole clearance (hole edge to copper) as the via's copper clearance: the
@@ -149,6 +159,8 @@ def write_dsn(b: Board, path: Path, nets: list[str] | None = None) -> dict:
     # network: nets (with pins) and classes (rules per net class)
     pins_of: dict[str, list[str]] = {}
     for f in fps:
+        if f.ref in skip_pins:
+            continue
         for p, pid in _pins(f, copper):
             if p.net:
                 pins_of.setdefault(p.net, []).append(f"{f.ref}-{pid}")
@@ -166,10 +178,15 @@ def write_dsn(b: Board, path: Path, nets: list[str] | None = None) -> dict:
         lines.append(f"    (class {_q(cname)} " + " ".join(_q(n) for n in members) +
                      f' (circuit{use} (use_via "{_via_name(r["via"], r["via_drill"])}"))'
                      f" (rule (width {_um(r['track'])}) (clearance {_um(r['clearance'])})))")
+    skipped = []
     for key, mm in sorted(extra["class_clearance"].items()):
         a, bb = key.split(" ", 1)
         if a in classes and bb in classes:
             lines.append(f"    (class_class (classes {_q(a)} {_q(bb)}) (rule (clearance {_um(mm)})))")
+        elif (a in classes) != (bb in classes):
+            # the router knows a class only by the nets it routes: the other class's copper
+            # is a plain obstacle then, and the rule cannot hold
+            skipped.append(key)
     lines.append("  )")
 
     # existing copper: locked = protected, the rest may be changed by the router
@@ -189,7 +206,9 @@ def write_dsn(b: Board, path: Path, nets: list[str] | None = None) -> dict:
     lines.append("  )")
     lines.append(")")
     path.write_text("\n".join(lines) + "\n")
-    return {"dsn": str(path), "nets": len(routed), "footprints": len(fps), "padstacks": len(padstacks)}
+    return {"dsn": str(path), "nets": len(routed), "footprints": len(fps), "padstacks": len(padstacks),
+            **({"class_clearance_not_applied": [f"{k}: route a net of both classes together (--net)"
+                                                for k in skipped]} if skipped else {})}
 
 
 def _pins(f, copper: list[str]) -> list[tuple]:

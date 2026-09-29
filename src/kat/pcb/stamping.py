@@ -409,23 +409,23 @@ class StampMixin:
                 if netmap.setdefault(sp.net, tp.net) != tp.net:
                     raise env.KatError(f"net {sp.net} maps to {netmap[sp.net]} and {tp.net}: "
                                        f"{instance} is wired differently from the block")
-        # net classes: the block was checked with its own; a stricter class here would
-        # make its copper a DRC error, a looser one is only worth knowing
-        stricter, looser = [], []
+        # net classes: the block was checked with its own. More clearance here would make
+        # its copper DRC errors; another width only changes what the router lays next
+        stricter, other = [], []
         for sn, tn in sorted(netmap.items()):
             sr, tr = src.net_rules(sn), self.net_rules(tn)
-            diff = {k: [sr[k], tr[k]] for k in ("track", "clearance") if abs(sr[k] - tr[k]) > 1e-9}
-            if any(tr[k] > sr[k] + 1e-9 for k in ("track", "clearance")):
-                stricter.append(f"{tn} ({tr['netclass']}: " + ", ".join(
-                    f"{k} {b:g} > block {a:g}" for k, (a, b) in diff.items()) + ")")
-            elif diff:
-                looser.append(f"{tn} ({tr['netclass']} vs block {sr['netclass']})")
+            if tr["clearance"] > sr["clearance"] + 1e-9:
+                stricter.append(f"{tn} ({tr['netclass']}: clearance {tr['clearance']:g} > block {sr['clearance']:g})")
+            elif any(abs(sr[k] - tr[k]) > 1e-9 for k in ("track", "clearance")):
+                other.append(f"{tn} ({tr['netclass']}: track {tr['track']:g}, clearance {tr['clearance']:g}; "
+                             f"block {sr['track']:g}, {sr['clearance']:g})")
         if stricter:
-            raise env.KatError(f"the design's net classes are stricter than those {block} was routed "
-                               f"with: {'; '.join(stricter[:8])}: give these nets classes that match "
-                               f"the block's (netclass), or re-route the block with the design's")
-        if looser:
-            warnings.append(f"net classes looser than the block's: {'; '.join(looser[:8])}")
+            raise env.KatError(f"the design's net classes ask more clearance than {block} was routed "
+                               f"with: {'; '.join(stricter[:8])}: give these nets classes whose clearance "
+                               f"matches the block's (netclass), or re-route the block with the design's")
+        if other:
+            warnings.append(f"net classes differ from the block's (no DRC error; the router uses "
+                            f"them outside the block): {'; '.join(other[:8])}")
         target_nets = {p.net for p in self.pads() if p.net} | {
             str(find(z, "net")[1]) for z in self.zones() if find(z, "net") is not None}
         self._ungroup([tf.uuid for tf in pairs.values()])

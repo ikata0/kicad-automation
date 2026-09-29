@@ -71,6 +71,7 @@ def route(pcb: Path | str, passes: int = 20, nets: list[str] | None = None, time
           out: Path | str | None = None) -> dict:
     """Autoroute the board: DSN -> Freerouting -> SES -> new tracks and vias -> save ->
     KiCad DRC. Locked copper is kept as it is; ``nets`` restricts routing to those nets.
+    On a library block's board the harness parts are obstacles only (not routed to).
     DSN, SES and the router log go to ``out`` (default: history/<stamp>_route/)."""
     pcb = Path(pcb)
     jar = jar_path()
@@ -82,7 +83,15 @@ def route(pcb: Path | str, passes: int = 20, nets: list[str] | None = None, time
     work.mkdir(parents=True, exist_ok=True)
     b = Board(pcb)
     dsn, ses = work / f"{pcb.stem}.dsn", work / f"{pcb.stem}.ses"
-    info = specctra.write_dsn(b, dsn, nets)
+    # a library block's board: its harness is test equipment, not routed to (its routes
+    # would not be stamped anyway); its parts stay obstacles
+    harness = set()
+    if pcb.with_suffix(".block.json").exists() and pcb.stem == pcb.resolve().parent.name:
+        from ..blocks import _env_refs
+        harness = _env_refs(pcb.resolve().parent)
+    info = specctra.write_dsn(b, dsn, nets, harness)
+    if harness:
+        info["harness_not_routed"] = sorted(harness)
     tight = fine_pitch(b, nets)
     t0 = time.time()
     log_file = work / "freerouting.log"

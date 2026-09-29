@@ -154,8 +154,8 @@ with kat.pcb.edit(PCB) as b:
   - end each port on a locked via near the outline's edge and mark it,
     `kat.pcb.block_port(BLOCK_PCB, "ain", (x, y))`; after the stamp `b.ports("/ROW3")`
     gives the points the top level connects;
-  - route it with the net classes its port nets will have in the design: a stricter
-    design class is refused at the stamp.
+  - route it with the clearance its port nets will have in the design: a design class
+    asking more is refused at the stamp.
   `stamp(..., make_room=True)` pushes design parts out of the block's way.
 - Bottom-side parts (`side="B"`) are mirrored top to bottom: a two-pad part keeps its
   pad order at rot 0, parts with pins off their axis do not. Check them in the bottom view.
