@@ -1,6 +1,6 @@
 ---
 name: kicad-layout
-description: Lay out a KiCad 10 PCB from the command line with `kat pcb` / `kat.pcb` — board built from the schematic (`kat pcb sync`, proven by DRC schematic parity), outline and net-class rules, placement passes in Python, structure (plane vias, fan-out, locked critical tracks), Freerouting through kat's own Specctra DSN/SES, silkscreen and fabrication files, judged by KiCad's DRC and rendered layer views. Use when asked to create, place, route, finish or check a PCB, or to bring a schematic change onto the board, without the KiCad GUI.
+description: Lay out a KiCad 10 PCB from the command line with `kat pcb` / `kat.pcb` — board built from the schematic (`kat pcb sync`, proven by DRC schematic parity), fab minimums, outline and net classes with the layers and class-to-class clearances the router keeps, placement passes in Python, library blocks stamped with their copper and port points, structure (plane vias, fan-out, locked critical tracks), Freerouting through kat's own Specctra DSN/SES, silkscreen and fabrication files, judged by KiCad's DRC and rendered layer views and gated by `kat pcb ready`, closed with a report on kat's bugs and missing features (KAT_FEEDBACK.md). Use when asked to create, place, route, finish or check a PCB, or to bring a schematic change onto the board, without the KiCad GUI.
 ---
 
 # KiCad PCB layout with `kat pcb`
@@ -43,6 +43,7 @@ kat commands by themselves, passes through `kat batch-exec`, your reasoning thro
 7. **Fabricate**: `kat pcb fab PCB`; `kat open PCB --verify` (KiCad's editor loads the board
    and reports the same footprints, nets, copper and outline); `kat pcb ready PCB` must say
    `ready`. Then ask the user to open the board in KiCad and look at it.
+8. **Report on kat**: `KAT_FEEDBACK.md` (below), before you hand over.
 
 A **pass** is a short Python script you write and run with `kat batch-exec passN.py`. It
 starts with a docstring stating what the last review found and what this pass changes, then
@@ -68,10 +69,10 @@ one call with its signature and documentation. Calls by phase:
 
 | Phase | `b.` methods |
 |---|---|
-| setup | `outline`, `set_copper_layers`, `plane`, `set_layer_type`, `zone`, `keepout`, `netclass`, `rules`, `mounting_hole`, `add_board_part` |
+| setup | `constraints`, `outline`, `set_copper_layers`, `plane`, `set_layer_type`, `zone`, `keepout`, `netclass`, `class_clearance`, `rules`, `mounting_hole`, `add_board_part` |
 | placement | `move`, `move_many`, `flip`, `align`, `distribute`, `place_near`, `collisions`, `near`, `blocks`, `move_block`, `replicate` |
-| blocks | `stamp`, `instances` (and `kat.pcb.block_environment`) |
-| structure | `track`, `via`, `via_to_plane`, `fanout`, `stitch`, `lock`, `remove_tracks`, `net_rules` |
+| blocks | `stamp`, `instances`, `ports` (and `kat.pcb.block_environment`, `kat.pcb.block_port`) |
+| structure | `track`, `via`, `via_to_plane`, `fanout`, `stitch`, `lock`, `remove_tracks`, `remove`, `remove_at`, `net_rules` |
 | finishing | `place_refs`, `board_text`, `title_from_schematic`, `fiducials` |
 | reading | `footprints`, `footprint(ref).pads()`, `pads`, `tracks`, `vias`, `zones`, `outline_box`, `copper_layers` |
 
@@ -192,6 +193,22 @@ SKiDL → `kat sync SCH design.net` (+ schematic snapshot/arrangement) → `kat 
 `kat pcb sync PCB`. The board keeps placement and copper; a changed footprint is replaced
 in place; `stale_tracks` lists copper that no longer fits (`--rip-stale` removes it).
 Then place the new parts, re-run structure/route for the affected nets (`--net NAME`).
+
+## Last step: report on kat
+
+The task has two results: the board, and what it taught about kat. Before you hand over
+(also when you stop early), write `KAT_FEEDBACK.md` next to `NAME.kicad_pro`, or add to it
+when it exists. Note each finding when it happens, not from memory at the end:
+- **Bugs**: kat did something wrong. Command or pass, expected / got (error text, DRC
+  numbers), your workaround, reproduced or not.
+- **Improvements**: it works but cost time or passes (a route needing hand-laid copper,
+  a check that had to be accepted); what would have helped.
+- **Feature requests**: something kat cannot do; the task that needed it.
+- **Documentation**: this skill, SPEC or `--help` missing or wrong; where you looked.
+
+Number the entries (B1, I1, F1, D1), keep facts apart from guesses, write "none" for an
+empty section, and don't change kat's own code unless asked. Template: kicad-design skill,
+"Last step". Name the file in your handover.
 
 ## Setup
 

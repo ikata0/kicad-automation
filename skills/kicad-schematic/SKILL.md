@@ -1,6 +1,6 @@
 ---
 name: kicad-schematic
-description: Develop KiCad 10 schematics from the command line with the `kat` tool — circuit defined in SKiDL, brought into the .kicad_sch with `kat sync` (incremental, keeps the arrangement), arranged for readability with Python passes (`import kat`), verified by ERC, netlist comparison and rendered snapshots, and gated for the PCB with `kat ready`. Use when asked to create, update after a design change, arrange, tidy or check a KiCad schematic without the KiCad GUI, or to get it ready for PCB layout.
+description: Develop KiCad 10 schematics from the command line with the `kat` tool — circuit defined in SKiDL, brought into the .kicad_sch with `kat sync` (incremental, keeps the arrangement), arranged for readability with Python passes (`import kat`), repeated SKiDL subcircuits drawn like their library block (`kat stamp`) or on hierarchical sheets, verified by ERC, netlist comparison and rendered snapshots, gated for the PCB with `kat ready`, and closed with a report on kat's bugs and missing features (KAT_FEEDBACK.md). Use when asked to create, update after a design change, arrange, tidy or check a KiCad schematic without the KiCad GUI, or to get it ready for PCB layout.
 ---
 
 # KiCad schematics with SKiDL + `kat`
@@ -57,6 +57,8 @@ Fix its errors in SKiDL, then sync (step 1–2): `footprint="Lib:Name"` on every
 `part.fields["MPN"] = "..."` for the chosen part. Look at each warning and say in the
 report why it is fine (e.g. an extra pad for the exposed thermal pad, a footprint outside
 the symbol's filters on purpose).
+
+**Last**, before you hand over: the report on kat (below).
 
 ## Review sub-loop (step 4)
 
@@ -153,6 +155,21 @@ and outward directions while computing coordinates. Try a large pass with
   instances` renders every instance. `kat check`/`sync` list at most 10 netlist
   differences per kind with totals in `counts`; `kat check --full` lists all.
 - `kat batch-exec` prints the pass's own output on stderr; stdout is kat's JSON.
+
+## Last step: report on kat
+
+The task has two results: the schematic, and what it taught about kat. Before you hand
+over (also when you stop early), write `KAT_FEEDBACK.md` next to `NAME.kicad_pro`, or add
+to it when it exists. Note each finding when it happens, not from memory at the end:
+- **Bugs**: kat did something wrong. Command or pass, expected / got (error text,
+  numbers), your workaround, reproduced or not.
+- **Improvements**: it works but cost time or passes; what would have helped.
+- **Feature requests**: something kat cannot do; the task that needed it.
+- **Documentation**: this skill, SPEC or `--help` missing or wrong; where you looked.
+
+Number the entries (B1, I1, F1, D1), keep facts apart from guesses, write "none" for an
+empty section, and don't change kat's own code unless asked. Template: kicad-design skill,
+"Last step". Name the file in your handover.
 
 ## Setup
 

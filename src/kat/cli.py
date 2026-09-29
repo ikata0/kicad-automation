@@ -263,6 +263,8 @@ Workflow (see SPEC.md):
   6. repeat 4-5; after a design change: regenerate design.net and go to 3
   7. kat ready SCH --expect design.net     gate before the PCB layout starts
   8. board: kat pcb sync / batch-exec passes / route / fab / ready (kat pcb --help)
+  9. before handing over: KAT_FEEDBACK.md next to NAME.kicad_pro, kat's bugs,
+     improvements, feature requests and documentation gaps met on the way
 
 Design report: every command on a project, every batch-exec pass (with its code) and every
 snapshot (with its pictures) is recorded in NAME_REPORT.md next to NAME.kicad_pro;

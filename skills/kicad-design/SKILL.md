@@ -1,6 +1,6 @@
 ---
 name: kicad-design
-description: Overview of agent-driven KiCad 10 hardware design with `kat` - the phases (circuit in SKiDL, schematic, PCB layout, fabrication), the gates between them and the one route for design changes. Use at the start of a KiCad project or when unsure which phase or skill applies; then follow kicad-schematic or kicad-layout.
+description: Overview of agent-driven KiCad 10 hardware design with `kat` - the phases (circuit in SKiDL, schematic, PCB layout, fabrication), the gates between them, the one route for design changes, the block library (circuits designed, laid out and checked once, then stamped), flat or hierarchical drawings, and the closing report on kat's bugs and missing features (KAT_FEEDBACK.md). Use at the start of a KiCad project or when unsure which phase or skill applies; then follow kicad-schematic or kicad-layout.
 ---
 
 # KiCad design with SKiDL + `kat`: phases and gates
@@ -11,6 +11,7 @@ description: Overview of agent-driven KiCad 10 hardware design with `kat` - the 
 | 2. Schematic | `kat sync`, arrangement passes, `kat snapshot` | kicad-schematic | `kat ready SCH --expect design.net` → `ready` |
 | 3. Layout | `kat pcb sync/…/route`, layout passes, `kat pcb snapshot` | kicad-layout | `kat pcb check` clean |
 | 4. Fabrication | `kat pcb fab`, `kat open PCB --verify` | kicad-layout | `kat pcb ready PCB` → `ready` |
+| 5. Report on kat | `KAT_FEEDBACK.md` | all | written, and named in the handover |
 
 **One source of truth.** Connectivity lives in the SKiDL design. Whatever phase you are in,
 a circuit change goes: SKiDL → `kat sync` (schematic, then arrange + snapshot) →
@@ -52,3 +53,41 @@ flow (`kat pcb stamp`) is the same for both.
 **Look it up, and let KiCad look.** `kat api NAME` shows any call's signature and
 documentation. Before handing over, `kat open FILE --verify` opens the schematic and the
 board in KiCad's own editors; then ask the user to open them too.
+
+## Last step: report on kat
+
+Every design task has two results: the design, and what it taught about kat. Before you
+hand over - also when you stop early, and after a schematic-only or layout-only task -
+write `KAT_FEEDBACK.md` next to `NAME.kicad_pro` (for a design with blocks, next to the
+top level's project). One file per task; when it exists, add to it.
+
+Collect as you go: when kat does something wrong, needs a workaround, costs many passes,
+or the skill, SPEC or `--help` sent you the wrong way, add an entry right then, with the
+command and its output at hand. At the end, reread `NAME_REPORT.md`'s `problem` comments
+for anything missed. Report, don't repair: do not change kat's own code unless the user
+asked for that.
+
+```markdown
+# kat feedback: <project>, <date>
+
+kat <version from `pip show kat`>, <commit of the kicad-automation checkout, if known>
+
+## Bugs (kat did something wrong)
+### B1: <one line>
+- Where: <command or pass, NAME_REPORT.md step, snapshot>
+- Expected / got: <...>, with the error text or numbers
+- Workaround: <what you did instead, or "none, stopped here">
+- Reproduced: <yes, how / no / not tried>
+
+## Improvements (it works, but cost time or passes)
+### I1: <one line>, what it cost, what would have helped
+
+## Feature requests (something kat cannot do)
+### F1: <one line>, the task that needed it, how you got by
+
+## Documentation (skill, SPEC or --help missing or wrong)
+### D1: <one line>, where you looked, what it should say
+```
+
+Facts and guesses apart: say what you saw, and mark a suspected cause as a guess. An empty
+section says "none". Name the file in your handover, with the most important entries.

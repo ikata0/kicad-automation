@@ -366,6 +366,12 @@ are relative to the project root. The project of a batch is `--project`, else
 `KAT_PROJECT`, else the files the script opens, else the working directory (a project there
 or in its only project subdirectory). `KAT_REPORT=0` or `kat --no-report` turns it off.
 
+**Feedback on kat.** A design task also reports on the tool: before handing over, the
+agent writes `KAT_FEEDBACK.md` next to `NAME.kicad_pro` (bugs, improvements, feature
+requests, documentation gaps; numbered B/I/F/D entries with command, expected / got,
+workaround). kat does not write it; the skills give the template (kicad-design, "Last
+step"). The findings go into kat, not into the design.
+
 ### 4.14 API lookup
 
 `kat api` prints the library's calls from the code itself: without a name an overview of
