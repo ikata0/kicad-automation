@@ -6,6 +6,7 @@ block is its own project in blocks/RC/, used by BLOCK1 through a relative path.
 """
 
 import json
+import re
 import shutil
 from pathlib import Path
 
@@ -187,7 +188,9 @@ def test_snapshot_and_view_of_a_hierarchy(design, tmp_path):
     root = next(Path(p) for p in res["svg"] if Path(p).stem == top.stem)
     shown = views._svg(top)
     plain = render.export_svg(top, tmp_path / "plain", frame=False)
-    assert shown.read_bytes() == next(p for p in plain if p.stem == top.stem).read_bytes()
+    def body(f):                          # the <title> line carries the export time
+        return re.sub(r"<title>.*?</title>", "", f.read_text())
+    assert body(shown) == body(next(p for p in plain if p.stem == top.stem))
     assert root.exists()
 
 
