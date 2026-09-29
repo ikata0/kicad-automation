@@ -89,7 +89,13 @@ with kat.pcb.edit(PCB) as b:
     b.plane("GND", "In1.Cu")                     # layer type power: the router lays no tracks
     b.zone("+5V", "In2.Cu", priority=1)          # a pour; name defaults to "+5V In2.Cu"
     b.keepout(["F.Cu", "B.Cu"], rect=(2, 40, 6, 20), vias=False, pour=False)
+    # the fab's minimums first; J1 is an edge-mount SMA (pads at the edge)
+    b.constraints(min_track=0.1, min_clearance=0.1, min_via=0.45, min_via_drill=0.2,
+                  hole_clearance=0.2, edge_clearance=0.3, edge_exempt=["J1"])
     b.netclass("POWER", track=0.5, clearance=0.25, nets=["+5V", "GND"])
+    b.netclass("ANALOG", track=0.2, clearance=0.2, nets=["/AIN"], layers=["F.Cu", "In2.Cu"])
+    b.netclass("SPI", track=0.15, clearance=0.1, nets=["/SPI_*"], layers=["F.Cu", "B.Cu"])
+    b.class_clearance("SPI", "ANALOG", 1.0)      # DRC rule and the router's rule
     for x, y in ((3.5, 3.5), (128.5, 3.5), (3.5, 96.5), (128.5, 96.5)):
         b.mounting_hole((x, y), "M3")
 ```
@@ -136,11 +142,23 @@ with kat.pcb.edit(PCB) as b:
   `b.move_block("CH_A", to=(x, y))`, and `b.replicate("CH_A", {"CH_B": (x, y)})` arranges
   the other blocks like the first (parts pair by SKiDL tag without the block name).
 - Repeated blocks, block first: lay the block out once on its own board (its parts, copper,
-  keep-outs; a plane it relies on named as environment with `kat.pcb.block_environment`),
-  get `kat pcb check` clean there, then `b.stamp(BLOCK_PCB, {"/CH_A": (x, y), ...})` or
-  `kat pcb stamp PCB BLOCK_PCB all --at X,Y --step DX,DY` onto every instance, and route
-  only what connects the blocks. Change the block board and stamp again; never edit a
-  stamped copy by hand (SPEC §4.18).
+  keep-outs), get `kat pcb check` clean there, then `b.stamp(BLOCK_PCB, {"/CH_A": (x, y),
+  ...})` or `kat pcb stamp PCB BLOCK_PCB all --at X,Y --step DX,DY` onto every instance,
+  and route only what connects the blocks. Change the block board and stamp again; never
+  edit a stamped copy by hand (SPEC §4.18). On the block board:
+  - name its test environment with `kat.pcb.block_environment`: the plane it relies on,
+    and keep-outs that stand for the neighbouring blocks, so it is routed as it will sit
+    in the design (none of them is stamped);
+  - route it without its harness connector, or with it: the harness's routes are not
+    stamped either way;
+  - end each port on a locked via near the outline's edge and mark it,
+    `kat.pcb.block_port(BLOCK_PCB, "ain", (x, y))`; after the stamp `b.ports("/ROW3")`
+    gives the points the top level connects;
+  - route it with the net classes its port nets will have in the design: a stricter
+    design class is refused at the stamp.
+  `stamp(..., make_room=True)` pushes design parts out of the block's way.
+- Bottom-side parts (`side="B"`) are mirrored top to bottom: a two-pad part keeps its
+  pad order at rot 0, parts with pins off their axis do not. Check them in the bottom view.
 - Placement order: mechanical/fixed, connectors, critical analog parts and heat sources,
   decoupling, the rest. Keep sensitive nodes short and away from switching nets; give
   analog returns their own path to the plane.
@@ -149,6 +167,10 @@ with kat.pcb.edit(PCB) as b:
 - Stitching vias last: `b.stitch("GND", pitch=5)`.
 - Finishing: `b.place_refs()`, `b.board_text("NAME rev A", (x, y))`,
   `b.title_from_schematic()`, `b.fiducials(3)`, then `kat pcb refill PCB`.
+- A wrong via or track, locked or not: `b.remove_at((x, y), kind="via")` or
+  `kat pcb remove PCB --at X,Y` - no board rebuild needed.
+- The route result's `fine_pitch` names classes too wide to leave a fine-pitch pin; give
+  those nets a narrower class instead of letting the router neck them.
 
 ## Review sub-loop
 
@@ -160,6 +182,9 @@ with kat.pcb.edit(PCB) as b:
 3. Close-ups: `kat pcb view PCB --around U1 --layers copper` (sets: top, bottom, placement,
    copper, In1…, or `F.Cu,F.SilkS`). Pixel → mm: `x = region[0] + px / px_per_mm`.
 4. Write down what you found; it goes into the next pass's docstring.
+5. Warnings you judge harmless (a port via joined on one layer only: `via_dangling`) and
+   edge-mount parts (`overhang` in the check) pass the gate only when named:
+   `kat pcb ready PCB --accept via_dangling="port vias of the rows" --overhang J1`.
 
 ## Design change during layout
 

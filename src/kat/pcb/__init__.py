@@ -131,8 +131,9 @@ def instances(pcb: Path | str, block_pcb: Path | str) -> dict:
 
 
 def block_environment(block_pcb: Path | str, zones: list[str]) -> dict:
-    """Name the zones of a block board that are its test environment (e.g. the plane it was
-    checked against); ``stamp`` does not copy them. Stored in ``NAME.block.json``."""
+    """Name the zones and keep-outs of a block board that are its test environment (the
+    plane it was checked against; keep-outs that stand for the neighbouring blocks, so it
+    is routed as it will sit); ``stamp`` does not copy them. Stored in ``NAME.block.json``."""
     from . import stamping
     return stamping.set_environment(block_pcb, zones)
 

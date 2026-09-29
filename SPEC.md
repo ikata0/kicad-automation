@@ -160,12 +160,14 @@ review is therefore a loop: overview → tiles → close-ups → next close-up, 
 is resolved.
 
 - `snapshot` writes `tiles/r<i>c<j>.png` (about 1600 px, 10 % overlap, each with its
-  `region_mm`) when the PNG exceeds 2000 px (`--tiles` / `--no-tiles` to force).
+  `region_mm`) when the PNG exceeds 2000 px (`--tiles` / `--no-tiles` to force); with
+  several pages each page's tiles go to `tiles/<page>/`.
 - `snapshot --finding-crops N` writes close-ups of the first N findings with a position
   (ERC items, text overlaps, body overlaps) to `findings/`.
 - `kat view SCH --around REF | --at X,Y | --region X,Y,W,H` renders one region to
   `views/` in under a second (the frameless SVG is cached per file version). The result
-  has `region` and `px_per_mm` to map pixels back to sheet mm.
+  has `region` and `px_per_mm` to map pixels back to sheet mm. On a hierarchy's root it
+  shows the root page.
 
 ### 4.6 Board sync
 
@@ -204,8 +206,10 @@ Methods of `kat.pcb.Board`, used inside `with kat.pcb.edit(PCB) as b:` (saved on
 | `mounting_hole(at, "M3")`, `add_board_part(lib_id, ref, at)` | footprints without a symbol, marked board-only: sync and parity leave them alone |
 | `zone(net, layers, polygon=None)` | copper pour (default: outline minus 0.5 mm); filled by KiCad on check |
 | `keepout(layers, rect/polygon, tracks=False, vias=True, ...)` | rule area; `False` forbids that item kind |
-| `netclass(name, track, clearance, via, via_drill, nets=[patterns])` | `.kicad_pro` net class + pattern assignment |
-| `rules(text)` | `.kicad_dru` custom rules (KiCad rule language) |
+| `netclass(name, track, clearance, via, via_drill, nets=[patterns], layers=[...])` | `.kicad_pro` net class + pattern assignment; `layers`: the copper the router may use for it (`<board>.kat.json`; DRC does not check it) |
+| `class_clearance(a, b, mm)` | two classes kept apart: a generated DRC rule `kat class A B` and the router's class-to-class rule |
+| `constraints(min_track, min_clearance, min_via, min_via_drill, min_annular, hole_clearance, hole_to_hole, edge_clearance, edge_exempt=[refs])` | the board's minimums (Board Setup › Constraints), what the fab can make; `edge_exempt`: edge-mount parts - minimum 0 plus a generated rule `kat edge` for everything else; `board_minimums()` reads them back |
+| `rules(text)` | `.kicad_dru` custom rules (KiCad rule language); replaces the earlier custom rules, kat's generated `kat ...` rules stay; `warnings` for a rule asking less than a board minimum (DRC uses the minimum) |
 
 A setup pass is safe to run again, so it is edited and re-run when the specification
 changes: the outline, layers, net classes and rules are replaced; a zone or keep-out
@@ -216,7 +220,10 @@ and layer is moved; fiducials are placed anew. These calls report `status`: crea
 replaced or unchanged.
 
 Net classes and rules are what DRC and the router use; derive them from the specification
-(current → width, voltage → clearance/creepage) before placing parts.
+(current → width, voltage → clearance/creepage) before placing parts. Set the board's
+minimums (`constraints`) from the fab's capabilities first: KiCad's defaults (e.g. 0.25 mm
+hole clearance) otherwise flag a fine board, and no rule can go below them. Pending class
+and constraint changes are seen by later calls of the same pass (`net_rules`).
 
 ### 4.8 Placement
 
@@ -225,7 +232,7 @@ like arrangement passes:
 
 | Method | Effect |
 |---|---|
-| `move(ref, to, rot, side)` | refused when its courtyard would overlap another on the same side (`allow_overlap`) |
+| `move(ref, to, rot, side)` | refused when its courtyard would overlap another on the same side (`allow_overlap`). A part on B is flipped like KiCad's flip, mirrored top to bottom (local y): seen from the top, a two-pad part at rot 0 on B keeps pad 1 on the left and pad 2 on the right (rot 180: the other way round), but pins above and below its axis (SOT-23, a QFN's pin 1) change places, and angles turn the other way |
 | `move_many({ref: {to, rot, side}})` | simultaneous; checked on the final arrangement (parts may swap places) |
 | `flip(ref)`, `align(refs, axis)`, `distribute(refs, start, pitch)` | side, rows/columns, even spacing |
 | `place_near(ref, "U1.8")` | a two-pad part beside a pin: outside the host's courtyard, on the side the pin faces, its pad on the pin's net nearest; steps sideways until free |
@@ -246,9 +253,10 @@ the GND pour into islands. So the agent lays the structure first and locks it:
 |---|---|
 | `track(["R1.2", "D1.2"], layer, width)` | net from the pads it touches; refused if they disagree (connections come from the schematic) or if it comes closer than the net-class clearance to other-net copper |
 | `via(at, net)` | through via; on a pad (`"U1.9"`) it takes the pad's net |
-| `via_to_plane("D1.1")`, `fanout(refs, nets=["GND"])` | short stub + via next to an SMD pad (outward first, then sideways), so it reaches its plane |
+| `via_to_plane("D1.1")`, `fanout(refs, nets=["GND"])` | short stub + via next to an SMD pad (outward first, then sideways), so it reaches its plane; fanout gives each of several pads with one number its own via (`J1.2@3`), pads on F and B at one spot share it |
 | `stitch("GND", pitch)` | stitching vias on a grid where they clear copper and courtyards (after the structure) |
 | `lock(net)`, `remove_tracks(net, layer)` | locked copper stays for the router and for rip-up |
+| `at_point(at, layer, kind, net)`, `remove(uuid)`, `remove_at(at, ...)` (`kat pcb remove`) | single tracks and vias by uuid or position, locked ones too (naming them is the decision) |
 | `net_rules(net)` | width, clearance, via size of the net's class |
 | `kat.pcb.refill(PCB)` | fill the pours and save them (KiCad's filler) |
 
@@ -269,13 +277,26 @@ runs `kat pcb check`. No pcbnew involved.
 - Layers of type power (`plane()`) are Specctra power layers: no tracks. Pours are
   `plane`s, keep-outs `wire_keepout`/`via_keepout`, net classes `class` rules;
   locked copper is `protect`ed, other existing copper may be changed.
+- What the router knows beyond width and clearance: a class's `layers` (`use_layer`),
+  `class_clearance` (`class_class`), the hole clearance (as the vias' copper clearance,
+  hole clearance minus the via ring) and the edge clearance (a keep-out band along the
+  outline). Checked with Freerouting 2.4.1; DRC still judges.
+- Before routing, `fine_pitch` in the result lists nets whose class width plus clearance
+  does not fit beside a neighbouring pad (the router would neck them down or give up), with
+  the widest width that fits.
+- Freerouting's log is written while it runs (`history/<stamp>_route/freerouting.log`);
+  each pass is echoed on stderr.
 - `--net` limits routing to some nets; the others and their pads stay obstacles.
 - DSN, SES and the Freerouting log go to `history/<stamp>_route/`.
 - Freerouting (Java 21+, GPL-3) is an external program: `kat pcb route --install`
   downloads the pinned release once into kat's cache, checked by SHA-256
   (`KAT_FREEROUTING=/path/to.jar` uses another copy).
 - Tracks the router narrowed at fine-pitch pads are widened to the net-class width where
-  the clearance allows (`widened`; the rest in `narrow`).
+  the clearance allows (`widened`; the rest in `narrow`), checked against all the router's
+  new copper.
+- The router connects pins to locked vias of their net (port vias, §4.18). A via that
+  ends up joined on one layer only is a `via_dangling` warning; judge it and accept it
+  at the gate (`kat pcb ready --accept via_dangling=REASON`) or connect it.
 - **Judge the result by `check.unconnected` and `check.islands`**, not by the router's
   own `unrouted`: in the spike Freerouting reported 0 unrouted while KiCad found 29
   unconnected pads in pour islands.
@@ -287,12 +308,13 @@ classes → `remove_tracks()` (locked copper stays) → route again.
 
 | Call | Effect |
 |---|---|
-| `b.place_refs(size=0.8)` | reference designators beside each courtyard (above, below, left, right - first spot clear of pads, other references and the edge), upright or 90° for tall parts; unplaceable ones go to the fab layer and are listed |
+| `b.place_refs(size=0.8)` | reference designators beside each courtyard (above, below, left, right - first spot clear of pads, other references, every part's silkscreen drawing and the edge), upright or 90° for tall parts; unplaceable ones go to the fab layer and are listed |
+| `f.set_field(name, value, hide=None)` | a footprint property; `hide=True/False` hides or shows it, None leaves it as it is |
 | `b.board_text(text, at)`, `b.title_from_schematic()` | board name/revision on the silkscreen; title block copied from the schematic |
 | `b.fiducials(3)` | board-only fiducials near the corners, clear of courtyards |
 | `kat pcb refill PCB` | KiCad's zone filler fills every pour and saves the board |
 | `kat pcb fab PCB` | `fab/<name>-<rev>/`: Gerbers (copper, paste, silk, mask, outline) + drill files and map, zipped; `assembly/` position file and BOM (with MPN, from the schematic); IPC-D-356; STEP; 3D renders. Pours are refilled for the Gerbers |
-| `kat pcb ready PCB` | release gate: board check clean (no DRC errors or warnings, parity 0, nothing unconnected or outside the outline), title and revision set, fabrication set complete and newer than the board |
+| `kat pcb ready PCB [--accept KIND=REASON] [--overhang REF]` | release gate: board check clean (no DRC errors or warnings, parity 0, nothing unconnected or outside the outline), title and revision set, fabrication set complete and newer than the board. Warnings judged harmless pass with `--accept` and their reason, edge-mount parts (pads inside, body beyond the edge: `overhang` in the check) with `--overhang`; the result lists both (`accepted`); errors never pass |
 
 ### 4.12 Board checks and review
 
@@ -329,7 +351,7 @@ date, time and kind: `## 12 · 2026-09-27 14:03:11 · command`.
 | Kind | Written by | Content |
 |---|---|---|
 | `command` | every `kat` CLI command on a project (not `lib`, `api`) | the command line, time, exit code, key result lines, the full JSON result collapsed (`<details>`, cut after 150 lines) |
-| `batch` | `kat batch-exec FILE.py [--project DIR] [-- ARGS]` / `kat.batch_exec` | the script's docstring, its source as written, its output, the error and traceback if it failed, the images of snapshots/views it made; kat calls inside add no entries of their own |
+| `batch` | `kat batch-exec FILE.py [--project DIR] [-- ARGS]` / `kat.batch_exec` | the script's docstring, its source as written, its output, the error and traceback if it failed, the images of snapshots/views it made; kat calls inside add no entries of their own. The script's own output goes to stderr, so stdout is kat's JSON only |
 | `plan`, `milestone`, `problem`, `note` | `kat comment --kind K TEXT` (`-` = stdin) / `kat.comment` | the agent's markdown: what comes next, what was reached, what failed and needs another iteration |
 | `snapshot`, `view` | `kat.snapshot`, `kat.pcb.snapshot`, `kat.view`, `kat.pcb.view` called from plain Python | the call, the check summary, the images |
 
@@ -418,7 +440,8 @@ kat.hierarchy.annotate("top/top.kicad_sch")            # after every change of t
   `prefix + page × 100 + n` (R301 = first R on page 3), written into each symbol's
   `instances` for the root's project. Other projects' entries are kept, so a block keeps
   its own numbering; annotate the block as its own root with `per_page=0`.
-- **Arranging boxes:** `s.move("CH_B", to=(x, y))` (or `move-many` together with parts)
+- **Arranging boxes:** `s.move("CH_B", to=(x, y))` (or `move-many` together with parts;
+  `sheet:CH_B` / `part:CH_B` when a part has the box's name, which is refused otherwise)
   moves a box by its top-left corner, with its pins, fields and the wiring that hangs
   only off its pins; wires into shared nets are dragged. `s.sheet_box("CH_A", size=(w, h),
   left=[...], right=[...])` resizes it and puts pins on an edge in an order; a pin that
@@ -442,8 +465,25 @@ with kat.pcb.edit("top/top.kicad_pcb") as b:
   SKiDL block (`Block` field); a part pairs with the block part whose tag is the same
   relative to its instance (`CH_A/RC1/r` ↔ `DUT/r`). `b.instances(block)` lists them.
 - **Environment:** parts on the block board outside the block instance (a SKiDL test
-  harness) are not copied, nor are tracks ending on their pads or items only on their
-  nets; neither are the zones named with `block_environment` (`NAME.block.json`).
+  harness) are not copied, nor is any copper that only serves them: a route from a block
+  pad to a harness pad is left out as a whole, not cut at the harness pad (a stub would
+  remain). Nor are the zones and keep-outs named with `block_environment`
+  (`NAME.block.json`): name the test plane there, and keep-outs that model the
+  neighbouring blocks (the next row, the rows above) so the block is routed as it will
+  sit in the design; they are not stamped.
+- **Ports:** `kat pcb port BLOCK_PCB PORT --at X,Y` (`kat.pcb.block_port`) marks the via or
+  pad where a port leaves the block, best a locked via near the outline's edge that the
+  block's own routing reaches. `kat block check` checks every port point (there, on its
+  net, at most 2.5 mm inside the edge); `stamp` returns them transformed (`ports`) and
+  `b.ports(instance)` reads them back (`<board>.stamps.json`). The design's top level
+  then connects known points instead of pins deep inside a dense block.
+- **Net classes:** the block was routed and checked with its board's classes. A design
+  class on one of its nets that asks a wider track or more clearance than the block's is
+  refused (the stamped copper would be DRC errors); give those nets matching classes or
+  route the block with the design's. A looser class is a warning.
+- **Room:** design parts where the block's parts go (courtyards on the same side) are
+  refused; `make_room=True` / `--make-room` pushes unlocked ones aside. Parts of block
+  instances not stamped yet are no obstacle.
 - **Copied:** the parts' positions, rotations and sides; tracks, arcs, vias (locked unless
   `lock=False`), zones and keep-outs (named `/CH_A/RC1: out node`), graphics not on
   Edge.Cuts, board-only parts (new references). The block board's own groups become
@@ -469,7 +509,7 @@ Each block is a project of its own in `blocks/NAME/` (`KAT_BLOCKS`, else the nea
 | `NAME_block.kicad_sch` | the block's drawing: its parts, ports as hierarchical labels, parameters as `${name}`; designs use this file |
 | `NAME_flat.kicad_sch` | only for a block with sheets inside: the whole block on one sheet, the source of flat stamps (§4.20) |
 | `NAME.kicad_pro/.kicad_pcb` | the block's project (`text_variables`: parameter defaults) and its layout |
-| `NAME.block.json` | type, instance (`DUT`), ports, parameters, environment zones, last check |
+| `NAME.block.json` | type, instance (`DUT`), ports, power ports, parameters, environment zones, port points, last check (with content hashes) |
 | `NAME_REPORT.md` | the block's journal |
 
 - `kat block new NAME` creates it from a template; `kat block build NAME` runs the harness,
@@ -488,11 +528,15 @@ Each block is a project of its own in `blocks/NAME/` (`KAT_BLOCKS`, else the nea
     only the inner instances whose block drawing changed since (`restamped`).
   - `kat block check` also checks the flat drawing (netlist against the harness, ERC) and
     warns when an inner block changed after it was made.
+  - The first build fits the paper to the drawing and puts the harness beside it; what it
+    could not move is listed in `warnings`.
 - The harness parts (outside `DUT`) are the block's **environment**: they are on the
   block's board so that it can be checked, but `stamp` does not copy them.
 - `kat block check NAME`: the schematic check against the harness netlist, the gate's part
-  data (MPN by default) and the board check. Open connections to the environment are
-  expected; anything else counts. The result is stored with the files' times; `stamp` warns
+  data (MPN by default; the harness parts are exempt) the board check and the port
+  points. Open connections to the environment are expected; anything else counts. The
+  result is stored with hashes of the files' content (KiCad's instance data and
+  references left out, which every design using the block rewrites); `stamp` warns
   (`warnings`) when a block changed since its last clean check.
 - A design uses the function (`rc = kat.blocks.use("RC")`, then
   `rc(inp=a, out=b, gnd=gnd, tag="CH_A")`) and stamps the layout by name
@@ -512,8 +556,9 @@ kat stamp top.kicad_sch RC all --at 50.8,50.8 --step 0,40.64 --expect design.net
   detached, the parts are placed, turned and mirrored as in the block, with its field
   positions.
 - **Copied:** the block's drawing: every wire reachable from its pins, and the labels,
-  junctions, no-connects and power symbols on them. Labels are renamed to the design's net
-  names for this instance. PWR_FLAGs are not copied (one per net, added where ERC needs it).
+  junctions, no-connects and power symbols on them, labels anywhere on those wires.
+  Labels are renamed to the design's net names for this instance. PWR_FLAGs are not
+  copied (one per net, added where ERC needs it).
 - The source is the block's own drawing, `NAME_block.kicad_sch` (its ports become labels
   with the instance's net names). For a block schematic without that file, the harness
   must connect to the block by labels: a wire from a block pin to a harness pin is refused.
@@ -531,8 +576,15 @@ kat stamp top.kicad_sch RC all --at 50.8,50.8 --step 0,40.64 --expect design.net
   - Without `--at` each instance goes to its current place if that is free, else to the
     first free area in reading order.
   - `--plan` / `plan=True` reports each area and what is in it, and changes nothing.
-  - Stamping several instances detaches all of them first; their parts are no obstacle for
-    each other, and all areas are kept free (`at + n * step`, or the areas found so far).
+  - Stamping several instances detaches all of them first and parks them beside the page;
+    each is then stamped back in turn (its old place preferred), so no pin lands on an
+    instance still to come. All areas are kept free (`at + n * step`, or the areas found
+    so far).
+  - An instance's own old wiring is no obstacle, also where it stands: a re-stamp in place
+    works (the flat drawing re-stamped after its block changed).
+  - No free area on the page: with `make_room` the instance is stamped where it stands and
+    the rest makes room; the error names the next paper size, or says the page is the
+    largest.
 - **Blocks made of blocks** are stamped from their flat drawing (`NAME_flat.kicad_sch`,
   §4.19): `kat stamp SCH CH all --expect design.net` draws each channel in one piece, its
   RC stages framed inside (`CH_A/RC1 (rc)`) as in the block. A part's key is its sheet
@@ -554,7 +606,16 @@ kat sync top/top.kicad_sch design.net --sheets ch,rc      # remembered in top.ka
   a type without a library block is refused. Everything else is synced flat, as before.
 - **Pins** are the block sheet's ports, wired by labels to the caller's nets. **Fields**
   are the instance's parameters (`ra: 3k3`), used inside as `${ra}` and passed down to
-  nested blocks.
+  nested blocks. Name the caller's nets differently from the ports, not only in case:
+  `SCLK` outside and `sclk` inside gives one ERC "similar labels" warning per instance
+  (use `SPI_SCLK`).
+- **Net names inside blocks:** SKiDL numbers a named net per instance (`LED_A`, `LED_A1`,
+  `SW0_1`); KiCad keeps `LED_A` under each sheet path. The comparison treats them as the
+  same name, so named inner nets are fine.
+- **Renames:** a renamed net is renamed at the root's own parts as well as at the boxes
+  (`renamed` in the result). A box that goes away takes its pin stubs and labels along.
+- **No-connects:** pins tied to SKiDL's `NC` (a builtin, not imported) are not in the
+  netlist; `kat.skidl_blocks.write` records them and sync draws a no-connect flag on each.
 - **Pin sides** follow the block's drawing (`hierarchy.pin_sides`): a port label drawn
   horizontally keeps its side (text to the left = left edge); otherwise inputs go left and
   outputs right, then names (`in`/`inp` left, `out`/`*_out` right), else left. Each side
@@ -571,13 +632,15 @@ kat sync top/top.kicad_sch design.net --sheets ch,rc      # remembered in top.ka
   paths), position, size and pin order stay, also when the block gains or loses ports
   (new pins are added by the side rule, removed ones leave with their wiring). Boxes of
   instances that are gone are removed.
-- Snapshots show one page per instance.
+- Snapshots render one PNG per sheet file (`--pages instances`: one per instance; the
+  SVGs always cover every page). The design's path is remembered too (`top.kat.json`):
+  `kat pcb sync`'s gate compares the schematic with it.
 
 ## 5. Command reference
 
 Library: `kat.new`, `kat.load`, `kat.edit`, `kat.sync`, `kat.stamp`, `kat.check`, `kat.snapshot`, `kat.view`,
 `kat.ready`, `kat.pcb.sync` / `edit` / `check` / `snapshot` / `view` / `route` / `refill` / `fab` /
-`ready` / `drc` / `stamp` / `instances` / `block_environment` (board), `kat.hierarchy`,
+`ready` / `drc` / `stamp` / `instances` / `block_environment` / `block_port` / `remove` (board), `kat.hierarchy`,
 `kat.skidl_blocks`, `kat.blocks`, `kat.nets`, `kat.lib_search`, `kat.lib_show`, `kat.comment`,
 `kat.batch_exec`, `kat.open_kicad`, and the `kat.Sheet` / `kat.pcb.Board` methods; each returns
 what the matching command prints. `kat api NAME` shows any of them (§4.14).
@@ -592,18 +655,19 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `lib search WORDS` / `lib show LIB:NAME` | find symbols; units, pins, body |
 | `list SCH [--near X,Y --radius R]` / `pins SCH REF` / `netlist SCH` | inspect placement (or what is near a point, with uuids), pin positions + outward direction, KiCad's nets |
 | `sync SCH NETLIST [--dry-run] [--sheets TYPE,...]` | bring the design into the drawing (§4.4); block types as sheets (§4.21) |
-| `check SCH [--expect NETLIST]` | ERC + netlist comparison + drawing findings |
+| `check SCH [--expect NETLIST] [--full]` | ERC + netlist comparison + drawing findings (lists cut to 10 per kind, totals in `counts`; `--full` all) |
 | `ready SCH [--expect NETLIST] [--require-field NAME]` | gate before the PCB layout (§6.1) |
 | `pcb sync PCB [--sch] [--dry-run] [--force] [--rip-stale]` | parts and nets onto the board (§4.6) |
 | `pcb refill PCB` | fill all pours and save them (after finishing) |
-| `pcb fab PCB` / `pcb ready PCB` | fabrication set / release gate (§4.11) |
+| `pcb fab PCB` / `pcb ready PCB [--accept KIND=REASON] [--overhang REF]` | fabrication set / release gate (§4.11) |
 | `pcb route PCB [--passes] [--net NAME] [--install]` | Freerouting through kat's DSN/SES, then the board check (§4.10) |
 | `pcb check PCB` / `pcb snapshot PCB` / `pcb view PCB ...` | board DRC + findings, history step with pictures, zoomed view (§4.12) |
-| `pcb stamp PCB BLOCK_PCB INSTANCE... --at X,Y [--step DX,DY] [--rot R] [--no-lock]` | copy a checked block layout onto instances (`all`), then the board check (§4.18) |
-| `pcb instances PCB BLOCK_PCB` / `pcb environment BLOCK_PCB ZONE...` | a block's instances in a design / its test-environment zones |
+| `pcb stamp PCB BLOCK_PCB INSTANCE... --at X,Y [--step DX,DY] [--rot R] [--no-lock] [--make-room]` | copy a checked block layout onto instances (`all`), then the board check (§4.18) |
+| `pcb instances PCB BLOCK_PCB` / `pcb environment BLOCK_PCB ZONE...` / `pcb port BLOCK_PCB PORT --at X,Y` | a block's instances in a design / its test-environment zones and keep-outs / where a port leaves it |
+| `pcb remove PCB --uuid U / --at X,Y [--layer] [--kind] [--net]` | remove single tracks and vias, locked ones too (§4.9) |
 | `block new/build/check NAME [--lib DIR]`, `block list` | the block library (§4.19); BLOCK_PCB above may be a block name |
 | `stamp SCH BLOCK INSTANCE... [--at X,Y] [--step DX,DY] --expect NETLIST [--make-room] [--plan] [--no-frame]` / `frame SCH BLOCK` | draw block instances like the block's schematic, framed (§4.20) |
-| `snapshot SCH [--slug] [--note] [--expect] [--tiles] [--finding-crops N]` | SVG + trimmed PNG + check into `history/`; tiles and finding close-ups |
+| `snapshot SCH [--slug] [--note] [--expect] [--tiles] [--finding-crops N] [--pages files/instances]` | SVG + trimmed PNG + check into `history/`; tiles and finding close-ups; a hierarchy: a PNG per sheet file (or instance) |
 | `view SCH --around REF / --at X,Y / --region X,Y,W,H` | zoomed PNG of one region into `views/` |
 | `add`, `wire`, `connect`, `label`, `power`, `nc` | draw |
 | `move`, `move-many`, `set`, `detach`, `rm` | rearrange (one part or sheet box, or a block move), edit fields, disconnect (a pin or a whole part), delete |
@@ -624,7 +688,9 @@ Global option `--no-report`: do not journal this command.
 - `erc` — KiCad's ERC, all severities, positions in mm.
 - `netlist_vs_expected` — pin groupings compared with the design: `missing`, `extra`,
   `name_differences` (both names deliberate but different), `unnamed` (named in the design,
-  unnamed in the drawing). Generated names (`Net-(...)`, `N$1`) are ignored.
+  unnamed in the drawing), each cut to 10 entries with the totals in `counts` (`--full`).
+  Generated names (`Net-(...)`, `N$1`) and SKiDL's instance numbering of names inside
+  blocks (`LED_A7` for `/ROW0/CELL7/LED_A`) are ignored.
 - `overlaps` — text/text and text/symbol collisions (estimated boxes, 0.3 mm clearance).
 - `body_overlaps` — overlapping part bodies; `off_page` — items outside the frame;
   `duplicates` — the same wire, label or power symbol drawn more than once on one spot.
@@ -646,7 +712,7 @@ netlist difference).
 | reference not annotated (`R?`) or without a number (`ROUT`: KiCad's BOM prints `ROUT?`), empty value | numbered pad without a symbol pin (mounting, shield or thermal pads are often fine) |
 | no footprint; footprint library not in `fp-lib-table` (global + project); footprint file missing | footprint outside the symbol's footprint filters (`ki_fp_filters`) |
 | a symbol pin without a pad of that number (the part cannot be connected) | footprint has no 3D model file |
-| a required field empty (default `MPN`, `--require-field` repeatable, `--no-require`); parts excluded from the BOM are exempt | |
+| a required field empty (default `MPN`, `--require-field` repeatable, `--no-require`); parts excluded from the BOM are exempt (and a block's harness parts in `kat block check`) | |
 
 `ready` is true when there are no errors; `by_problem` counts both lists. Footprints and
 part numbers are chosen in SKiDL (`footprint=`, `part.fields["MPN"]`) and reach the
@@ -709,6 +775,20 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
 | Freerouting narrows tracks at fine-pitch pads below the net-class width (DRC `track_width`); `--router.automatic_neckdown=false` is not applied | on import kat widens them to the class width where the clearance allows and reports the rest (`narrow`) |
 | A reference without a number (`ROUT`) passes ERC and parity, but KiCad treats it as unannotated: the BOM prints `ROUT?` | `kat ready` error `reference_without_number` |
 | No `rsvg-convert` on Windows; `kicad-cli` not on PATH there | PyMuPDF fallback (`[render]` extra, AGPL-3.0); `kicad-cli` auto-discovery or `KICAD_CLI` |
+| `from skidl import NC` fails: `NC` is a builtin SKiDL puts into the namespace; NC pins do not appear in the netlist at all | use `NC` without importing it; `kat.skidl_blocks.write` records NC pins, sync draws the flags |
+| SKiDL numbers a named net inside a block per instance (`LED_A1..A99`); kat compared the name after the sheet path, so every such net was a `name_difference` and no gate passed | the comparison accepts the instance numbering under a sheet path (`/ROW0/CELL1/LED_A` = `LED_A7`) |
+| A net renamed in the design kept its old label at a root-sheet connector (the boxes were relabelled, sync reported nothing): the connector was cut off | labels of the old name on the root are renamed with the boxes and reported (`renamed`) |
+| A re-stamp in the instance's own place was refused: its label sat mid-wire between its own parts and was left floating by the detach | dangling items are pruned after the detach; labels anywhere on the block's wires are copied |
+| A batch stamp's plan found free areas, but the moves then landed on pins of instances not stamped yet | the instances are parked beside the page and stamped back one by one |
+| KiCad writes a design's instance data (and references) into the library's block sheets: block change detection by file time called every used block "changed" | content hashes without instance data and references |
+| The router left a block's harness routes behind in the stamp: stubs from the block pads that shorted into the neighbouring rows | copper that only serves the harness is not stamped |
+| A design's stricter net class on a block's port nets made the stamped copper DRC errors (208 in the LED matrix) | stamp compares the classes and refuses a stricter one |
+| Freerouting knows neither KiCad's hole clearance nor class layers or class-to-class clearance: SPI routed on the analog layer, 60 violations of a 1 mm rule, 73 hole-clearance errors | the DSN carries `use_layer`, `class_class`, via clearances from the hole clearance and an edge band; set them with `netclass(layers=)`, `class_clearance`, `constraints` |
+| A custom DRC rule cannot ask less than the board minimum (edge-mount SMA needed edge clearance 0) | `constraints(edge_exempt=[...])`: minimum 0 plus a generated rule for the rest; `rules()` warns below a minimum |
+| A part on B is mirrored top to bottom, not left to right: a horizontal two-pad part keeps its pad order at rot 0, while pins off its axis swap sides and angles turn the other way | check a bottom part's pads with the board view (`pcb view PCB --around REF --layers bottom`), not by analogy with the top side (§4.8) |
+| The widened neck of a routed track came 0.087 mm from a via the router had just added | the router's vias and wires go in before any widening |
+| Freerouting routes pins to locked port vias of the net; KiCad warns `via_dangling` for such a via joined on one layer only | judge it; `kat pcb ready --accept via_dangling=REASON` |
+| `kat pcb ready` refused an edge-mount connector (outside the outline) and any warning | `overhang` (pads inside) and `--overhang REF`, `--accept KIND=REASON`; errors never pass |
 
 ## 8. Open points
 
@@ -718,5 +798,4 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
   automated; set them in KiCad or as custom rules.
 - Live mode with kicad-python (editor open) is not implemented; the pipeline is headless.
   kicad-python is used only to verify a finished board (`kat open --verify`).
-- SKiDL `NC` pins → no-connect flags in the drawing.
 - Automatic arrangement beyond the placement strip (signal-flow placement) is left to the agent.

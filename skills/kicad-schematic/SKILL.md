@@ -18,7 +18,11 @@ layout.
    `kat check --expect design.net` must keep matching.
 2. Every SKiDL part gets `tag=` and `ref=`; name the nets that matter (`Net("TIA_OUT")`).
    Every `@subcircuit` call gets keyword arguments and `tag=` (the instance name); after
-   `generate_netlist`, call `kat.skidl_blocks.write("design.net")` (SPEC §4.16).
+   `generate_netlist`, call `kat.skidl_blocks.write("design.net")` (SPEC §4.16): it also
+   records the pins tied to `NC` (a SKiDL builtin - `from skidl import NC` fails), which
+   sync marks with no-connect flags. Name a block's port nets differently from its ports,
+   not only in case (`SPI_SCLK` into port `sclk`): `SCLK` gives an ERC "similar labels"
+   warning per instance.
 3. KiCad GUI closed while editing (kat refuses while KiCad's lock file says it is open).
 4. Snapshot after every sync and every arrangement pass.
 5. Keep the design report readable: passes run with `kat batch-exec`, your plans, problems
@@ -143,7 +147,12 @@ and outward directions while computing coordinates. Try a large pass with
   a block's ports at its left and right edges: the boxes take their pin sides from there.
 - Arrange a hierarchical page like parts: `s.move("CH_B", to=(x, y))` moves a sheet box
   (top-left corner) with its pin wiring; `s.sheet_box("CH_A", size=(w, h), right=["out"])`
-  resizes it or moves pins to another edge. Re-syncs keep both.
+  resizes it or moves pins to another edge. Re-syncs keep both. When a part and a box share
+  a name, say `sheet:NAME` or `part:NAME`.
+- A hierarchy's snapshot has one PNG per sheet file (each block page once); `--pages
+  instances` renders every instance. `kat check`/`sync` list at most 10 netlist
+  differences per kind with totals in `counts`; `kat check --full` lists all.
+- `kat batch-exec` prints the pass's own output on stderr; stdout is kat's JSON.
 
 ## Setup
 

@@ -36,9 +36,11 @@ board can move and arrange whole instances (SPEC §4.16).
 **Blocks used many times go into the block library first** (SPEC §4.19): `kat block new
 NAME`, write the function and its test harness in `blocks/NAME/NAME.py`, `kat block build
 NAME`, arrange its schematic, lay out its board (kicad-layout), and repeat until
-`kat block check NAME` is `ok`. The design then calls `kat.blocks.use("NAME")` and its
-board gets the checked layout with `kat pcb stamp`. Fix a block in the library (build,
-check, stamp again), never in a stamped copy.
+`kat block check NAME` is `ok` (the harness parts need no MPN). The design then calls
+`kat.blocks.use("NAME")` and its board gets the checked layout with `kat pcb stamp`. Mark
+where the block's ports leave its board (`kat pcb port`), so the design's top level is
+routed to known points. Fix a block in the library (build, check, stamp again), never in a
+stamped copy.
 
 **Flat or sheets.** Small blocks read best flat: `kat sync`, then `kat stamp` draws each
 instance like the block (SPEC §4.20); a block made of blocks is drawn from its flat

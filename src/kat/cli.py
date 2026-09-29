@@ -773,8 +773,9 @@ def build_parser() -> argparse.ArgumentParser:
     s10 = psp.add_parser("instances", formatter_class=_Fmt, help="instances of a block in a design")
     s10.add_argument("pcb", metavar="PCB"); s10.add_argument("block", metavar="BLOCK_PCB")
     s11 = psp.add_parser("environment", formatter_class=_Fmt, help="name a block board's test-environment zones",
-                         description="Zones listed here (e.g. the plane the block was checked against) are\n"
-                                     "not copied by stamp. Stored in NAME.block.json next to the block board.")
+                         description="Zones and keep-outs listed here (the plane the block was checked against,\n"
+                                     "keep-outs standing for the neighbouring blocks) are not copied by stamp.\n"
+                                     "Stored in NAME.block.json next to the block board.")
     s11.add_argument("block", metavar="BLOCK_PCB"); s11.add_argument("zone", nargs="*", metavar="ZONE")
     s13 = psp.add_parser("remove", formatter_class=_Fmt, help="remove single tracks / vias (locked too)",
                          description="By uuid (from kat pcb check / the board file) or what lies at X,Y; locked\n"
@@ -804,7 +805,7 @@ def build_parser() -> argparse.ArgumentParser:
     bsp = q.add_subparsers(dest="block_cmd", required=True, metavar="ACTION")
     for action, summary in (("new", "create a block: project, SKiDL template with harness"),
                             ("build", "run the harness, sync schematic and board, record ports/params"),
-                            ("check", "schematic, gate and board check; stored for stamp"),
+                            ("check", "schematic, gate (harness parts exempt), board and port points; stored for stamp"),
                             ("list", "the library's blocks and their check state")):
         b = bsp.add_parser(action, formatter_class=_Fmt, help=summary, description=summary)
         if action != "list":
@@ -814,7 +815,7 @@ def build_parser() -> argparse.ArgumentParser:
             b.add_argument("--force", action="store_true", help="pass the board sync gate")
         if action == "check":
             b.add_argument("--require-field", action="append", metavar="NAME",
-                           help="field the gate requires (repeatable; default MPN)")
+                           help="field the gate requires of the block's parts (repeatable; default MPN)")
             b.add_argument("--no-require", action="store_true", help="gate requires no fields")
     s4 = psp.add_parser("view", formatter_class=_Fmt, help="zoomed PNG of one board region",
                         description="Into views/ next to the board; not a history step. Layer sets:\n"
