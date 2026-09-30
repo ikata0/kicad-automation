@@ -90,6 +90,10 @@ def cmd_new(a):
     return kat.new(a.path, a.paper, a.force)
 
 
+def cmd_init(a):
+    return kat.init(a.path, a.force)
+
+
 def cmd_list(a):
     if a.near:
         return kat.load(a.sch).near(a.near, a.radius)
@@ -253,7 +257,8 @@ Points: REF.PIN (pin number, or pin name if unique on the part, e.g. U1.3, R1.2,
         place parts on multiples of 2.54 mm so pins line up."""
 
 WORKFLOW = f"""\
-Workflow (see SPEC.md):
+Workflow (kat init deploys self-contained agent skills):
+   0. kat init [DIR]                       agent skills + managed AGENTS.md instructions
   1. describe the circuit in SKiDL (set tag= on parts), generate design.net
   2. kat new DIR/NAME.kicad_sch            empty project, once
   3. kat sync SCH design.net               parts + connectivity from the design
@@ -266,7 +271,7 @@ Workflow (see SPEC.md):
   9. before handing over: KAT_FEEDBACK.md next to NAME.kicad_pro, kat's bugs,
      improvements, feature requests and documentation gaps met on the way
 
-Design report: every command on a project, every batch-exec pass (with its code) and every
+Design report: project commands (except bootstrap init), every batch-exec pass (with its code) and every
 snapshot (with its pictures) is recorded in NAME_REPORT.md next to NAME.kicad_pro;
 add your own plans, problems and milestones with `kat comment --kind ... TEXT`.
 Look up the Python API with `kat api [NAME]`.
@@ -284,7 +289,7 @@ Connectivity changes belong in SKiDL only. Arrangement commands must keep
 {POINTS}
 
 Every command prints one JSON document. Exit code 0 = fine, 1 = checks failed,
-2 = error ({{"error": ...}}). Mutating commands re-save the file through
+2 = error ({{"error": ...}}). Schematic-editing commands re-save the file through
 `kicad-cli sch upgrade` (validation + KiCad formatting)."""
 
 
@@ -315,6 +320,18 @@ def build_parser() -> argparse.ArgumentParser:
         return q
 
     # --- project, libraries, inspection ---
+    q = cmd("init", cmd_init, "Deploy kat's agent skills into a project directory.",
+            "Copies the three skills and references to .agents/skills and creates or updates\n"
+            "a marked kat section in AGENTS.md, preserving other instructions. Identical\n"
+            "content is unchanged; conflicts fail before writes unless --force is supplied.\n"
+            "Records version and hashes in .agents/kat-init.json, not the design journal.\n"
+            "No KiCad, dependency installation, Git repository or design files are required.",
+            ["kat init", "kat init boards/tia", "kat init . --force"], sch=False)
+    q.add_argument("path", nargs="?", default=".", metavar="DIR",
+                   help="project directory (created if missing; default: current directory)")
+    q.add_argument("--force", action="store_true",
+                   help="replace differing kat-managed content; preserve other instructions")
+
     q = cmd("new", cmd_new, "Create a KiCad project with an empty schematic.",
             "Copies KiCad's default project template next to the new sheet.",
             ["kat new boards/tia/tia.kicad_sch", "kat new boards/tia --paper A3"], sch=False)
@@ -834,8 +851,8 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-# commands that write no journal entry: lookups, and those that write their own
-NOT_JOURNALED = ("api", "lib", "comment", "batch-exec")
+# Lookups, repository bootstrap, and commands that write their own journal entry.
+NOT_JOURNALED = ("api", "lib", "init", "comment", "batch-exec")
 
 
 def main(argv: list[str] | None = None) -> int:

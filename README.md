@@ -9,7 +9,9 @@ command line, without MCP and with the KiCad GUI closed.
 - `kat api [NAME]` — signatures and docstrings of the library, for agents; `kat open FILE
   --verify` — let KiCad's own editor load the result and compare
 - `kat pcb` / `kat.pcb` — the board: build it from the schematic (proven by DRC parity), setup, placement, structure, routing (Freerouting through kat's own Specctra DSN/SES), finishing, fabrication files and a release gate (`src/kat/pcb/`)
-- `skills/kicad-design/` (phases and gates), `skills/kicad-schematic/`, `skills/kicad-layout/` — the agent skills
+- `kat init [DIR]` — deploy bundled agent skills, references and a managed `AGENTS.md`
+  section into a design directory; no automation checkout required
+- `skills/kicad-design/` (phases and gates), `skills/kicad-schematic/`, `skills/kicad-layout/` — the canonical agent skill sources
 - [`SPEC.md`](SPEC.md) — workflow, sync semantics, checks, and the pitfalls found so far
 
 ## In one picture
@@ -140,6 +142,56 @@ Autorouting needs Java 21+ and Freerouting: `kat pcb route --install` downloads 
 release (GPL-3, run as a separate program) once into kat's cache; routing tests are skipped
 without it. `kat open --verify` for boards needs kicad-python (`[gui]` extra, MIT) and a
 display; its tests run only with `pytest -m kicad_gui` (they open KiCad windows).
+
+## Initialize a design directory
+
+After installing kat, run `kat init` in your design directory, or supply a directory
+to create. With the Windows environment above:
+
+```powershell
+.\.venv\Scripts\kat.exe init D:\workspace\my-pcba
+```
+
+On Linux:
+
+```sh
+.venv/bin/kat init ../my-pcba
+```
+
+From an environment where kat is on PATH, `kat init` uses the current directory
+(like `git init`). It deploys:
+
+```text
+AGENTS.md
+.agents/
+  kat-init.json
+  skills/
+    kicad-design/SKILL.md       + references/
+    kicad-schematic/SKILL.md    + references/
+    kicad-layout/SKILL.md       + references/
+```
+
+Start with kicad-design, then the schematic/layout skill. References are included
+for setup, blocks, hierarchy, stamping and routing; SPEC.md need not be copied into
+the design repository. The same assets work from editable installs and installed
+wheels. AGENTS.md points agents to the skills and design rules.
+
+Initialization needs no KiCad and installs no dependencies, creates no circuit or
+KiCad files, initializes no Git repository, and changes no global agent settings.
+`kat new DIR/NAME.kicad_sch` remains the command to create a KiCad project.
+Commit deployed skills, references, AGENTS.md and the manifest with the design so
+instructions and provenance travel with it. Agents must support `.agents/skills`
+discovery to load skills automatically.
+
+Rerunning identical content changes nothing. Differing managed files or an edited
+kat section in AGENTS.md cause one JSON error listing conflicts before any writes.
+Use `kat init DIR --force` for a deliberate bundle update or replacement of local
+customizations. Text outside the marked kat section and extra files are preserved;
+obsolete files are not automatically removed. Invalid/duplicate AGENTS markers
+and redirected managed paths require explicit repair, even with --force.
+The manifest records kat's version and content hashes (no timestamps); a version
+or manifest change also requires a deliberate forced update. Bootstrap is not
+journaled in NAME_REPORT.md, including inside existing KiCad projects.
 
 ## Example
 

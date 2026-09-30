@@ -5,6 +5,14 @@ description: Overview of agent-driven KiCad 10 hardware design with `kat` - the 
 
 # KiCad design with SKiDL + `kat`: phases and gates
 
+This skill bundle is self-contained. Start here, then read `kicad-schematic` or
+`kicad-layout` for the current phase. Use `kat --help`, command help and `kat api`
+for arguments and signatures. No kicad-automation checkout is required.
+
+Read [setup](references/setup.md) when preparing the environment or diagnosing missing
+tools/libraries. Read [block workflow](references/blocks.md) before building reusable
+circuits or updating a block used in designs.
+
 | Phase | Tool | Skill | Gate to leave it |
 |---|---|---|---|
 | 1. Circuit | SKiDL (`tag=`, `ref=`, named nets, `footprint=`, `part.fields["MPN"]`; repeated circuits as `@subcircuit` blocks) | kicad-schematic | netlist generates, ERC-worthy |
@@ -32,22 +40,23 @@ the schematic; board copies in `history/<stamp>_pcb_*/`).
 **Repeated circuits are blocks.** Write a circuit that appears several times as a SKiDL
 `@subcircuit`, call it with keyword arguments and `tag="CH_A"`, and end the script with
 `kat.skidl_blocks.write("design.net")`. Parts then carry `Block = CH_A/...`, and the
-board can move and arrange whole instances (SPEC §4.16).
+board can move and arrange whole instances.
 
-**Blocks used many times go into the block library first** (SPEC §4.19): `kat block new
+**Blocks used many times go into the block library first**: `kat block new
 NAME`, write the function and its test harness in `blocks/NAME/NAME.py`, `kat block build
 NAME`, arrange its schematic, lay out its board (kicad-layout), and repeat until
 `kat block check NAME` is `ok` (the harness parts need no MPN). The design then calls
 `kat.blocks.use("NAME")` and its board gets the checked layout with `kat pcb stamp`. Mark
 where the block's ports leave its board (`kat pcb port`), so the design's top level is
-routed to known points. Fix a block in the library (build, check, stamp again), never in a
-stamped copy.
+routed to known points. See [block workflow](references/blocks.md). Fix a block in the
+library (build, check, stamp again), never in a stamped copy.
 
 **Flat or sheets.** Small blocks read best flat: `kat sync`, then `kat stamp` draws each
-instance like the block (SPEC §4.20); a block made of blocks is drawn from its flat
-drawing (`blocks/NAME/NAME_flat.kicad_sch`, made by `kat block build`: arrange it there
-once). Large or deeply nested blocks go on sheets:
-`kat sync SCH design.net --sheets TYPE,...` (§4.21). Ask the user when unsure; the board
+instance like the block (see [schematic stamping](../kicad-schematic/references/stamping.md));
+a block made of blocks is drawn from its flat drawing
+(`blocks/NAME/NAME_flat.kicad_sch`, made by `kat block build`: arrange it there once).
+Large or deeply nested blocks go on sheets:
+`kat sync SCH design.net --sheets TYPE,...`. Ask the user when unsure; the board
 flow (`kat pcb stamp`) is the same for both.
 
 **Look it up, and let KiCad look.** `kat api NAME` shows any call's signature and
@@ -62,7 +71,7 @@ write `KAT_FEEDBACK.md` next to `NAME.kicad_pro` (for a design with blocks, next
 top level's project). One file per task; when it exists, add to it.
 
 Collect as you go: when kat does something wrong, needs a workaround, costs many passes,
-or the skill, SPEC or `--help` sent you the wrong way, add an entry right then, with the
+or the skill, its references or `--help` sent you the wrong way, add an entry right then, with the
 command and its output at hand. At the end, reread `NAME_REPORT.md`'s `problem` comments
 for anything missed. Report, don't repair: do not change kat's own code unless the user
 asked for that.
@@ -85,7 +94,7 @@ kat <version from `pip show kat`>, <commit of the kicad-automation checkout, if 
 ## Feature requests (something kat cannot do)
 ### F1: <one line>, the task that needed it, how you got by
 
-## Documentation (skill, SPEC or --help missing or wrong)
+## Documentation (skill, references or --help missing or wrong)
 ### D1: <one line>, where you looked, what it should say
 ```
 

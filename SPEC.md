@@ -67,6 +67,26 @@ the PCB and is not used for the schematic.
 
 ## 4. Workflow
 
+### 4.0 Agent initialization
+
+`kat init [DIR] [--force]` / `kat.init(path=".", force=False)` installs all three
+bundled skills and their references under `.agents/skills/` in the target directory,
+creating it if needed. Skills are self-contained agent instructions; this SPEC is
+the maintainer's contract, not a required deployed file. AGENTS.md receives a marked
+kat section; all text outside that section is preserved.
+
+Initialization requires no KiCad, creates no design files, installs no dependencies
+and changes no Git/global-agent settings. It is repository bootstrap, exempt from
+NAME_REPORT.md journaling. `.agents/kat-init.json` records schema, kat version,
+bundle hash and managed-content hashes (AGENTS section only).
+
+Identical content is unchanged. All differing managed content/metadata is reported
+before writes; `--force` explicitly authorizes replacement, including bundle updates.
+Unrelated/obsolete files are preserved. Malformed AGENTS markers, structural path
+collisions and redirected managed paths are refused even with force. Staged per-file
+replacement rolls back handled write failures; it is not whole-tree crash atomic.
+CLI output follows the JSON/error contract, and `kat api init` describes the API.
+
 ### 4.1 First import
 
 ```sh
@@ -355,7 +375,7 @@ date, time and kind: `## 12 · 2026-09-27 14:03:11 · command`.
 
 | Kind | Written by | Content |
 |---|---|---|
-| `command` | every `kat` CLI command on a project (not `lib`, `api`) | the command line, time, exit code, key result lines, the full JSON result collapsed (`<details>`, cut after 150 lines) |
+| `command` | every `kat` CLI command on a project (not `lib`, `api`, repository bootstrap `init`) | the command line, time, exit code, key result lines, the full JSON result collapsed (`<details>`, cut after 150 lines) |
 | `batch` | `kat batch-exec FILE.py [--project DIR] [-- ARGS]` / `kat.batch_exec` | the script's docstring, its source as written, its output, the error and traceback if it failed, the images of snapshots/views it made; kat calls inside add no entries of their own. The script's own output goes to stderr, so stdout is kat's JSON only |
 | `plan`, `milestone`, `problem`, `note` | `kat comment --kind K TEXT` (`-` = stdin) / `kat.comment` | the agent's markdown: what comes next, what was reached, what failed and needs another iteration |
 | `snapshot`, `view` | `kat.snapshot`, `kat.pcb.snapshot`, `kat.view`, `kat.pcb.view` called from plain Python | the call, the check summary, the images |
@@ -650,7 +670,7 @@ kat sync top/top.kicad_sch design.net --sheets ch,rc      # remembered in top.ka
 
 ## 5. Command reference
 
-Library: `kat.new`, `kat.load`, `kat.edit`, `kat.sync`, `kat.stamp`, `kat.check`, `kat.snapshot`, `kat.view`,
+Library: `kat.init`, `kat.new`, `kat.load`, `kat.edit`, `kat.sync`, `kat.stamp`, `kat.check`, `kat.snapshot`, `kat.view`,
 `kat.ready`, `kat.pcb.sync` / `edit` / `check` / `snapshot` / `view` / `route` / `refill` / `fab` /
 `ready` / `drc` / `stamp` / `instances` / `block_environment` / `block_port` / `remove` (board), `kat.hierarchy`,
 `kat.skidl_blocks`, `kat.blocks`, `kat.nets`, `kat.lib_search`, `kat.lib_show`, `kat.comment`,
@@ -663,6 +683,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 
 | Command | Purpose |
 |---|---|
+| `init [DIR] [--force]` | bundled agent skills, references, managed AGENTS section and provenance; no KiCad required (§4.0) |
 | `new PATH` | project + empty sheet |
 | `lib search WORDS` / `lib show LIB:NAME` | find symbols; units, pins, body |
 | `list SCH [--near X,Y --radius R]` / `pins SCH REF` / `netlist SCH` | inspect placement (or what is near a point, with uuids), pin positions + outward direction, KiCad's nets |
@@ -734,6 +755,8 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
 
 | Pitfall | Solution |
 |---|---|
+| Project skills point to SPEC/README in an absent automation checkout | init ships self-contained skills and on-demand relative references with the installed kat package |
+| Updating agent instructions overwrites project-specific guidance or silently loses skill edits | init preserves text outside its AGENTS section, preflights all conflicts and requires --force for differing managed content; commit the deployed bundle and manifest |
 | **kiutils** drops KiCad 8+ syntax (`(hide yes)`, `exclude_from_sim`, `embedded_fonts`, ...) when writing back: hidden fields become visible, the netlist still matches, so only the image shows it | own lossless parser (`kat.sexpr`); never rewrite files with lossy libraries |
 | The former MCP server did not re-escape `\"` in power-symbol descriptions → file unloadable, calls reported success | correct escaping (tested); every save is validated by KiCad (`sch upgrade`) |
 | Visible `#PWR` references after MCP edits (it dropped `hide`) | placed fields are copied from the library definition, including visibility |

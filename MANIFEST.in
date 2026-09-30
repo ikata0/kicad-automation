@@ -1,0 +1,5 @@
+include setup.py
+include skills/AGENTS.template.md
+recursive-include skills/kicad-design *.md
+recursive-include skills/kicad-schematic *.md
+recursive-include skills/kicad-layout *.md

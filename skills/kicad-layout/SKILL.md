@@ -5,9 +5,14 @@ description: Lay out a KiCad 10 PCB from the command line with `kat pcb` / `kat.
 
 # KiCad PCB layout with `kat pcb`
 
-Full specification: `SPEC.md` §4.6–4.12 in the kicad-automation repo. `kat pcb --help` and
+`kat pcb --help` and
 `kat pcb <action> --help` explain every command. "Layout" means the PCB; the schematic
 side is the `kicad-schematic` skill.
+
+Read [block workflow](../kicad-design/references/blocks.md) for reusable circuits,
+[stamping](references/stamping.md) before placing checked block layouts, and
+[routing](references/routing.md) for partial routing or router/DRC failures.
+Environment requirements: [setup](../kicad-design/references/setup.md).
 
 ## Rules
 
@@ -21,6 +26,17 @@ side is the `kicad-schematic` skill.
 4. **Numbers first, pictures second.** DRC counts (`unconnected`, `islands`, clearances,
    `parity`) are exact; pictures show what numbers cannot (fan-out, detours, crowding).
 5. Never trust the router's own "all routed": check `check.unconnected` and `check.islands`.
+
+`ok` means no DRC errors, parity errors or unconnected items, with an outline present.
+`clean` also requires no DRC warnings or kat findings. Release `ready` additionally
+requires title/revision and current fabrication outputs: copper/mask/outline Gerbers,
+drills, position file, BOM and IPC-D-356. Review warnings explicitly; accepted warnings
+need reasons, intentional edge overhang needs named references. DRC errors never pass.
+
+`kat open PCB --verify` compares editor-loaded footprints, nets, copper counts, zones and
+outline. `verified: null` is unavailable verification, not success; report the reason.
+Length tuning, differential pairs, teardrops and impedance-controlled stack-ups are not
+automated: do not claim those requirements are satisfied by autorouting or generic DRC.
 
 ## Loop
 
@@ -146,7 +162,8 @@ with kat.pcb.edit(PCB) as b:
   keep-outs), get `kat pcb check` clean there, then `b.stamp(BLOCK_PCB, {"/CH_A": (x, y),
   ...})` or `kat pcb stamp PCB BLOCK_PCB all --at X,Y --step DX,DY` onto every instance,
   and route only what connects the blocks. Change the block board and stamp again; never
-  edit a stamped copy by hand (SPEC §4.18). On the block board:
+  edit a stamped copy by hand (see [stamping](references/stamping.md)). Re-stamping
+  replaces the instance group's copied items, including its copper. On the block board:
   - name its test environment with `kat.pcb.block_environment`: the plane it relies on,
     and keep-outs that stand for the neighbouring blocks, so it is routed as it will sit
     in the design (none of them is stamped);
@@ -204,7 +221,7 @@ when it exists. Note each finding when it happens, not from memory at the end:
 - **Improvements**: it works but cost time or passes (a route needing hand-laid copper,
   a check that had to be accepted); what would have helped.
 - **Feature requests**: something kat cannot do; the task that needed it.
-- **Documentation**: this skill, SPEC or `--help` missing or wrong; where you looked.
+- **Documentation**: this skill, its references or `--help` missing or wrong; where you looked.
 
 Number the entries (B1, I1, F1, D1), keep facts apart from guesses, write "none" for an
 empty section, and don't change kat's own code unless asked. Template: kicad-design skill,

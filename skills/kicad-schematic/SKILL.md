@@ -5,9 +5,13 @@ description: Develop KiCad 10 schematics from the command line with the `kat` to
 
 # KiCad schematics with SKiDL + `kat`
 
-Full specification: `SPEC.md` in the kicad-automation repo. `kat --help` and
-`kat <command> --help` explain every command with examples. Phases and gates:
+`kat --help` and `kat <command> --help` explain every command with examples. Phases and gates:
 `kicad-design` skill; the PCB: `kicad-layout` skill.
+
+Read [block workflow](../kicad-design/references/blocks.md) for reusable circuits,
+[hierarchy](references/hierarchy.md) before working with sheets, and
+[stamping](references/stamping.md) before drawing repeated flat instances.
+For errors or unexpected edits, consult [troubleshooting](references/troubleshooting.md).
 
 "Arrange" / "arrangement" below means placing things on the schematic sheet, never PCB
 layout.
@@ -18,7 +22,7 @@ layout.
    `kat check --expect design.net` must keep matching.
 2. Every SKiDL part gets `tag=` and `ref=`; name the nets that matter (`Net("TIA_OUT")`).
    Every `@subcircuit` call gets keyword arguments and `tag=` (the instance name); after
-   `generate_netlist`, call `kat.skidl_blocks.write("design.net")` (SPEC §4.16): it also
+   `generate_netlist`, call `kat.skidl_blocks.write("design.net")`: it also
    records the pins tied to `NC` (a SKiDL builtin - `from skidl import NC` fails), which
    sync marks with no-connect flags. Name a block's port nets differently from its ports,
    not only in case (`SPI_SCLK` into port `sclk`): `SCLK` gives an ERC "similar labels"
@@ -52,11 +56,23 @@ polishing forever.
 
 **Before PCB layout**: `kat ready SCH --expect design.net` must say `"ready": true`;
 `kat open SCH --verify` shows that KiCad's schematic editor opens the file.
+This schematic verification only proves the editor opens and stays running, not
+API-level equivalence. `verified: null` means verification was unavailable: report the
+reason, not success.
 Fix its errors in SKiDL, then sync (step 1–2): `footprint="Lib:Name"` on every part
 (`kat ready` names the library/file it cannot find and pins without a pad),
 `part.fields["MPN"] = "..."` for the chosen part. Look at each warning and say in the
 report why it is fine (e.g. an extra pad for the exposed thermal pad, a footprint outside
 the symbol's filters on purpose).
+
+**Check meanings:** `ok` means no ERC errors and a netlist match when `--expect` is
+supplied; `clean` additionally excludes drawing findings, unnamed expected nets and
+name differences. Neither eliminates the need for image review. `ready` requires a
+clean schematic plus annotated references, values, valid footprints/pads and required
+fields (MPN by default; BOM-excluded parts are exempt). Warnings such as extra pads,
+missing 3D models or no `--expect` need review but do not alone block readiness.
+Always supply the expected netlist. Buses and hierarchical sync of non-library block
+types are not supported.
 
 **Last**, before you hand over: the report on kat (below).
 
@@ -137,14 +153,15 @@ and outward directions while computing coordinates. Try a large pass with
 - Many instances of a library block on one flat sheet: arrange the block's own schematic
   once (`blocks/NAME/NAME_block.kicad_sch`), then `kat stamp SCH NAME all --at X,Y
   --step DX,DY --expect design.net` draws every instance like it, framed with its name
-  (SPEC §4.20). `kat frame SCH CH_A` frames any block instance. The areas must be free:
+  (see [stamping](references/stamping.md)). `kat frame SCH CH_A` frames any block instance. The areas must be free:
   `--plan` shows what is in them, `--make-room` moves it out, and without `--at` kat
   finds free areas itself.
 - Hierarchical sheets can be drawn by hand (`s.sheet(...)`, `s.port(...)`, pins as
   `"CH_A.IN"`, parameters as sheet fields used as `${NAME}` inside); run
-  `kat.hierarchy.annotate(root)` after each change of the tree (SPEC §4.17).
-- Library blocks as sheets instead of flat: `kat sync SCH design.net --sheets ch,rc` (SPEC
-  §4.21). The sheets are the library's drawings: arrange and fix them in the block
+  `kat.hierarchy.annotate(root)` after each manual change of the tree (see
+  [hierarchy](references/hierarchy.md)); sync manages its own instance references.
+- Library blocks as sheets instead of flat: `kat sync SCH design.net --sheets ch,rc`.
+  The sheets are the library's drawings: arrange and fix them in the block
   (`blocks/NAME/NAME_block.kicad_sch`, then `kat block check`), not in the design. Draw
   a block's ports at its left and right edges: the boxes take their pin sides from there.
 - Arrange a hierarchical page like parts: `s.move("CH_B", to=(x, y))` moves a sheet box
@@ -165,7 +182,7 @@ to it when it exists. Note each finding when it happens, not from memory at the 
   numbers), your workaround, reproduced or not.
 - **Improvements**: it works but cost time or passes; what would have helped.
 - **Feature requests**: something kat cannot do; the task that needed it.
-- **Documentation**: this skill, SPEC or `--help` missing or wrong; where you looked.
+- **Documentation**: this skill, its references or `--help` missing or wrong; where you looked.
 
 Number the entries (B1, I1, F1, D1), keep facts apart from guesses, write "none" for an
 empty section, and don't change kat's own code unless asked. Template: kicad-design skill,
@@ -173,10 +190,11 @@ empty section, and don't change kat's own code unless asked. Template: kicad-des
 
 ## Setup
 
-`pip install -e <kicad-automation>[dev]` (SKiDL included; add `render` on systems without
+Install `kat[dev]` from the supplied wheel (SKiDL included; add `render` on systems without
 `rsvg-convert`, e.g. Windows). Needs KiCad 10: kat auto-discovers registered Windows
 installations (including custom folders) and the macOS app bundle, or uses
 `kicad-cli` on PATH / `KICAD_CLI`. Discovery is cached in the kat process's
-`KICAD_CLI`, not the calling shell; see README for automatic PowerShell setup.
+`KICAD_CLI`, not the calling shell; see [setup](../kicad-design/references/setup.md)
+for automatic PowerShell setup.
 SKiDL needs
 `KICAD10_SYMBOL_DIR` pointing at KiCad's symbol directory.
