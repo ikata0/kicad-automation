@@ -1,9 +1,7 @@
 """Block identity from SKiDL subcircuits: the block record (ports, parameters), tags
 qualified by the instance path, and sync/replicate on nested blocks."""
 
-import importlib.util
 import json
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -16,9 +14,7 @@ from kat.schematic import Schematic
 
 HERE = Path(__file__).parent / "e2e"
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("kicad-cli") is None or importlib.util.find_spec("skidl") is None,
-    reason="needs kicad-cli and skidl")
+pytestmark = pytest.mark.requires("kicad", "symbols", "footprints", "skidl")
 
 
 @pytest.fixture(scope="module")

@@ -1,19 +1,16 @@
 """Fabrication output and the release gate."""
 
-import shutil
 from pathlib import Path
 
 import pytest
 
 import kat
-from kat.pcb import router
 from test_pcb_placement import pcb  # noqa: F401 (fixture)
 from test_pcb_structure import placed  # noqa: F401 (fixture: parts placed, GND pour on B.Cu)
 from test_sync import project  # noqa: F401 (fixture)
 
-pytestmark = pytest.mark.skipif(shutil.which("kicad-cli") is None, reason="kicad-cli not installed")
-needs_router = pytest.mark.skipif(shutil.which("java") is None or not router.jar_path().exists(),
-                                  reason="Freerouting not installed (kat pcb route --install)")
+pytestmark = pytest.mark.requires("kicad", "symbols", "footprints")
+needs_router = pytest.mark.requires("routing")
 
 
 def test_fab_set_and_gate_refuses_an_unrouted_board(placed):

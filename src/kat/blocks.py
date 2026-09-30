@@ -99,11 +99,11 @@ def _files(d: Path) -> dict[str, Path]:
 
 def _info(d: Path) -> dict:
     f = _files(d)["info"]
-    return json.loads(f.read_text()) if f.exists() else {}
+    return json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
 
 
 def _write_info(d: Path, info: dict) -> None:
-    _files(d)["info"].write_text(json.dumps(info, indent=2) + "\n")
+    _files(d)["info"].write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
 
 
 def new(name: str, lib: Path | str | None = None) -> dict:
@@ -122,7 +122,8 @@ def new(name: str, lib: Path | str | None = None) -> dict:
         raise env.KatError(f"block {name} exists in {root}")
     from . import project
     project.new(f["sch"])
-    f["py"].write_text(TEMPLATE.format(name=name, func=name.lower(), harness=HARNESS))
+    f["py"].write_text(TEMPLATE.format(name=name, func=name.lower(), harness=HARNESS),
+                       encoding="utf-8")
     _write_info(d, {"name": name, "type": name.lower(), "instance": HARNESS, "environment": []})
     return {"block": name, "dir": str(d), "files": {k: str(v) for k, v in f.items() if v.exists()},
             "next": f"edit {f['py'].name}, then kat block build {name}"}
@@ -140,7 +141,7 @@ def build(name: str, lib: Path | str | None = None, force: bool = False) -> dict
     if proc.returncode != 0 or not f["net"].exists():
         raise env.KatError(f"{f['py'].name} failed: {(proc.stderr or proc.stdout).strip()[-1500:]}")
     from .netlist import blocks_file
-    rec = json.loads(blocks_file(f["net"]).read_text())
+    rec = json.loads(blocks_file(f["net"]).read_text(encoding="utf-8"))
     info = _info(d)
     inst = info.get("instance", HARNESS)
     if inst not in rec["instances"]:
@@ -155,15 +156,15 @@ def build(name: str, lib: Path | str | None = None, force: bool = False) -> dict
     _write_info(d, info)
     from . import syncer_hier
     # blocks used inside this one that the library has are sheets too (nested blocks)
-    known = {json.loads(p.read_text()).get("type") for p in d.parent.glob("*/*.block.json")
+    known = {json.loads(p.read_text(encoding="utf-8")).get("type") for p in d.parent.glob("*/*.block.json")
              if p.parent != d}
     inner = {i["type"] for p, i in rec["instances"].items() if p.startswith(inst + "/")} & known
     sch = syncer_hier.run(f["sch"], f["net"], sorted({me["type"]} | inner), generate={inst: f["block"]})
     if sch["parameters"]:                 # the defaults, when the block is opened on its own
         pro = f["sch"].with_suffix(".kicad_pro")
-        data = json.loads(pro.read_text())
+        data = json.loads(pro.read_text(encoding="utf-8"))
         data["text_variables"] = {**data.get("text_variables", {}), **sch["parameters"]}
-        pro.write_text(json.dumps(data, indent=2) + "\n")
+        pro.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     flat = _build_flat(d, rec)
     pcb = kat.pcb.sync(f["pcb"], force=force)
     return {"block": name, "type": me["type"], "ports": info["ports"], "power": info["power"],
@@ -180,7 +181,8 @@ def _children(d: Path, rec: dict) -> dict[str, list[str]]:
     f = _files(d)
     inst = _info(d).get("instance", HARNESS)
     names = {b.ref for b in Schematic(f["block"]).sheet_boxes()}
-    by_type = {json.loads(p.read_text()).get("type"): p.parent.name for p in d.parent.glob("*/*.block.json")}
+    by_type = {json.loads(p.read_text(encoding="utf-8")).get("type"): p.parent.name
+               for p in d.parent.glob("*/*.block.json")}
     out: dict[str, list[str]] = {}
     for n in sorted(names):
         path = f"{inst}/{n}"
@@ -358,7 +360,7 @@ def check(name: str, lib: Path | str | None = None, require: tuple[str, ...] = (
                 "erc_errors": c["erc"]["errors"], "clean": c["clean"]}
         ok = ok and flat["ok"]
         from .netlist import blocks_file
-        rec = json.loads(blocks_file(f["net"]).read_text())
+        rec = json.loads(blocks_file(f["net"]).read_text(encoding="utf-8"))
         seen = info.get("flat", {}).get("children", {})
         newer = [c for c, h in _child_hashes(d, _children(d, rec)).items() if h != seen.get(c)]
         if newer:
@@ -456,7 +458,7 @@ def sheet_of(name_or_path: Path | str, near: Path | str | None = None) -> tuple[
     p = Path(name_or_path)
     if p.suffix == ".kicad_sch" or p.exists():
         info = p.with_suffix(".block.json")
-        return p, (json.loads(info.read_text()).get("instance") if info.exists() else None)
+        return p, (json.loads(info.read_text(encoding="utf-8")).get("instance") if info.exists() else None)
     d = find(str(name_or_path), library(near))
     f = _files(d)
     inst = _info(d).get("instance", HARNESS)
@@ -478,7 +480,7 @@ def board_of(name_or_path: Path | str, near: Path | str | None = None) -> tuple[
     instance on it (from the block file)."""
     p = Path(name_or_path)
     if p.suffix == ".kicad_pcb" or p.exists():
-        info = json.loads(p.with_suffix(".block.json").read_text()) if p.with_suffix(".block.json").exists() else {}
+        info = json.loads(p.with_suffix(".block.json").read_text(encoding="utf-8")) if p.with_suffix(".block.json").exists() else {}
         return p, info.get("instance")
     d = find(str(name_or_path), library(near))
     return _files(d)["pcb"], _info(d).get("instance", HARNESS)

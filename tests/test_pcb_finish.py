@@ -1,6 +1,5 @@
 """Board finishing: references on the silkscreen, board text, title block, fiducials."""
 
-import shutil
 
 import pytest
 
@@ -10,7 +9,7 @@ from test_pcb_placement import pcb  # noqa: F401 (fixture)
 from test_pcb_structure import placed  # noqa: F401 (fixture: parts placed, GND pour on B.Cu)
 from test_sync import project  # noqa: F401 (fixture)
 
-pytestmark = pytest.mark.skipif(shutil.which("kicad-cli") is None, reason="kicad-cli not installed")
+pytestmark = pytest.mark.requires("kicad", "symbols", "footprints")
 
 SILK = ("silk_overlap", "silk_over_copper", "silk_edge_clearance")
 

@@ -17,7 +17,7 @@ def erc(sch: Path) -> dict:
     with tempfile.TemporaryDirectory() as d:
         out = Path(d) / "erc.json"
         env.run_cli("sch", "erc", "--format", "json", "--severity-all", "-o", str(out), str(sch))
-        data = json.loads(out.read_text())
+        data = json.loads(out.read_text(encoding="utf-8"))
     violations = []
     for sheet in data.get("sheets", []):
         for v in sheet.get("violations", []):

@@ -11,7 +11,6 @@ With -m kicad_gui the finished board and schematic are also opened in KiCad (--v
 """
 
 import contextlib
-import importlib.util
 import io
 import json
 import os
@@ -23,14 +22,13 @@ import pytest
 
 import kat
 from kat import cli
-from kat.pcb import Board, router
+from kat.pcb import Board
 from test_e2e_skidl import HERE, design
 
 pytestmark = [
-    pytest.mark.skipif(shutil.which("kicad-cli") is None or importlib.util.find_spec("skidl") is None,
-                       reason="needs kicad-cli and skidl"),
-    pytest.mark.skipif(shutil.which("java") is None or not router.jar_path().exists(),
-                       reason="Freerouting not installed (kat pcb route --install)"),
+    pytest.mark.requires("render"),
+    pytest.mark.requires("kicad", "symbols", "footprints", "skidl"),
+    pytest.mark.requires("routing"),
 ]
 
 

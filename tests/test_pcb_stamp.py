@@ -1,7 +1,6 @@
 """Stamping checked block layouts: hierarchical (nested RC -> BLOCK1 -> top) and flat (SKiDL
 blocks), judged by KiCad's DRC with schematic parity."""
 
-import importlib.util
 import shutil
 import subprocess
 import sys
@@ -19,7 +18,7 @@ from kat.sexpr import find, find_all
 sys.path.insert(0, str(Path(__file__).parent))
 from test_hierarchy import build  # noqa: E402
 
-pytestmark = pytest.mark.skipif(shutil.which("kicad-cli") is None, reason="kicad-cli not installed")
+pytestmark = pytest.mark.requires("kicad", "symbols", "footprints")
 HERE = Path(__file__).parent / "e2e"
 
 
@@ -212,8 +211,7 @@ def test_net_classes_stricter_than_the_blocks_are_refused(hier, tmp_path):
     assert check(pcb)["drc_errors"] == 0
 
 
-@pytest.mark.skipif(not __import__("kat.pcb.router", fromlist=["x"]).jar_path().exists()
-                    or shutil.which("java") is None, reason="needs Freerouting and Java")
+@pytest.mark.requires("routing")
 def test_router_connects_the_rest_and_keeps_block_copper(hier, tmp_path):
     from kat.pcb import router
     pcb = copy_of(hier, tmp_path)["top"]
@@ -226,7 +224,7 @@ def test_router_connects_the_rest_and_keeps_block_copper(hier, tmp_path):
 
 # --- flat: SKiDL blocks, parts paired by Block + tag --------------------------------------
 
-@pytest.mark.skipif(importlib.util.find_spec("skidl") is None, reason="needs skidl")
+@pytest.mark.requires("skidl")
 def test_flat_stamp_by_block_and_tag(tmp_path, monkeypatch):
     monkeypatch.setenv("KAT_REPORT", "0")
     nets = {}

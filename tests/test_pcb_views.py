@@ -1,7 +1,6 @@
 """Board check, snapshots and views (kat.pcb.check / snapshot / view)."""
 
 import json
-import shutil
 from pathlib import Path
 
 import pytest
@@ -11,7 +10,7 @@ from kat import cli
 from test_pcb_setup import board  # noqa: F401 (fixture: 3-part board with outline)
 from test_sync import project  # noqa: F401 (fixture)
 
-pytestmark = pytest.mark.skipif(shutil.which("kicad-cli") is None, reason="kicad-cli not installed")
+pytestmark = pytest.mark.requires("kicad", "symbols", "footprints")
 
 
 def test_check_reports_unconnected_and_parts_outside(board):
@@ -24,6 +23,7 @@ def test_check_reports_unconnected_and_parts_outside(board):
     assert kat.pcb.check(board)["outside_outline"] == ["R1"]
 
 
+@pytest.mark.requires("render")
 def test_snapshot_pictures_tiles_crops(board):
     s = kat.pcb.snapshot(board, slug="first", note="three parts", tiles=True, finding_crops=2,
                          three_d=False)
@@ -39,6 +39,7 @@ def test_snapshot_pictures_tiles_crops(board):
     assert (d / "note.md").read_text().strip() == "three parts"
 
 
+@pytest.mark.requires("render")
 def test_view_around_part_and_cache(board, capsys):
     v = kat.pcb.view(board, around="R1", layers="copper")
     assert Path(v["png"]).exists() and v["layers"][:2] == ["B.Cu", "F.Cu"]

@@ -6,7 +6,6 @@ Oracles: kicad-cli's IPC-D-356 export (absolute pad positions) and DRC's library
 
 import json
 import re
-import shutil
 from pathlib import Path
 
 import pytest
@@ -15,7 +14,6 @@ from kat import env
 from kat.pcb import Board
 from kat.sexpr import Sym
 
-pytestmark = pytest.mark.skipif(shutil.which("kicad-cli") is None, reason="kicad-cli not installed")
 
 FOOTPRINTS = ["Resistor_SMD:R_0603_1608Metric",
               "Package_SO:SOIC-8_3.9x4.9mm_P1.27mm",
@@ -58,6 +56,7 @@ def board(tmp_path_factory):
     return Board(path)
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints")
 def test_pad_positions_match_kicad(board):
     kicad = ipc356(board.path)
     ours = {(p.ref, p.number): (p.x, p.y) for p in board.pads() if p.number}
@@ -67,6 +66,7 @@ def test_pad_positions_match_kicad(board):
     assert not bad, list(bad.items())[:5]
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints")
 def test_placed_footprints_equal_their_library_copy(board, tmp_path):
     """DRC compares each footprint, un-rotated and un-flipped, with the library."""
     out = tmp_path / "drc.json"
@@ -76,6 +76,7 @@ def test_placed_footprints_equal_their_library_copy(board, tmp_path):
     assert "lib_footprint_mismatch" not in kinds and "lib_footprint_issues" not in kinds
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints")
 def test_courtyard_contains_the_pads_and_sides(board):
     for f in board.footprints():
         cy = f.courtyard()
@@ -86,6 +87,7 @@ def test_courtyard_contains_the_pads_and_sides(board):
                    if l.endswith(".Cu") and p.kind == "smd")
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints")
 def test_flip_and_rotate_in_place(board, tmp_path):
     b = Board(board.path)
     f = b.footprint("U3")  # R_0603 at 90 degrees, top side

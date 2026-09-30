@@ -158,16 +158,19 @@ def test_macos_bundle_discovery_is_cached(registry, monkeypatch):
 
 def test_run_cli_passes_cached_path_to_child_environment(registry, monkeypatch):
     monkeypatch.setattr(env.shutil, "which", lambda name: "path-kicad-cli")
+    monkeypatch.setattr(env, "_cli_encoding", lambda: "cp1252")
     calls = []
 
     def run(args, **kwargs):
         calls.append((args, kwargs))
-        return subprocess.CompletedProcess(args, 0, "10.0.6\n", "")
+        return subprocess.CompletedProcess(args, 0, b"10.0.6\r\n", b"")
 
     monkeypatch.setattr(env.subprocess, "run", run)
     assert env.run_cli("version").stdout == "10.0.6\n"
     assert calls[0][0] == ["path-kicad-cli", "version"]
     assert calls[0][1]["env"]["KICAD_CLI"] == "path-kicad-cli"
+    assert "text" not in calls[0][1]
+    assert calls[0][1]["env"]["LANG"] == "C"
 
 
 def test_stock_symbols_follow_registered_installation(registry, tmp_path, monkeypatch):

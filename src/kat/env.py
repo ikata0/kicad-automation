@@ -1,4 +1,9 @@
-"""Locate kicad-cli and the KiCad symbol and footprint libraries on Linux, macOS and Windows."""
+"""Locate KiCad and its libraries.
+
+KiCad's text formats use UTF-8; associated kat text follows that convention,
+explicitly rather than inheriting the OS default.
+Captured CLI diagnostics have a separate, platform-specific encoding.
+"""
 
 from __future__ import annotations
 
@@ -84,11 +89,30 @@ def kicad_cli() -> str:
     raise KatError("kicad-cli not found; install KiCad 10, put kicad-cli on PATH or set KICAD_CLI")
 
 
+def _cli_encoding() -> str:
+    if sys.platform == "win32":
+        import ctypes
+        # KiCad 10's wxWidgets diagnostics use the Windows ANSI code page, even
+        # when Python's UTF-8 mode is on; GetACP is independent of Python's mode.
+        return f"cp{ctypes.windll.kernel32.GetACP()}"
+    return "utf-8"
+
+
 def run_cli(*args: str, check: bool = True) -> subprocess.CompletedProcess:
     cli = kicad_cli()
     # English output, so messages are stable regardless of the user's locale.
     env = dict(os.environ, LANG="C", LC_ALL="C", LANGUAGE="en")
-    proc = subprocess.run([cli, *args], capture_output=True, text=True, env=env)
+    encoding = _cli_encoding()
+    # Windows text-mode pipe readers can lose decoding errors in worker threads.
+    # Capture bytes first so strict decoding failures reach the caller.
+    proc = subprocess.run([cli, *args], capture_output=True, env=env)
+    for stream in ("stdout", "stderr"):
+        try:
+            text = getattr(proc, stream).decode(encoding)
+        except UnicodeDecodeError as e:
+            raise KatError(f"kicad-cli {' '.join(args[:2])} {stream} output is not valid "
+                           f"{encoding} (exit {proc.returncode}): {e}") from e
+        setattr(proc, stream, text.replace("\r\n", "\n").replace("\r", "\n"))
     if check and proc.returncode != 0:
         raise KatError(f"kicad-cli {' '.join(args[:2])} failed: {(proc.stderr or proc.stdout).strip()}")
     return proc
@@ -144,7 +168,7 @@ def _read_lib_table(path: Path, project_dir: Path | None, depth: int = 0) -> dic
     if not path.exists() or depth > 5:
         return out
     from .sexpr import find, loads
-    for lib in loads(path.read_text())[1:]:
+    for lib in loads(path.read_text(encoding="utf-8"))[1:]:
         if not isinstance(lib, list) or str(lib[0]) != "lib":
             continue
         name, uri, typ = (find(lib, k) for k in ("name", "uri", "type"))

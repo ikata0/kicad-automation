@@ -22,7 +22,8 @@ def new(path: Path | str, paper: str = "A4", force: bool = False) -> dict:
     if tmpl.exists():
         shutil.copy(tmpl, pro)
     elif not pro.exists():
-        pro.write_text('{"meta": {"filename": "%s.kicad_pro", "version": 3}}\n' % name)
+        pro.write_text('{"meta": {"filename": "%s.kicad_pro", "version": 3}}\n' % name,
+                       encoding="utf-8")
     Schematic.create(sch, paper)
     out = {"project": str(pro), "schematic": str(sch)}
     if report.enabled():

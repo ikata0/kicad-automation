@@ -1,5 +1,4 @@
 import json
-import shutil
 from pathlib import Path
 
 import pytest
@@ -9,7 +8,7 @@ from kat import cli, library, netlist
 from kat.schematic import Schematic
 from kat.sexpr import dumps, loads
 
-needs_kicad = pytest.mark.skipif(shutil.which("kicad-cli") is None, reason="kicad-cli not installed")
+needs_kicad = pytest.mark.requires("kicad", "symbols", "footprints")
 
 
 def run(capsys, *argv):
@@ -36,7 +35,7 @@ def test_sexpr_rejects_unbalanced():
 
 # --- library --------------------------------------------------------------------
 
-@needs_kicad
+@pytest.mark.requires("symbols")
 def test_derived_symbol_is_flattened():
     sym = library.resolve("Amplifier_Operational:ADA4625-2ARDZ")
     names = [str(s[1]) for s in sym if isinstance(s, list) and str(s[0]) == "symbol"]
@@ -45,7 +44,7 @@ def test_derived_symbol_is_flattened():
     assert {p.number for p in library.pins(sym)} == {str(i) for i in range(1, 10)}
 
 
-@needs_kicad
+@pytest.mark.requires("symbols")
 def test_search_ranks_name_matches():
     hits = library.search("lm358")
     assert hits[0]["lib_id"].startswith("Amplifier_Operational:LM358")
@@ -219,6 +218,7 @@ def test_results_are_rounded_and_flag_removal_warns(tmp_path):
 
 
 @needs_kicad
+@pytest.mark.requires("render")
 def test_view_tiles_and_finding_crops(tmp_path):
     sch = tmp_path / "v" / "v.kicad_sch"
     kat.new(sch)

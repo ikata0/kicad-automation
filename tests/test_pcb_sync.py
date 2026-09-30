@@ -1,7 +1,6 @@
 """Board sync (kat.pcb.sync): schematic -> board, proven by KiCad's DRC schematic parity."""
 
 import json
-import shutil
 
 import pytest
 
@@ -11,7 +10,7 @@ from kat.pcb import Board
 from test_gate import GOOD_FP, MPN
 from test_sync import BASE_NETS, BASE_PARTS, project, write_netlist  # noqa: F401 (fixture)
 
-pytestmark = pytest.mark.skipif(shutil.which("kicad-cli") is None, reason="kicad-cli not installed")
+pytestmark = pytest.mark.requires("kicad", "symbols", "footprints")
 
 
 def design(project, tmp_path, parts=BASE_PARTS, nets=BASE_NETS, footprints=GOOD_FP, fields=MPN,

@@ -35,6 +35,7 @@ def test_python_module_runs_the_cli():
     assert out.returncode == 0 and "kat.edit" in out.stdout
 
 
+@pytest.mark.requires("kicad", "symbols")
 def test_edit_error_saves_nothing(tmp_path):
     import kat
     sch = tmp_path / "b" / "b.kicad_sch"

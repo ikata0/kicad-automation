@@ -20,7 +20,9 @@ most two wires away from a ground wire.
 import os
 import sys
 
-os.environ.setdefault("KICAD10_SYMBOL_DIR", "/usr/share/kicad/symbols")
+from kat.env import stock_symbol_dir
+if symbols := stock_symbol_dir():
+    os.environ.setdefault("KICAD10_SYMBOL_DIR", str(symbols))
 
 from skidl import KICAD10, Net, Part, generate_netlist, set_default_tool  # noqa: E402
 

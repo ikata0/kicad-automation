@@ -5,8 +5,8 @@ from kat import render
 
 
 @pytest.mark.parametrize("zoom", [1.0, 2.0])
+@pytest.mark.requires("pymupdf")
 def test_pymupdf_uses_snapshot_pixel_scale(tmp_path, monkeypatch, zoom):
-    pytest.importorskip("pymupdf")
     monkeypatch.setattr(render.shutil, "which", lambda name: None)
     svg, png = tmp_path / "scale.svg", tmp_path / "scale.png"
     svg.write_text(

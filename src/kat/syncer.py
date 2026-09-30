@@ -67,7 +67,7 @@ def read_no_connect(design: Path) -> set[tuple[str, str]]:
     f = netlist.blocks_file(Path(design))
     if not f.exists():
         return set()
-    return {tuple(x.rsplit(".", 1)) for x in json.loads(f.read_text()).get("no_connect", [])}
+    return {tuple(x.rsplit(".", 1)) for x in json.loads(f.read_text(encoding="utf-8")).get("no_connect", [])}
 
 
 def power_names() -> set[str]:

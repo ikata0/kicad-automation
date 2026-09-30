@@ -313,7 +313,7 @@ class SetupMixin:
         ``class_clearance`` ({"A B": mm}), with pending changes."""
         from ..syncer_hier import settings_file
         f = settings_file(self.path)
-        saved = (json.loads(f.read_text()) if f.exists() else {}).get("route", {})
+        saved = (json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}).get("route", {})
         out = {k: dict(saved.get(k, {})) for k in ("layers", "class_clearance")}
         for k, v in self._route_edits.items():
             out[k].update(v)
@@ -381,7 +381,7 @@ class SetupMixin:
     def _project_data(self) -> dict:
         """The .kicad_pro as it will be saved: the file plus the pending edits."""
         pro = self.path.with_suffix(".kicad_pro")
-        data = json.loads(pro.read_text()) if pro.exists() else {}
+        data = json.loads(pro.read_text(encoding="utf-8")) if pro.exists() else {}
         if not self._pro_edits:
             return data
         ns = data.setdefault("net_settings", {})
@@ -413,17 +413,17 @@ class SetupMixin:
         self._write_route_settings()
         pro = self.path.with_suffix(".kicad_pro")
         if self._pro_edits:
-            pro.write_text(json.dumps(self._project_data(), indent=2) + "\n")
+            pro.write_text(json.dumps(self._project_data(), indent=2) + "\n", encoding="utf-8")
             self._pro_edits = []
         if self._rules_text is not None or self._gen_rules:
             dru = self.path.with_suffix(".kicad_dru")
-            old = dru.read_text() if dru.exists() else ""
+            old = dru.read_text(encoding="utf-8") if dru.exists() else ""
             own, gen = _split_rules(old)
             if self._rules_text is not None:
                 own = [self._rules_text] if self._rules_text else []
             gen.update(self._gen_rules)
             body = "\n".join(own + [gen[k] for k in sorted(gen)])
-            dru.write_text(f"(version 1)\n{body}\n" if body else "(version 1)\n")
+            dru.write_text(f"(version 1)\n{body}\n" if body else "(version 1)\n", encoding="utf-8")
             self._rules_text = None
             self._gen_rules = {}
 

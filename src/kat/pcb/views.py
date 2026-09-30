@@ -138,9 +138,9 @@ def snapshot(pcb: Path | str, slug: str = "", note: str | None = None, out: Path
         if want and name in ("top", "bottom"):
             tile_list[name] = _tiles(svg, target / "tiles" / name, area, TILE_PPM)
     res = tidy(checks.run(pcb))
-    (target / "check.json").write_text(json.dumps(res, indent=1))
+    (target / "check.json").write_text(json.dumps(res, indent=1), encoding="utf-8")
     if note:
-        (target / "note.md").write_text(note + "\n")
+        (target / "note.md").write_text(note + "\n", encoding="utf-8")
     result = {"dir": str(target), "images": images}
     if tile_list:
         result["tiles"] = tile_list

@@ -50,7 +50,7 @@ def _block_types(path: Path) -> dict[str, str]:
     f = blocks_file(path)
     if not f.exists():
         return {}
-    return {name: i["type"] for name, i in json.loads(f.read_text()).get("instances", {}).items()}
+    return {name: i["type"] for name, i in json.loads(f.read_text(encoding="utf-8")).get("instances", {}).items()}
 
 
 def read_design(path: Path) -> tuple[dict[str, Component], dict[str, Net]]:

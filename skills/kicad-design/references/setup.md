@@ -29,7 +29,6 @@ Open both editors once, accept default global library tables, and close them.
 Run this using the same Python environment that contains kat:
 
 ```powershell
-$env:PYTHONUTF8 = '1'
 $env:KICAD_CLI = & python -c "from kat.env import kicad_cli; print(kicad_cli())"
 if ($LASTEXITCODE -ne 0) { throw 'KiCad discovery failed' }
 $kicadBin = Split-Path $env:KICAD_CLI
@@ -37,10 +36,19 @@ $env:Path = "$kicadBin;$env:Path"
 $env:KICAD10_SYMBOL_DIR = Join-Path (Split-Path $kicadBin) 'share\kicad\symbols'
 ```
 
-Repeat those variables in new shells. Windows Python otherwise may use a legacy
-encoding. Keep SKiDL's output files on the same drive as its source script:
-cross-drive relative paths can fail. Developer pytest runs can use a dedicated
-same-drive `--basetemp` directory, which pytest clears.
+Repeat those variables in new shells for standalone SKiDL. The automation
+repository's pytest suite discovers KiCad and libraries automatically.
+Kat explicitly uses strict UTF-8 for KiCad files and associated metadata, reports,
+notes and exports, independent of Python's OS-default encoding: `PYTHONUTF8` is
+not needed for kat's file handling. Invalid UTF-8 is an error, not silently
+replaced. Terminal and third-party tool encodings remain unchanged.
+Captured kicad-cli diagnostics use the Windows system ANSI code page on Windows,
+UTF-8 elsewhere. Windows KiCad can truncate diagnostics containing characters
+outside that code page; this does not change the UTF-8 file format.
+Keep SKiDL's output files on the same drive as its source script:
+cross-drive relative paths can fail. The automation repository's pytest suite
+chooses a same-drive temporary parent automatically on Windows when needed.
+An explicit `--basetemp` is still supported, but pytest clears that directory.
 
 On Linux with stock libraries, SKiDL commonly uses
 `KICAD10_SYMBOL_DIR=/usr/share/kicad/symbols`; adjust for the actual installation.

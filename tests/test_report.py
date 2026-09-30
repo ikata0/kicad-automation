@@ -4,7 +4,6 @@ comments and snapshots."""
 import io
 import json
 import re
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -15,19 +14,19 @@ import kat
 from kat import cli, report
 from test_sync import project  # noqa: F401 (fixture)
 
-pytestmark = pytest.mark.skipif(shutil.which("kicad-cli") is None, reason="kicad-cli not installed")
 
 
 def entries(sch: Path) -> list[tuple[int, str, str]]:
     """(number, kind, body) of every entry."""
-    text = (sch.parent / f"{sch.stem}_REPORT.md").read_text()
+    text = (sch.parent / f"{sch.stem}_REPORT.md").read_text(encoding="utf-8")
     parts = re.split(r"^## (\d+) · [\d-]+ [\d:]+ · (\w+)\n", text, flags=re.M)
     return [(int(parts[i]), parts[i + 1], parts[i + 2].strip("\n")) for i in range(1, len(parts), 3)]
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints")
 def test_new_creates_report_and_commands_are_numbered(project):
     report_file = project.parent / "p_REPORT.md"
-    assert report_file.read_text().startswith("# p: design report")
+    assert report_file.read_text(encoding="utf-8").startswith("# p: design report")
     assert cli.main(["add", str(project), "Device:R", "50.8", "50.8", "--ref", "R1"]) == 0
     assert cli.main(["check", str(project)]) == 1          # ERC: R1 unconnected
     got = entries(project)
@@ -41,6 +40,7 @@ def test_new_creates_report_and_commands_are_numbered(project):
     assert len(entries(project)) == 3
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints")
 def test_numbering_continues_across_processes(project):
     subprocess.run([sys.executable, "-m", "kat", "check", str(project)], check=True,
                    capture_output=True)
@@ -67,12 +67,15 @@ def test_concurrent_appends_have_unique_numbers(tmp_path):
     assert [int(n) for n in nums] == list(range(1, 33))
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints")
 def test_errors_are_journaled_with_exit_code(project):
     assert cli.main(["move", str(project), "R9", "--to", "10,10"]) == 2
     n, kind, body = entries(project)[-1]
     assert "· exit 2" in body and "no symbol R9" in body
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints")
+@pytest.mark.requires("render")
 def test_batch_keeps_the_code_output_and_images_but_no_nested_entries(project, tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     script = tmp_path / "pass1.py"
@@ -99,6 +102,7 @@ def test_batch_keeps_the_code_output_and_images_but_no_nested_entries(project, t
     assert img and (project.parent / img.group(1)).is_file()
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints")
 def test_failed_batch_reports_the_error_and_saves_nothing(project, tmp_path):
     script = tmp_path / "bad.py"
     script.write_text("import kat\n"
@@ -113,6 +117,7 @@ def test_failed_batch_reports_the_error_and_saves_nothing(project, tmp_path):
     assert 'File "' in body and "bad.py" in body and "runpy" not in body
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints")
 def test_batch_exec_stdout_is_json_only(project, tmp_path, capsys):
     """B19: the script's prints go to stderr; stdout parses as kat's JSON."""
     script = tmp_path / "talk.py"
@@ -122,6 +127,7 @@ def test_batch_exec_stdout_is_json_only(project, tmp_path, capsys):
     assert json.loads(out)["ok"] and "hello from the pass" in err
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints")
 def test_comment_from_cli_and_stdin(project, monkeypatch):
     monkeypatch.chdir(project.parent.parent)                      # project found in a subdir
     assert cli.main(["comment", "--kind", "plan", "Place", "**U1**", "first."]) == 0
@@ -134,6 +140,8 @@ def test_comment_from_cli_and_stdin(project, monkeypatch):
         kat.comment("x", "idea", project)
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints")
+@pytest.mark.requires("render")
 def test_library_snapshot_outside_a_batch_gets_its_own_entry(project):
     kat.snapshot(project, slug="lib")
     n, kind, body = entries(project)[-1]
@@ -141,6 +149,7 @@ def test_library_snapshot_outside_a_batch_gets_its_own_entry(project):
     assert f"p_REPORT/{n:03d}_lib/p.png" in body
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints")
 def test_long_results_are_cut(project):
     big = {"items": [{"n": i} for i in range(200)]}
     root = project.parent.resolve()
@@ -148,6 +157,7 @@ def test_long_results_are_cut(project):
     assert "... cut:" in block and block.count("\n") < report.JSON_LINES + 10
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints")
 def test_disabled_writes_nothing(project, monkeypatch):
     monkeypatch.setenv("KAT_REPORT", "0")
     assert cli.main(["check", str(project)]) == 0

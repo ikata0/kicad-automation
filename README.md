@@ -70,7 +70,6 @@ Open a **new PowerShell window** after installation and run the following from t
 repository root:
 
 ```powershell
-$env:PYTHONUTF8 = '1'
 python -m venv .venv
 .\.venv\Scripts\python.exe -m pip install -e '.[dev,render]'
 .\.venv\Scripts\kat.exe --help
@@ -86,7 +85,7 @@ cannot change its calling PowerShell's environment; separate kat invocations
 discover it again automatically. For an unregistered installation elsewhere, set
 `$env:KICAD_CLI = 'D:\your-install\bin\kicad-cli.exe'` explicitly.
 
-For development tests or standalone SKiDL scripts, populate the PowerShell
+For standalone SKiDL scripts, populate the PowerShell
 session's variables automatically from kat's discovery:
 
 ```powershell
@@ -95,30 +94,31 @@ if ($LASTEXITCODE -ne 0) { throw 'KiCad discovery failed' }
 $kicadBin = Split-Path $env:KICAD_CLI
 $env:Path = "$kicadBin;$env:Path"
 $env:KICAD10_SYMBOL_DIR = Join-Path (Split-Path $kicadBin) 'share\kicad\symbols'
-.\.venv\Scripts\python.exe -m pytest -m 'not slow' --basetemp .venv\pytest-tmp
 ```
 
-Known test limitation on Python 3.12: `test_cli_and_library_give_the_same_file`
-passes a negative comma-separated `--stub` value in a form argparse rejects.
-For CLI use, write `--stub=-5.08,0` rather than `--stub -5.08,0` (see SPEC.md §7).
+Repeat that setup in new terminals for standalone SKiDL, which needs
+`KICAD10_SYMBOL_DIR` before import. The test suite does this automatically;
+see [Running tests](#running-tests).
+Kat explicitly reads and writes KiCad files and its associated metadata, reports,
+notes and exports as **UTF-8**: KiCad's text formats use UTF-8, and kat's accompanying
+text follows the same convention. This is a file-format choice, not the operating
+system's default text encoding. No `PYTHONUTF8` setting is
+needed for kat's file handling; Python's global and terminal encodings are left
+unchanged. Invalid UTF-8 is reported rather than replaced or read with a legacy
+fallback. Kat itself discovers the stock libraries relative to kicad-cli.
 
-Repeat the development-test setup in new terminals when running tests or SKiDL
-scripts. Tests check PATH for `kicad-cli` even if `KICAD_CLI` is set, while SKiDL
-needs `KICAD10_SYMBOL_DIR` to find the installed symbol libraries.
-Repeat `PYTHONUTF8=1` when using kat too: KiCad files and
-reports contain UTF-8 characters, but Windows Python may otherwise use a legacy
-default encoding. Kat itself discovers the stock libraries relative to kicad-cli.
-The dedicated `--basetemp` directory is cleared by pytest; it keeps test projects
-on the same drive as the repository, avoiding SKiDL's cross-drive relative-path
-error when Windows TEMP is on C: and the checkout is on another drive.
+KiCad's captured console diagnostics are separate: KiCad 10 on Windows emits
+them in the system ANSI code page, which kat selects explicitly; other platforms
+use UTF-8. Windows KiCad can truncate diagnostic text containing characters
+outside its ANSI code page, even though the input files and Unicode path arguments
+are preserved. Changing `PYTHONUTF8` cannot repair text KiCad did not emit.
+Standalone SKiDL, Java and other third-party tools retain their own encoding
+behavior; kat does not change their defaults.
 The `render` extra supplies PyMuPDF for PNG snapshots on
 Windows, where `rsvg-convert` is usually unavailable. To run the optional autorouting
 tests, install Java 21+ (for example,
 `winget install --id EclipseAdoptium.Temurin.21.JDK --exact --source winget`),
 open a new terminal, then run `.\.venv\Scripts\kat.exe pcb route --install`.
-GUI tests are opt-in (`.\.venv\Scripts\python.exe -m pytest -m kicad_gui`); they
-require the `[gui]` extra and currently skip on Windows because their display
-check expects Linux `DISPLAY` or `WAYLAND_DISPLAY`.
 
 The editable installation above is ready to use; activation is optional because
 the commands use the environment's executables directly. To build a wheel and
@@ -133,7 +133,7 @@ python -m venv .venv\installed
 ```
 
 Use the wheel filename produced by the build if the package version changes.
-This installation also auto-discovers KiCad; keep the UTF-8 setting when using it.
+This installation also auto-discovers KiCad and uses explicit UTF-8 file encoding.
 
 Requirements: KiCad 10 (auto-discovered on Windows/macOS, or `kicad-cli` on PATH,
 or `KICAD_CLI` pointing to the executable), Python ≥ 3.10.
@@ -142,6 +142,67 @@ Autorouting needs Java 21+ and Freerouting: `kat pcb route --install` downloads 
 release (GPL-3, run as a separate program) once into kat's cache; routing tests are skipped
 without it. `kat open --verify` for boards needs kicad-python (`[gui]` extra, MIT) and a
 display; its tests run only with `pytest -m kicad_gui` (they open KiCad windows).
+
+## Running tests
+
+After the development installation, run from the repository root. **Windows
+(PowerShell)**:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest
+```
+
+**Linux**:
+
+```sh
+.venv/bin/python -m pytest
+```
+
+These commands include slow tests and all available **non-GUI** integration
+tests. No activation, manual KiCad PATH/library setup, `PYTHONUTF8` setting or
+`--basetemp` argument is needed. Pytest reuses kat's KiCad discovery before test
+collection and exposes the installation and library paths only inside its own
+process and child processes. Explicit executable/library overrides are honored.
+
+Missing KiCad, libraries, SKiDL, rendering support or Java/Freerouting produces
+a dependency warning and targeted skips; independent tests still run. A startup
+inventory and dependency-skip summary show the coverage limitations. Broken
+installed tools, incompatible KiCad/Java versions and invalid explicit overrides
+are setup errors, not skips. Startup never downloads or installs dependencies.
+Rendering uses rsvg-convert or PyMuPDF; PyMuPDF-specific tests still skip without
+that extra even when rsvg-convert is available.
+
+For a shorter run, a single test, or strict CI coverage:
+
+```powershell
+.\.venv\Scripts\python.exe -m pytest -m 'not slow'
+.\.venv\Scripts\python.exe -m pytest tests\test_env.py
+.\.venv\Scripts\python.exe -m pytest --strict-deps
+```
+
+`--strict-deps` fails at startup unless KiCad 10 and its symbol/footprint
+libraries, SKiDL, a rendering backend, Java 21+ and the pinned Freerouting jar
+are available. Install routing prerequisites explicitly as described above;
+strict mode verifies the pinned jar's checksum, including any
+`KAT_FREEROUTING` override. Ordinary mode permits a custom valid jar.
+
+On Windows, when the system temporary directory is on a different drive,
+pytest automatically uses a dedicated parent under `.venv\pytest-tmp` (or
+`.pytest-tmp` without a local virtual environment). Pytest allocates isolated,
+numbered run directories with its normal locking and retention. An explicit
+`--basetemp` or `PYTEST_DEBUG_TEMPROOT` overrides this default. Pytest clears
+an explicit `--basetemp` directory: never point it at existing project data.
+`KAT_E2E_OUT` remains available for retaining end-to-end outputs.
+
+GUI tests are opt-in with `-m kicad_gui`, require the `[gui]` extra and a supported
+display, and currently skip on Windows. They open KiCad windows and are not part
+of normal strict coverage; selecting them with `--strict-deps` also requires
+GUI availability.
+
+Known pre-existing test limitation on Python 3.12:
+`test_cli_and_library_give_the_same_file` passes a negative comma-separated
+`--stub` value in a form argparse rejects. For CLI use, write `--stub=-5.08,0`
+rather than `--stub -5.08,0` (see SPEC.md §7).
 
 ## Initialize a design directory
 

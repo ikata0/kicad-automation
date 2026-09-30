@@ -205,7 +205,7 @@ def write_dsn(b: Board, path: Path, nets: list[str] | None = None, skip_pins: se
                      f" (net {_q(v['net'])}) (type {kind}))")
     lines.append("  )")
     lines.append(")")
-    path.write_text("\n".join(lines) + "\n")
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return {"dsn": str(path), "nets": len(routed), "footprints": len(fps), "padstacks": len(padstacks),
             **({"class_clearance_not_applied": [f"{k}: route a net of both classes together (--net)"
                                                 for k in skipped]} if skipped else {})}

@@ -9,7 +9,6 @@ arranged sheet (no duplicate stubs or labels).
 Set KAT_E2E_OUT=/some/dir to keep the project and its snapshots for review.
 """
 
-import importlib.util
 import os
 import shutil
 import subprocess
@@ -25,11 +24,8 @@ HERE = Path(__file__).parent / "e2e"
 sys.path.insert(0, str(HERE))
 import led_matrix_arrange as arrange  # noqa: E402
 import led_matrix_board as board_passes  # noqa: E402
-from kat.pcb import router  # noqa: E402
 
-pytestmark = [pytest.mark.slow, pytest.mark.skipif(
-    shutil.which("kicad-cli") is None or importlib.util.find_spec("skidl") is None,
-    reason="needs kicad-cli and skidl")]
+pytestmark = [pytest.mark.slow, pytest.mark.requires("kicad", "symbols", "footprints", "skidl")]
 
 
 def design(out: Path, *variant: str) -> Path:
@@ -56,7 +52,8 @@ def root(tmp_path) -> Path:
     return root
 
 
-def test_led_matrix(root):
+@pytest.mark.requires("render")
+def test_led_matrix(root, test_dependencies):
     sch = root / "led_matrix" / "led_matrix.kicad_sch"
     net = design(root)
     kat.new(sch)
@@ -104,8 +101,9 @@ def test_led_matrix(root):
 
 
     # the board (needs Freerouting; the schematic part above runs without it)
-    if shutil.which("java") is None or not router.jar_path().exists():
-        pytest.skip("Freerouting not installed (kat pcb route --install)")
+    if not test_dependencies["routing"].available:
+        pytest.skip("requires routing: " + test_dependencies["routing"].detail
+                    + " (schematic checks completed)")
     gate = kat.ready(sch, expect=net)
     assert gate["ready"], gate["errors"][:5]
     pcb = sch.with_suffix(".kicad_pcb")

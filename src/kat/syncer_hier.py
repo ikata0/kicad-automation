@@ -39,20 +39,20 @@ def settings_file(root: Path) -> Path:
 
 def remembered_sheets(root: Path) -> list[str] | None:
     f = settings_file(root)
-    return json.loads(f.read_text()).get("sheets") if f.exists() else None
+    return json.loads(f.read_text(encoding="utf-8")).get("sheets") if f.exists() else None
 
 
 def remember(root: Path, **values) -> None:
     """Merge ``values`` into the sheet's ``.kat.json``."""
     f = settings_file(root)
-    data = json.loads(f.read_text()) if f.exists() else {}
-    f.write_text(json.dumps(data | values, indent=2) + "\n")
+    data = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
+    f.write_text(json.dumps(data | values, indent=2) + "\n", encoding="utf-8")
 
 
 def remembered_design(root: Path) -> Path | None:
     """The design netlist the sheet was last synced from, if it still exists."""
     f = settings_file(root)
-    rel = json.loads(f.read_text()).get("design") if f.exists() else None
+    rel = json.loads(f.read_text(encoding="utf-8")).get("design") if f.exists() else None
     p = (root.parent / rel).resolve() if rel else None
     return p if p and p.exists() else None
 
@@ -68,7 +68,7 @@ class Design:
         if not rec_file.exists():
             raise env.KatError(f"{rec_file.name} is missing: end the SKiDL script with "
                                f"kat.skidl_blocks.write({self.path.name!r})")
-        self.rec = json.loads(rec_file.read_text())["instances"]
+        self.rec = json.loads(rec_file.read_text(encoding="utf-8"))["instances"]
         from .syncer import read_no_connect
         self.no_connect = read_no_connect(self.path)
         unknown = sorted(sheets - {i["type"] for i in self.rec.values()})
@@ -140,7 +140,7 @@ def block_sheet(kind: str, near: Path) -> Path:
     lib = blocks.library(near)
     for d in sorted(p for p in lib.iterdir() if p.is_dir()):
         info = d / f"{d.name}.block.json"
-        if info.exists() and json.loads(info.read_text()).get("type") == kind:
+        if info.exists() and json.loads(info.read_text(encoding="utf-8")).get("type") == kind:
             f = d / f"{d.name}_block.kicad_sch"
             if not f.exists():
                 raise env.KatError(f"block {d.name} has no sheet yet: kat block build {d.name}")

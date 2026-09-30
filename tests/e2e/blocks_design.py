@@ -11,7 +11,9 @@ Writes OUT.net and OUT.blocks.json.
 import os
 import sys
 
-os.environ.setdefault("KICAD10_SYMBOL_DIR", "/usr/share/kicad/symbols")
+from kat.env import stock_symbol_dir
+if symbols := stock_symbol_dir():
+    os.environ.setdefault("KICAD10_SYMBOL_DIR", str(symbols))
 from skidl import KICAD10, Interface, Net, Part, generate_netlist, set_default_tool, subcircuit  # noqa: E402
 
 import kat  # noqa: E402

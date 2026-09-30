@@ -7,7 +7,6 @@ block is its own project in blocks/RC/, used by BLOCK1 through a relative path.
 
 import json
 import re
-import shutil
 from pathlib import Path
 
 import pytest
@@ -16,7 +15,6 @@ import kat
 from kat import checks, cli, hierarchy
 from kat.pcb.syncer import read_design
 
-pytestmark = pytest.mark.skipif(shutil.which("kicad-cli") is None, reason="kicad-cli not installed")
 
 R_FP, C_FP = "Resistor_SMD:R_0603_1608Metric", "Capacitor_SMD:C_0603_1608Metric"
 
@@ -89,6 +87,7 @@ def design(tmp_path, monkeypatch):
     return files
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints")
 def test_tree_lists_every_instance_with_inherited_parameters(design):
     t = hierarchy.tree(design["top"])
     assert [i["path"] for i in t] == ["/", "/CH_A", "/CH_A/RC1", "/CH_A/RC2", "/CH_A/RC3",
@@ -100,6 +99,7 @@ def test_tree_lists_every_instance_with_inherited_parameters(design):
     assert hierarchy.instance(design["top"], "CH_B/RC1") == ch_b_rc1
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints")
 def test_kicad_netlist_has_per_instance_references_and_values(design):
     parts, pin_net = read_design(design["top"])
     assert len(parts) == 15                    # J1 + 2 x (R_out + 3 x (R + C))
@@ -119,6 +119,7 @@ def test_kicad_netlist_has_per_instance_references_and_values(design):
     assert design["annotated"]["references"]["/CH_B/RC1"][parts["R701"].path.rsplit("/", 1)[1]] == "R701"
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints")
 def test_erc_clean_and_the_block_keeps_its_own_numbering(design):
     erc = checks.erc(design["top"])
     assert erc["errors"] == 0, erc["violations"]
@@ -131,6 +132,7 @@ def test_erc_clean_and_the_block_keeps_its_own_numbering(design):
     assert parts["R701"].value == "3k3"
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints")
 def test_sheet_pins_and_refusals(design):
     s = kat.load(design["top"])
     names = [sh["name"] for sh in s.sheets()]
@@ -142,6 +144,7 @@ def test_sheet_pins_and_refusals(design):
         s.sheet("CH_A", "../blocks/BLOCK1/BLOCK1.kicad_sch", (0, 0))
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints")
 def test_moving_a_sheet_box_brings_its_wiring(design):
     before = read_design(design["top"])[1]
     uuid = next(sh["uuid"] for sh in kat.load(design["top"]).sheets() if sh["name"] == "CH_B")
@@ -161,6 +164,7 @@ def test_moving_a_sheet_box_brings_its_wiring(design):
     assert checks.erc(design["top"])["errors"] == 0
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints")
 def test_a_name_both_part_and_box_must_be_told_apart(design):
     """B5: a part named like a sheet box is not moved silently in the box's place."""
     with kat.edit(design["top"]) as s:
@@ -175,6 +179,8 @@ def test_a_name_both_part_and_box_must_be_told_apart(design):
     assert part[0]["ref"] == "CH_B" and part[0]["y"] == 35.56
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints")
+@pytest.mark.requires("render")
 def test_snapshot_and_view_of_a_hierarchy(design, tmp_path):
     """I8: one PNG per sheet file (3 files, 9 pages); B14: tiles of each page in their
     own folder; B13: kat view shows the root page, not the first sub-sheet."""
@@ -194,6 +200,7 @@ def test_snapshot_and_view_of_a_hierarchy(design, tmp_path):
     assert root.exists()
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints")
 def test_sheet_box_refusals(design):
     with pytest.raises(kat.KatError, match="sheet pin CH_A.IN"):
         with kat.edit(design["top"]) as s:
@@ -206,6 +213,7 @@ def test_sheet_box_refusals(design):
             s.sheet_box("CH_A", size=(20.32, 2.54))
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints")
 def test_reshaping_a_box_moves_and_mirrors_its_pin_wiring(design):
     before = read_design(design["top"])[1]
     with kat.edit(design["top"]) as s:
@@ -232,6 +240,7 @@ def test_pin_sides_follow_the_child_drawing():
     assert list(left) == ["clk", "a"] and list(right) == ["out", "q", "b"]
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints")
 def test_pins_added_and_removed_in_place(design):
     uuid = next(sh["uuid"] for sh in kat.load(design["top"]).sheets() if sh["name"] == "CH_B")
     with kat.edit(design["top"]) as s:

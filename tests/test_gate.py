@@ -11,7 +11,7 @@ from kat.schematic import Schematic
 from kat.sexpr import Sym, find
 from test_sync import BASE_NETS, BASE_PARTS, project, write_netlist  # noqa: F401 (fixture)
 
-pytestmark = pytest.mark.skipif(shutil.which("kicad-cli") is None, reason="kicad-cli not installed")
+pytestmark = pytest.mark.requires("kicad", "symbols", "footprints")
 
 GOOD_FP = {"J1": "Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical",
            "R1": "Resistor_SMD:R_0603_1608Metric",

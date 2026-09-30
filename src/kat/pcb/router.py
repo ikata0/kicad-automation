@@ -96,7 +96,7 @@ def route(pcb: Path | str, passes: int = 20, nets: list[str] | None = None, time
     t0 = time.time()
     log_file = work / "freerouting.log"
     lines = []
-    with open(log_file, "w") as logf:
+    with open(log_file, "w", encoding="utf-8") as logf:
         # streamed: the log grows while it runs, and each pass is echoed on stderr
         proc = subprocess.Popen([exe, "-Djava.awt.headless=true", "-jar", str(jar), "--gui.enabled=false",
                                  "-de", str(dsn.resolve()), "-do", str(ses.resolve()), "-mp", str(passes)],

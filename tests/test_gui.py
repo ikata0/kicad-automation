@@ -2,8 +2,6 @@
 editors (marker kicad_gui: needs a display and kicad-python; run with -m kicad_gui)."""
 
 import json
-import os
-import shutil
 import socket
 
 import pytest
@@ -13,7 +11,7 @@ from kat import cli, gui
 from test_pcb_sync import board_of, design
 from test_sync import project  # noqa: F401 (fixture)
 
-needs_cli = pytest.mark.skipif(shutil.which("kicad-cli") is None, reason="kicad-cli not installed")
+needs_cli = pytest.mark.requires("kicad", "symbols", "footprints")
 
 
 def lock(path, host=None):
@@ -49,14 +47,9 @@ def test_open_rejects_other_files(tmp_path):
         gui.open_file(tmp_path / "x.txt")
 
 
-gui_ready = (shutil.which("pcbnew") and shutil.which("kicad-cli")
-             and (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")))
-
-
 @pytest.mark.kicad_gui
-@pytest.mark.skipif(not gui_ready, reason="needs KiCad and a display")
+@needs_cli
 def test_verify_board_and_schematic_in_the_editors(project, tmp_path):
-    pytest.importorskip("kipy")
     design(project, tmp_path)
     pcb = board_of(project)
     kat.pcb.sync(pcb)

@@ -5,7 +5,6 @@ the rest routed, and must come out equally clean.
 Set KAT_E2E_OUT=/some/dir to keep the projects for review.
 """
 
-import importlib.util
 import os
 import shutil
 import subprocess
@@ -23,14 +22,7 @@ from test_blocks import RC_PY  # noqa: E402
 from test_pcb_stamp import check, env_board, layout_rc  # noqa: E402
 from test_sync_hier import CH_PY, TOP_PY  # noqa: E402
 
-pytestmark = [pytest.mark.slow, pytest.mark.skipif(
-    shutil.which("kicad-cli") is None or importlib.util.find_spec("skidl") is None,
-    reason="needs kicad-cli and skidl")]
-
-
-def router_ready() -> bool:
-    from kat.pcb import router
-    return router.jar_path().exists() and shutil.which("java") is not None
+pytestmark = [pytest.mark.slow, pytest.mark.requires("kicad", "symbols", "footprints", "skidl")]
 
 
 @pytest.fixture(scope="module")
@@ -97,7 +89,7 @@ def board(sch: Path, net: Path) -> Path:
     return pcb
 
 
-def test_flat_and_sheets_give_the_same_clean_boards(work):
+def test_flat_and_sheets_give_the_same_clean_boards(work, test_dependencies):
     net = work["net"]
     # A: flat, each channel stamped in one piece from CH's flat drawing, RC stages framed
     a = work["out"] / "flat" / "flat.kicad_sch"
@@ -133,7 +125,7 @@ def test_flat_and_sheets_give_the_same_clean_boards(work):
         bb = Board(pcb)
         counts[name] = (len(bb.tracks()), len(bb.vias()), len(bb.zones()))
     assert counts["flat"] == counts["sheets"]
-    if router_ready():
+    if test_dependencies["routing"].available:
         from kat.pcb import router
         for name, pcb in boards.items():
             r = router.route(pcb, out=pcb.parent / "route")

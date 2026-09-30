@@ -47,7 +47,7 @@ def block_file(block_pcb: Path | str) -> Path:
 def block_info(block_pcb: Path | str) -> dict:
     """The block file's content (``{}`` if there is none)."""
     f = block_file(block_pcb)
-    return json.loads(f.read_text()) if f.exists() else {}
+    return json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
 
 
 def set_environment(block_pcb: Path | str, zones: list[str]) -> dict:
@@ -55,7 +55,7 @@ def set_environment(block_pcb: Path | str, zones: list[str]) -> dict:
     was checked against): ``stamp`` does not copy them. Written to the block file."""
     info = block_info(block_pcb)
     info["environment"] = sorted(set(zones))
-    block_file(block_pcb).write_text(json.dumps(info, indent=2) + "\n")
+    block_file(block_pcb).write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
     return info
 
 
@@ -81,7 +81,7 @@ def set_port(block_pcb: Path | str, port: str, at: tuple[float, float], net: str
     pts = [q for q in info.get("port_points", []) if q["port"] != port]
     pts.append({"port": port, "net": on, "x": x, "y": y, "kind": kind})
     info["port_points"] = sorted(pts, key=lambda q: q["port"])
-    block_file(block_pcb).write_text(json.dumps(info, indent=2) + "\n")
+    block_file(block_pcb).write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
     return {"port": port, "net": on, "kind": kind, "at": [x, y]}
 
 
@@ -521,7 +521,7 @@ class StampMixin:
         """Port points of stamped instances on this board (``set_port`` on the block
         board): {instance: {port: {x, y, net}}}, or one instance's {port: ...}."""
         f = stamps_file(self.path)
-        saved = json.loads(f.read_text()) if f.exists() else {}
+        saved = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
         known = {k: v["ports"] for k, v in {**saved, **self._stamps}.items()}
         if instance is None:
             return known
@@ -533,8 +533,9 @@ class StampMixin:
         if not self._stamps:
             return
         f = stamps_file(self.path)
-        saved = json.loads(f.read_text()) if f.exists() else {}
-        f.write_text(json.dumps({**saved, **self._stamps}, indent=2, sort_keys=True) + "\n")
+        saved = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
+        f.write_text(json.dumps({**saved, **self._stamps}, indent=2, sort_keys=True) + "\n",
+                     encoding="utf-8")
         self._stamps = {}
 
     def _room_for(self, src, pairs: dict, instance: str, f, make_room: bool) -> list[dict]:

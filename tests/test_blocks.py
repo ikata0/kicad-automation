@@ -1,9 +1,7 @@
 """The block library: new -> build -> layout -> check, used by a design (SKiDL function) and
 stamped onto its board by name."""
 
-import importlib.util
 import json
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -16,15 +14,11 @@ from kat import blocks, cli
 sys.path.insert(0, str(Path(__file__).parent))
 from test_pcb_stamp import check, env_board, layout_rc  # noqa: E402
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("kicad-cli") is None or importlib.util.find_spec("skidl") is None,
-    reason="needs kicad-cli and skidl")
 
 RC_PY = '''"""Block RC: RC low-pass. Ports: inp, out, gnd. Parameters: r_val."""
 import os
 import sys
 
-os.environ.setdefault("KICAD10_SYMBOL_DIR", "/usr/share/kicad/symbols")
 from skidl import KICAD10, Net, Part, generate_netlist, set_default_tool, subcircuit  # noqa: E402
 
 
@@ -54,7 +48,6 @@ if __name__ == "__main__":
 '''
 
 DESIGN_PY = '''import os, sys
-os.environ.setdefault("KICAD10_SYMBOL_DIR", "/usr/share/kicad/symbols")
 from skidl import KICAD10, Net, Part, generate_netlist, set_default_tool
 import kat
 set_default_tool(KICAD10)
@@ -103,6 +96,7 @@ def lib(tmp_path, monkeypatch, capsys):
     return tmp_path / "blocks"
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints", "skidl")
 def test_new_refuses_existing_and_bad_names(lib, capsys):
     assert cli.main(["block", "new", "RC"]) == 2
     assert "exists" in capsys.readouterr().out
@@ -110,6 +104,7 @@ def test_new_refuses_existing_and_bad_names(lib, capsys):
         blocks.new("1RC")
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints", "skidl")
 def test_check_counts_only_the_block(lib, capsys):
     res = run(capsys, "block", "check", "RC", "--no-require")
     assert res["ok"] and res["code"] == 0, res
@@ -134,6 +129,7 @@ def design(tmp_path: Path, capsys) -> Path:
     return sch
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints", "skidl")
 def test_flat_sheet_gets_the_block_drawing(lib, tmp_path, capsys):
     from kat import sch_room
     from kat.schematic import Schematic
@@ -178,6 +174,7 @@ def test_flat_sheet_gets_the_block_drawing(lib, tmp_path, capsys):
     assert len(Schematic(sch).labels()) == n_labels
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints", "skidl")
 def test_design_uses_the_block_and_stamps_it_by_name(lib, tmp_path, capsys):
     assert blocks.check("RC", require=())["ok"]
     d = tmp_path / "design"
@@ -225,6 +222,7 @@ def test_design_uses_the_block_and_stamps_it_by_name(lib, tmp_path, capsys):
     assert routed["tracks"] == tracks and routed["skipped_environment"] >= 3, routed
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints", "skidl")
 def test_port_points_are_checked_and_stamped(lib, tmp_path, capsys):
     """I1: a via at the block's edge marks where port inp leaves it; block check checks
     it, the stamp reports it on the design; D4: the harness needs no MPN."""
@@ -264,6 +262,7 @@ def test_port_points_are_checked_and_stamped(lib, tmp_path, capsys):
     assert kat.pcb.Board(pcb).ports("/CH_B") == got["ports"]
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints", "skidl")
 def test_a_block_board_is_routed_without_its_harness(lib, tmp_path):
     """The harness J1 joins no net in the router's design (its routes would not be
     stamped); it stays an obstacle."""
@@ -277,6 +276,7 @@ def test_a_block_board_is_routed_without_its_harness(lib, tmp_path):
     assert "J1-" not in network and "img_J1" in dsn
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints", "skidl")
 def test_stamp_finds_free_areas_itself(lib, tmp_path, capsys):
     from kat import sch_room
     from kat.schematic import Schematic
@@ -294,6 +294,7 @@ def test_stamp_finds_free_areas_itself(lib, tmp_path, capsys):
     assert res["check"]["clean"] and res["check"]["erc_errors"] == 0
 
 
+@pytest.mark.requires("kicad", "symbols", "footprints", "skidl")
 def test_stamp_without_a_free_area_makes_room_in_place(lib, tmp_path, capsys, monkeypatch):
     """B8: no free area anywhere: with make_room the instance is stamped where it stands;
     without, the error's hint fits the page (no "kat page A3" on an A0 page)."""
@@ -315,6 +316,7 @@ def test_stamp_without_a_free_area_makes_room_in_place(lib, tmp_path, capsys, mo
         kat.stamp(sch, "RC", "/CH_B", design=net)
 
 
+@pytest.mark.requires("kicad", "symbols")
 def test_contacts_with_ignored_parts_are_allowed(tmp_path):
     """B7: a batch stamp moves parts of instances that are detached and about to move
     themselves: their pins are no contacts."""

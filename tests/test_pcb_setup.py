@@ -1,6 +1,5 @@
 """Board setup (outline, layers, holes, pours, keep-outs, net classes, rules), judged by DRC."""
 
-import shutil
 
 import pytest
 
@@ -10,7 +9,7 @@ from kat.pcb.geometry import union
 from test_pcb_sync import board_of, design
 from test_sync import project  # noqa: F401 (fixture)
 
-pytestmark = pytest.mark.skipif(shutil.which("kicad-cli") is None, reason="kicad-cli not installed")
+pytestmark = pytest.mark.requires("kicad", "symbols", "footprints")
 
 
 @pytest.fixture

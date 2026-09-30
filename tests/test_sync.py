@@ -1,6 +1,5 @@
 """kat sync against synthetic netlists (KiCad s-expression format, as SKiDL writes it)."""
 
-import shutil
 from pathlib import Path
 
 import pytest
@@ -9,7 +8,7 @@ import kat
 from kat import cli, netlist
 from kat.schematic import Schematic
 
-pytestmark = pytest.mark.skipif(shutil.which("kicad-cli") is None, reason="kicad-cli not installed")
+pytestmark = pytest.mark.requires("kicad", "symbols", "footprints")
 
 # ref: (library, part, value, tag)
 BASE_PARTS = {
@@ -326,6 +325,7 @@ def test_custom_fields_and_project_library(project, tmp_path):
     assert not kat.sync(project, netfile("RC0402-1K2"))["changed"]
 
 
+@pytest.mark.requires("render")
 def test_sheet_features(project, tmp_path):
     net = write_netlist(tmp_path / "a.net", BASE_PARTS, BASE_NETS)
     sync_ok(project, net)

@@ -30,7 +30,7 @@ def drc(pcb: Path, parity: bool = True, refill: bool = False, save: bool = False
         env.run_cli(*args, "-o", str(out), str(pcb), check=False)
         if not out.exists():
             raise env.KatError(f"kicad-cli pcb drc wrote no report for {pcb}")
-        data = json.loads(out.read_text())
+        data = json.loads(out.read_text(encoding="utf-8"))
     conv = lambda vs: [{"severity": v["severity"], "type": v["type"],
                         "description": v["description"], "items": _items(v)} for v in vs]
     violations = conv(data.get("violations", []))

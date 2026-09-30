@@ -2,7 +2,6 @@
 
 Needs Java 21+ and Freerouting (`kat pcb route --install`); skipped otherwise."""
 
-import shutil
 from pathlib import Path
 
 import pytest
@@ -14,9 +13,7 @@ from test_pcb_structure import placed  # noqa: F401 (fixture: parts placed, GND 
 from test_sync import project  # noqa: F401 (fixture)
 
 pytestmark = [
-    pytest.mark.skipif(shutil.which("kicad-cli") is None, reason="kicad-cli not installed"),
-    pytest.mark.skipif(shutil.which("java") is None or not router.jar_path().exists(),
-                       reason="Freerouting not installed (kat pcb route --install)"),
+    pytest.mark.requires("kicad", "symbols", "footprints"),
 ]
 
 
@@ -40,6 +37,7 @@ def test_dsn_round_trip_of_existing_copper(placed, tmp_path):
     assert r["vias"][0]["at"] == pytest.approx((25.0, 10.0)) and r["vias"][0]["size"] == 0.6
 
 
+@pytest.mark.requires("routing")
 def test_route_after_structure_is_complete_and_keeps_it(placed):
     with kat.pcb.edit(placed) as b:
         b.fanout(["Q1", "C1"], nets=["GND"])          # vias into the B.Cu plane, locked
@@ -52,6 +50,7 @@ def test_route_after_structure_is_complete_and_keeps_it(placed):
     assert Path(r["dir"], "freerouting.log").exists()
 
 
+@pytest.mark.requires("routing")
 def test_route_takes_a_path_relative_to_another_folder(placed, monkeypatch):
     """Freerouting runs in the route folder; the board path given from a parent folder
     must still reach it (it once got the relative path and found no DSN)."""
@@ -60,6 +59,7 @@ def test_route_takes_a_path_relative_to_another_folder(placed, monkeypatch):
     assert r["router"]["unrouted"] == 0, r
 
 
+@pytest.mark.requires("routing")
 def test_router_keeps_class_layers_class_clearance_and_hole_clearance(placed):
     """I3: a class restricted to F.Cu + In2.Cu is routed there; the class-to-class rule and
     the hole clearance reach the router (DSN) and DRC; the result is DRC clean."""

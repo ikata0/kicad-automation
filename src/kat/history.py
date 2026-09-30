@@ -26,9 +26,9 @@ def snapshot(sch: Path | str, slug: str = "", note: str | None = None,
     result = render.snapshot(sch, target, zoom, tiles, pages)
     shutil.copy(sch, target / sch.name)
     res = tidy(checks.run(sch, Path(expect) if expect else None))
-    (target / "check.json").write_text(json.dumps(res, indent=1))
+    (target / "check.json").write_text(json.dumps(res, indent=1), encoding="utf-8")
     if note:
-        (target / "note.md").write_text(note + "\n")
+        (target / "note.md").write_text(note + "\n", encoding="utf-8")
     if finding_crops:
         from .views import finding_spots, view
         result["finding_crops"] = []

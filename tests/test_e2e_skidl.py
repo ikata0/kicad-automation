@@ -4,7 +4,6 @@ validate -> manual arrangement -> validate -> sync again (it must survive).
 Set KAT_E2E_OUT=/some/dir to keep the project and its snapshot history for review.
 """
 
-import importlib.util
 import json
 import os
 import shutil
@@ -20,9 +19,7 @@ from kat.schematic import Schematic
 
 HERE = Path(__file__).parent / "e2e"
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("kicad-cli") is None or importlib.util.find_spec("skidl") is None,
-    reason="needs kicad-cli and skidl")
+pytestmark = pytest.mark.requires("kicad", "symbols", "footprints", "skidl")
 
 
 def design(variant: str, out: Path) -> Path:
@@ -63,6 +60,7 @@ def placements(sch: Path) -> dict:
             for s in Schematic(sch).symbols() if not s.ref.startswith("#")}
 
 
+@pytest.mark.requires("render")
 def test_iterative_design_flow(tmp_path, capsys):
     root = Path(os.environ["KAT_E2E_OUT"]) if os.environ.get("KAT_E2E_OUT") else tmp_path
     if root.exists() and root != tmp_path:

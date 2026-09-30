@@ -1,6 +1,5 @@
 """Placement: courtyard-checked moves, alignment, parts next to a pin, blocks, replication."""
 
-import shutil
 
 import pytest
 
@@ -8,7 +7,7 @@ import kat
 from test_pcb_sync import board_of, design
 from test_sync import project  # noqa: F401 (fixture)
 
-pytestmark = pytest.mark.skipif(shutil.which("kicad-cli") is None, reason="kicad-cli not installed")
+pytestmark = pytest.mark.requires("kicad", "symbols", "footprints")
 
 # a switch transistor, a supply capacitor and two identical LED channels (blocks ch1, ch2)
 PARTS = {

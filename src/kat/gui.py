@@ -63,7 +63,9 @@ def holder(path: Path | str) -> dict | None:
     if not lck.exists():
         return None
     try:
-        info = json.loads(lck.read_text() or "{}")
+        info = json.loads(lck.read_text(encoding="utf-8") or "{}")
+    except UnicodeDecodeError as e:
+        raise env.KatError(f"{lck} is not valid UTF-8: {e}") from e
     except (OSError, ValueError):
         info = {}
     host, user = info.get("hostname", "?"), info.get("username", "?")
@@ -119,9 +121,9 @@ def _private_settings(tmp: Path) -> Path:
         shutil.copytree(src, dst, ignore=shutil.ignore_patterns("3d", "*.lck", "*cache*"))
     dst.mkdir(parents=True, exist_ok=True)
     common = dst / "kicad_common.json"
-    data = json.loads(common.read_text()) if common.exists() else {}
+    data = json.loads(common.read_text(encoding="utf-8")) if common.exists() else {}
     data.setdefault("api", {})["enable_server"] = True
-    common.write_text(json.dumps(data, indent=2))
+    common.write_text(json.dumps(data, indent=2), encoding="utf-8")
     return cfg
 
 
@@ -228,7 +230,7 @@ def verify(path: Path | str, timeout: float = 90.0) -> dict:
     proc = None
     try:
         envv = dict(os.environ, KICAD_CONFIG_HOME=str(_private_settings(tmp)), TMPDIR=str(tmp))
-        log = open(tmp / "editor.log", "w")
+        log = open(tmp / "editor.log", "wb")
         proc = subprocess.Popen([exe, str(path)], stdout=log, stderr=subprocess.STDOUT,
                                 env=envv, cwd=path.parent, start_new_session=True)
         if board:

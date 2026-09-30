@@ -1,9 +1,7 @@
 """Hierarchical sync from SKiDL: a library block drawn as a sheet, used by a design whose
 instances of that type become sheet boxes; references and values follow the design."""
 
-import importlib.util
 import json
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -19,16 +17,13 @@ from kat.sexpr import find, find_all
 sys.path.insert(0, str(Path(__file__).parent))
 from test_blocks import DESIGN_PY, RC_PY  # noqa: E402
 
-pytestmark = pytest.mark.skipif(
-    shutil.which("kicad-cli") is None or importlib.util.find_spec("skidl") is None,
-    reason="needs kicad-cli and skidl")
+pytestmark = pytest.mark.requires("kicad", "symbols", "footprints", "skidl")
 
 
 CH_PY = '''"""Block CH: three RC stages and an output resistor."""
 import os
 import sys
 
-os.environ.setdefault("KICAD10_SYMBOL_DIR", "/usr/share/kicad/symbols")
 from skidl import KICAD10, Net, Part, generate_netlist, set_default_tool, subcircuit  # noqa: E402
 import kat  # noqa: E402
 
@@ -61,7 +56,6 @@ if __name__ == "__main__":
 '''
 
 TOP_PY = '''import os
-os.environ.setdefault("KICAD10_SYMBOL_DIR", "/usr/share/kicad/symbols")
 from skidl import KICAD10, Net, Part, generate_netlist, set_default_tool
 import kat
 set_default_tool(KICAD10)
@@ -84,7 +78,6 @@ CELL_PY = '''"""Block CELL: R then LED, the inner net named (as in the LED matri
 import os
 import sys
 
-os.environ.setdefault("KICAD10_SYMBOL_DIR", "/usr/share/kicad/symbols")
 from skidl import KICAD10, Net, Part, generate_netlist, set_default_tool, subcircuit  # noqa: E402
 import kat  # noqa: E402
 

@@ -156,21 +156,26 @@ def _index(project_dir: Path | None) -> list[dict]:
     key = {k: [str(v), v.stat().st_mtime] for k, v in libs.items()}
     cache = env.cache_dir() / "symbol-index.json"
     try:
-        data = json.loads(cache.read_text())
+        data = json.loads(cache.read_text(encoding="utf-8"))
         if data.get("key") == key:
             return data["entries"]
+    except UnicodeDecodeError as e:
+        raise env.KatError(f"{cache} is not valid UTF-8: {e}") from e
     except (OSError, ValueError):
         pass
     entries = []
     for nick, path in libs.items():
-        text = path.read_text(encoding="utf-8", errors="replace")
+        try:
+            text = path.read_text(encoding="utf-8")
+        except UnicodeDecodeError as e:
+            raise env.KatError(f"{path} is not valid UTF-8: {e}") from e
         for m in _ENTRY.finditer(text):
             props = dict(_PROP.findall(m.group(2)[:4000]))
             entries.append({"lib_id": f"{nick}:{m.group(1)}",
                             "description": props.get("Description", ""),
                             "keywords": props.get("ki_keywords", ""),
                             "footprint": props.get("Footprint", "")})
-    cache.write_text(json.dumps({"key": key, "entries": entries}))
+    cache.write_text(json.dumps({"key": key, "entries": entries}), encoding="utf-8")
     return entries
 
 

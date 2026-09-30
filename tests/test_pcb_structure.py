@@ -1,7 +1,6 @@
 """Copper structure: tracks (net from the pads), vias into a plane, fan-out, stitching,
 locking and rip-up - each judged by KiCad's DRC."""
 
-import shutil
 
 import pytest
 
@@ -10,7 +9,7 @@ from kat.pcb import Board
 from test_pcb_placement import pcb  # noqa: F401 (fixture: transistor + two LED channels)
 from test_sync import project  # noqa: F401 (fixture)
 
-pytestmark = pytest.mark.skipif(shutil.which("kicad-cli") is None, reason="kicad-cli not installed")
+pytestmark = pytest.mark.requires("kicad", "symbols", "footprints")
 
 
 @pytest.fixture
