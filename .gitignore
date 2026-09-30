@@ -7,3 +7,4 @@ __pycache__/
 *.erc
 *.log
 *_sklib.py
+notes/NOTES.md
