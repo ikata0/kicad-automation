@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import glob
+from collections.abc import Iterable, Iterator
 import os
 import re
 import shutil
@@ -28,28 +28,67 @@ def tidy(obj):
     return obj
 
 
+def _windows_kicad_candidates() -> Iterator[str]:
+    import winreg
+
+    key_path = rf"Software\Microsoft\Windows\CurrentVersion\Uninstall\KiCad {KICAD_MAJOR}"
+    for root in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        for view in (winreg.KEY_WOW64_64KEY, winreg.KEY_WOW64_32KEY):
+            try:
+                with winreg.OpenKey(root, key_path, 0, winreg.KEY_READ | view) as key:
+                    for name in ("InstallLocation", "DisplayIcon"):
+                        try:
+                            value, _ = winreg.QueryValueEx(key, name)
+                        except FileNotFoundError:
+                            continue
+                        if not isinstance(value, str) or not value.strip():
+                            continue
+                        value = os.path.expandvars(value.strip())
+                        if name == "InstallLocation":
+                            folder = Path(value.strip('"')) / "bin"
+                        else:
+                            icon = re.sub(r",\s*-?\d+$", "", value).strip('"')
+                            folder = Path(icon).parent
+                        yield os.path.normpath(folder / "kicad-cli.exe")
+            except FileNotFoundError:
+                continue
+            except OSError as e:
+                raise KatError(f"cannot read KiCad's Windows registration: {e}; "
+                               "put kicad-cli on PATH or set KICAD_CLI") from e
+    for var in ("LOCALAPPDATA", "ProgramFiles", "ProgramW6432", "ProgramFiles(x86)"):
+        if base := os.environ.get(var):
+            for prefix in (("Programs", "KiCad"), ("KiCad",)):
+                yield os.path.join(base, *prefix, KICAD_MAJOR, "bin", "kicad-cli.exe")
+
+
 def kicad_cli() -> str:
+    """Return the kicad-cli executable path. Respect ``KICAD_CLI``, then PATH;
+    otherwise discover KiCad 10 through Windows installer registration/default
+    folders or the macOS app bundle. Cache discoveries in this process's
+    ``KICAD_CLI`` environment variable, inherited by child processes; the calling
+    shell's environment is not changed."""
     if env := os.environ.get("KICAD_CLI"):
         return env
     if found := shutil.which("kicad-cli"):
+        os.environ["KICAD_CLI"] = found
         return found
-    candidates = []
+    candidates: Iterable[str] = ()
     if sys.platform == "win32":
-        for base in (os.environ.get("LOCALAPPDATA", ""), os.environ.get("ProgramFiles", "")):
-            candidates += glob.glob(os.path.join(base, "Programs", "KiCad", "*", "bin", "kicad-cli.exe"))
-            candidates += glob.glob(os.path.join(base, "KiCad", "*", "bin", "kicad-cli.exe"))
+        candidates = _windows_kicad_candidates()
     elif sys.platform == "darwin":
-        candidates.append("/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli")
-    for c in sorted(candidates, reverse=True):
-        if os.path.exists(c):
+        candidates = ["/Applications/KiCad/KiCad.app/Contents/MacOS/kicad-cli"]
+    for c in candidates:
+        if os.path.isfile(c):
+            os.environ["KICAD_CLI"] = c
             return c
-    raise KatError("kicad-cli not found; put it on PATH or set KICAD_CLI")
+    raise KatError("kicad-cli not found; install KiCad 10, put kicad-cli on PATH or set KICAD_CLI")
 
 
 def run_cli(*args: str, check: bool = True) -> subprocess.CompletedProcess:
+    cli = kicad_cli()
     # English output, so messages are stable regardless of the user's locale.
     env = dict(os.environ, LANG="C", LC_ALL="C", LANGUAGE="en")
-    proc = subprocess.run([kicad_cli(), *args], capture_output=True, text=True, env=env)
+    proc = subprocess.run([cli, *args], capture_output=True, text=True, env=env)
     if check and proc.returncode != 0:
         raise KatError(f"kicad-cli {' '.join(args[:2])} failed: {(proc.stderr or proc.stdout).strip()}")
     return proc

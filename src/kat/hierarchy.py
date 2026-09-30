@@ -99,7 +99,7 @@ def add_sheet(s: Schematic, name: str, file: Path | str, x: float, y: float,
     target = file if file.is_absolute() else (s.path.parent / file)
     if not target.exists():
         Schematic.create(target)
-    rel = os.path.relpath(target.resolve(), s.path.parent.resolve())
+    rel = Path(os.path.relpath(target.resolve(), s.path.parent.resolve())).as_posix()
     left = dict(left) if isinstance(left, dict) else {p: "passive" for p in left}
     right = dict(right) if isinstance(right, dict) else {p: "passive" for p in right}
     rows = max(len(left), len(right), 1)

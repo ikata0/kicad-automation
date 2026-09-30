@@ -174,5 +174,9 @@ empty section, and don't change kat's own code unless asked. Template: kicad-des
 ## Setup
 
 `pip install -e <kicad-automation>[dev]` (SKiDL included; add `render` on systems without
-`rsvg-convert`, e.g. Windows). Needs `kicad-cli` on PATH or `KICAD_CLI`; SKiDL needs
+`rsvg-convert`, e.g. Windows). Needs KiCad 10: kat auto-discovers registered Windows
+installations (including custom folders) and the macOS app bundle, or uses
+`kicad-cli` on PATH / `KICAD_CLI`. Discovery is cached in the kat process's
+`KICAD_CLI`, not the calling shell; see README for automatic PowerShell setup.
+SKiDL needs
 `KICAD10_SYMBOL_DIR` pointing at KiCad's symbol directory.

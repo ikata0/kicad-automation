@@ -201,7 +201,7 @@ def _boxes(s: Schematic, design: Design, within: str, rename: dict[str, str], ne
         inst = design.rec[path]
         child = (generate or {}).get(path) or block_sheet(inst["type"], near)
         ports = hierarchy.ports(Schematic(child))
-        rel = str(Path(_relpath(child, s.path.parent)))
+        rel = Path(_relpath(child, s.path.parent)).as_posix()
         left, right = hierarchy.pin_sides(ports)
         fields = {k: str(v) for k, v in inst["params"].items()}
         old = have.get(name)

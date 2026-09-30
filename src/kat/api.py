@@ -113,7 +113,7 @@ def _where(obj) -> str:
         f = Path(inspect.getsourcefile(target)).resolve()
         base = Path(__file__).resolve().parents[1]
         f = f.relative_to(base) if f.is_relative_to(base) else f
-        return str(f) if inspect.ismodule(target) else f"{f}:{inspect.getsourcelines(target)[1]}"
+        return f.as_posix() if inspect.ismodule(target) else f"{f.as_posix()}:{inspect.getsourcelines(target)[1]}"
     except (TypeError, OSError):
         return ""
 

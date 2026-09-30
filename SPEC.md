@@ -744,6 +744,13 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
 | kicad-cli 10 ERC JSON positions are in units of 100 mm despite `coordinate_units: mm` | converted in `kat.check.erc` |
 | `sch upgrade` takes the project name from the file location | always normalise in place, inside the project directory |
 | Files saved on Windows have CRLF; `upgrade` writes LF → whole-file diffs | add a `.gitattributes` (`*.kicad_sch text eol=lf`) |
+| Windows has no `fcntl`; importing the journal prevented all CLI commands from starting | report locking uses `msvcrt` on Windows and `fcntl` on Unix; journal appends use LF |
+| Windows backslashes interpolated into a `Sheetfile` S-expression are read as escapes | serialize relative sheet paths with forward slashes, including incremental hierarchy sync |
+| Windows Python may use a legacy encoding; SKiDL needs a symbol-library path and cannot make relative paths across drives | set `PYTHONUTF8=1` and `KICAD10_SYMBOL_DIR`; run pytest with `--basetemp .venv\pytest-tmp` on the checkout's drive (README) |
+| Windows KiCad ignores `LANG=C`; translated DRC item descriptions break checks that identify environment parts | select English in KiCad's language preferences before running checks |
+| A fresh KiCad profile has no global library tables, so ERC/DRC reports missing-library warnings | open both editors once and accept the default symbol and footprint tables |
+| PyMuPDF rasterizes at 72 points/inch while snapshot geometry assumes 96 pixels/inch | scale its rasterization matrix by 96/72, matching `rsvg-convert`; test pixel dimensions against physical SVG dimensions |
+| Python 3.12 argparse treats a negative comma-separated value such as `--stub -5.08,0` as another option | use `--stub=-5.08,0`; the existing CLI/library equivalence test still exercises the split form |
 | SKiDL's own `generate_schematic()` is unreadable for real circuits (overlaps, missing unit body, dangling wires) | SKiDL for connectivity only; `kat` draws |
 | SKiDL random tags / automatic references break identity across revisions | `tag=` (and `ref=`) on every part; `sync` matches tag first |
 | `kicad-cli sch upgrade` silently drops a sheet's instance entry whose path is not the parent's real path (e.g. `/` in a sub-sheet) | `annotate` writes `/<root uuid>/<parent sheet uuids>` |
@@ -786,7 +793,8 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
 | KiCad's lock file holds hostname and user, no process id | a lock counts as live when it is from another host or a KiCad process of this user runs; otherwise stale |
 | Freerouting narrows tracks at fine-pitch pads below the net-class width (DRC `track_width`); `--router.automatic_neckdown=false` is not applied | on import kat widens them to the class width where the clearance allows and reports the rest (`narrow`) |
 | A reference without a number (`ROUT`) passes ERC and parity, but KiCad treats it as unannotated: the BOM prints `ROUT?` | `kat ready` error `reference_without_number` |
-| No `rsvg-convert` on Windows; `kicad-cli` not on PATH there | PyMuPDF fallback (`[render]` extra, AGPL-3.0); `kicad-cli` auto-discovery or `KICAD_CLI` |
+| No `rsvg-convert` on Windows; `kicad-cli` not on PATH there | PyMuPDF fallback (`[render]` extra, AGPL-3.0); discover KiCad 10 from HKCU/HKLM installer registration (32/64-bit views, custom folders), then standard folders; explicit `KICAD_CLI` and PATH take precedence |
+| A child process cannot update the calling shell's environment | cache the discovered executable as `KICAD_CLI` inside the kat process and pass it to children; each independent CLI invocation discovers again. README shows how PowerShell can explicitly capture the path for tests/SKiDL |
 | `from skidl import NC` fails: `NC` is a builtin SKiDL puts into the namespace; NC pins do not appear in the netlist at all | use `NC` without importing it; `kat.skidl_blocks.write` records NC pins, sync draws the flags |
 | SKiDL numbers a named net inside a block per instance (`LED_A1..A99`); kat compared the name after the sheet path, so every such net was a `name_difference` and no gate passed | the comparison accepts the instance numbering under a sheet path (`/ROW0/CELL1/LED_A` = `LED_A7`) |
 | A net renamed in the design kept its old label at a root-sheet connector (the boxes were relabelled, sync reported nothing): the connector was cut off | labels of the old name on the root are renamed with the boxes and reported (`renamed`) |

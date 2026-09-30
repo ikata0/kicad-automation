@@ -48,6 +48,25 @@ def test_numbering_continues_across_processes(project):
     assert [n for n, _, _ in entries(project)] == [1, 2, 3]
 
 
+def test_concurrent_appends_have_unique_numbers(tmp_path):
+    path = report.ensure(tmp_path, "p")
+    script = (
+        "from pathlib import Path\n"
+        "from kat import report\n"
+        f"root = Path({str(tmp_path)!r})\n"
+        "for i in range(8):\n"
+        "    report.append(root, 'p', 'note', str(i))\n"
+    )
+    processes = [subprocess.Popen([sys.executable, "-c", script],
+                                  stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                 for _ in range(4)]
+    for proc in processes:
+        _, stderr = proc.communicate(timeout=60)
+        assert proc.returncode == 0, stderr.decode("utf-8")
+    nums = re.findall(r"^## (\d+) · ", path.read_text(encoding="utf-8"), re.M)
+    assert [int(n) for n in nums] == list(range(1, 33))
+
+
 def test_errors_are_journaled_with_exit_code(project):
     assert cli.main(["move", str(project), "R9", "--to", "10,10"]) == 2
     n, kind, body = entries(project)[-1]
@@ -137,10 +156,11 @@ def test_disabled_writes_nothing(project, monkeypatch):
     assert len(entries(project)) == 1                             # only `kat new`
 
 
-def test_summary_lines():
+def test_summary_lines(tmp_path):
     lines = report.summarize({"ok": False, "check": {"ok": True, "parity": 0, "by_type": {"x": 2}},
-                              "added": [{"ref": "R1"}, {"ref": "C4"}], "removed": [], "file": "/a/b.kicad_pcb",
-                              "stale": [], "vias": ["V1"]}, Path("/a"))
+                              "added": [{"ref": "R1"}, {"ref": "C4"}], "removed": [],
+                              "file": str(tmp_path / "b.kicad_pcb"),
+                              "stale": [], "vias": ["V1"]}, tmp_path)
     assert lines[:3] == ["ok: false", "added: R1, C4", "removed: none"]
     assert "vias: 1 item" in lines and not any(l.startswith("stale") for l in lines)
     assert "check.ok: true" in lines and "check.by_type: x 2" in lines and "file: `b.kicad_pcb`" in lines

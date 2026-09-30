@@ -38,12 +38,103 @@ reports what a design change made stale.
 
 ## Install
 
+### Linux
+
 ```sh
-python -m venv .venv && .venv/bin/pip install -e '.[dev]'     # add ,render on Windows
+python -m venv .venv && .venv/bin/pip install -e '.[dev]'
 .venv/bin/pytest                                              # needs kicad-cli; e2e test also SKiDL
 ```
 
-Requirements: KiCad 10 (`kicad-cli` on PATH, or `KICAD_CLI=/path/to/kicad-cli`), Python ≥ 3.10.
+### Windows (PowerShell)
+
+Install Python 3.10+ and **KiCad 10**, including its symbol and footprint libraries.
+For example, with Windows Package Manager (or use the installers from
+[Python](https://www.python.org/downloads/windows/) and
+[KiCad](https://www.kicad.org/download/windows/)):
+
+```powershell
+winget install --id Python.Python.3.12 --exact --source winget
+winget install --id KiCad.KiCad --exact --source winget
+```
+
+On non-English Windows, select **Preferences > Language > English** in KiCad:
+some checks parse English item descriptions, and Windows KiCad does not honor
+the `LANG=C` override used on Linux. Open the Schematic Editor and PCB Editor
+once and accept the default global symbol and footprint library tables when
+prompted, then close the editors. Without those tables, KiCad's ERC/DRC reports
+missing-library warnings.
+
+Open a **new PowerShell window** after installation and run the following from the
+repository root:
+
+```powershell
+$env:PYTHONUTF8 = '1'
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e '.[dev,render]'
+.\.venv\Scripts\kat.exe --help
+.\.venv\Scripts\python.exe -c "from kat.env import run_cli; print(run_cli('version').stdout.strip())"
+```
+
+No manual KiCad PATH setup is needed for kat. When a command needs KiCad, kat
+checks `KICAD_CLI`, then PATH, then KiCad 10's per-user and machine-wide Windows
+installer registrations (including custom installation directories), and finally
+the standard installation folders. The discovered path is cached as `KICAD_CLI`
+**inside the running kat process** and inherited by its child processes. A program
+cannot change its calling PowerShell's environment; separate kat invocations
+discover it again automatically. For an unregistered installation elsewhere, set
+`$env:KICAD_CLI = 'D:\your-install\bin\kicad-cli.exe'` explicitly.
+
+For development tests or standalone SKiDL scripts, populate the PowerShell
+session's variables automatically from kat's discovery:
+
+```powershell
+$env:KICAD_CLI = & .\.venv\Scripts\python.exe -c "from kat.env import kicad_cli; print(kicad_cli())"
+if ($LASTEXITCODE -ne 0) { throw 'KiCad discovery failed' }
+$kicadBin = Split-Path $env:KICAD_CLI
+$env:Path = "$kicadBin;$env:Path"
+$env:KICAD10_SYMBOL_DIR = Join-Path (Split-Path $kicadBin) 'share\kicad\symbols'
+.\.venv\Scripts\python.exe -m pytest -m 'not slow' --basetemp .venv\pytest-tmp
+```
+
+Known test limitation on Python 3.12: `test_cli_and_library_give_the_same_file`
+passes a negative comma-separated `--stub` value in a form argparse rejects.
+For CLI use, write `--stub=-5.08,0` rather than `--stub -5.08,0` (see SPEC.md §7).
+
+Repeat the development-test setup in new terminals when running tests or SKiDL
+scripts. Tests check PATH for `kicad-cli` even if `KICAD_CLI` is set, while SKiDL
+needs `KICAD10_SYMBOL_DIR` to find the installed symbol libraries.
+Repeat `PYTHONUTF8=1` when using kat too: KiCad files and
+reports contain UTF-8 characters, but Windows Python may otherwise use a legacy
+default encoding. Kat itself discovers the stock libraries relative to kicad-cli.
+The dedicated `--basetemp` directory is cleared by pytest; it keeps test projects
+on the same drive as the repository, avoiding SKiDL's cross-drive relative-path
+error when Windows TEMP is on C: and the checkout is on another drive.
+The `render` extra supplies PyMuPDF for PNG snapshots on
+Windows, where `rsvg-convert` is usually unavailable. To run the optional autorouting
+tests, install Java 21+ (for example,
+`winget install --id EclipseAdoptium.Temurin.21.JDK --exact --source winget`),
+open a new terminal, then run `.\.venv\Scripts\kat.exe pcb route --install`.
+GUI tests are opt-in (`.\.venv\Scripts\python.exe -m pytest -m kicad_gui`); they
+require the `[gui]` extra and currently skip on Windows because their display
+check expects Linux `DISPLAY` or `WAYLAND_DISPLAY`.
+
+The editable installation above is ready to use; activation is optional because
+the commands use the environment's executables directly. To build a wheel and
+install it into a separate local environment instead:
+
+```powershell
+.\.venv\Scripts\python.exe -m pip wheel . --no-deps --wheel-dir .venv\dist
+python -m venv .venv\installed
+.\.venv\installed\Scripts\python.exe -m pip install '.\.venv\dist\kat-0.1.0-py3-none-any.whl[render]'
+.\.venv\installed\Scripts\python.exe -m pip check
+.\.venv\installed\Scripts\kat.exe --help
+```
+
+Use the wheel filename produced by the build if the package version changes.
+This installation also auto-discovers KiCad; keep the UTF-8 setting when using it.
+
+Requirements: KiCad 10 (auto-discovered on Windows/macOS, or `kicad-cli` on PATH,
+or `KICAD_CLI` pointing to the executable), Python ≥ 3.10.
 PNG snapshots use `rsvg-convert` if present, otherwise PyMuPDF (`[render]` extra; AGPL-3.0).
 Autorouting needs Java 21+ and Freerouting: `kat pcb route --install` downloads the pinned
 release (GPL-3, run as a separate program) once into kat's cache; routing tests are skipped

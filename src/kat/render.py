@@ -30,9 +30,11 @@ def rasterize(svg: Path, png: Path, zoom: float = 3.0) -> None:
         import pymupdf
     except ImportError as e:
         raise env.KatError("no rasterizer: install rsvg-convert (librsvg) or `pip install pymupdf`") from e
-    doc = pymupdf.open(str(svg))
-    pix = doc[0].get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=False)
-    pix.save(str(png))
+    # PyMuPDF uses 72 points/inch; match rsvg-convert's 96 pixels/inch.
+    scale = zoom * 96 / 72
+    with pymupdf.open(str(svg)) as doc:
+        pix = doc[0].get_pixmap(matrix=pymupdf.Matrix(scale, scale), alpha=False)
+        pix.save(str(png))
 
 
 PX_PER_MM = 96 / 25.4  # rsvg-convert / PyMuPDF at zoom 1

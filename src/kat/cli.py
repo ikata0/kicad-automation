@@ -296,7 +296,10 @@ class _Fmt(argparse.RawDescriptionHelpFormatter):
 def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         prog="kat", formatter_class=_Fmt,
-        description="kat - edit and verify KiCad 10 schematics from the command line.",
+        description=("kat - edit and verify KiCad 10 schematics from the command line.\n\n"
+                     "KiCad discovery: KICAD_CLI, then PATH, then Windows installer registration/"
+                     "standard folders or the macOS app bundle. The detected path is cached in "
+                     "this process's KICAD_CLI; the calling shell is unchanged."),
         epilog=WORKFLOW)
     p.add_argument("--no-report", action="store_true",
                    help="do not journal this command in NAME_REPORT.md (also: KAT_REPORT=0)")

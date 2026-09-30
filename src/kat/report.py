@@ -19,7 +19,6 @@ from __future__ import annotations
 
 import ast
 import datetime as dt
-import fcntl
 import io
 import json
 import os
@@ -125,33 +124,52 @@ def _slug(text: str) -> str:
     return re.sub(r"[^A-Za-z0-9_-]+", "-", text).strip("-")[:40] or "img"
 
 
+@contextmanager
+def _report_lock(fh: io.TextIOWrapper) -> Iterator[None]:
+    if sys.platform == "win32":
+        import msvcrt
+        fh.seek(0)
+        msvcrt.locking(fh.fileno(), msvcrt.LK_LOCK, 1)
+        try:
+            yield
+        finally:
+            fh.seek(0)
+            msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(fh, fcntl.LOCK_UN)
+
+
 def append(root: Path, name: str, kind: str, body: str,
            images: list[tuple[str, Path]] = (), slug: str = "") -> int:
     """Append entry N (the next number) and return N. ``images`` (label, file) are copied
     to ``<NAME>_REPORT/<NNN>_<slug>/`` and embedded below ``body``."""
     report = ensure(root, name)
-    with open(report, "a+", encoding="utf-8") as fh:
-        fcntl.flock(fh, fcntl.LOCK_EX)
-        fh.seek(0)
-        nums = [int(n) for n in _HEADING.findall(fh.read())]
-        n = (max(nums) if nums else 0) + 1
-        text = f"\n## {n} · {dt.datetime.now():%Y-%m-%d %H:%M:%S} · {kind}\n\n{body.rstrip()}\n"
-        existing = [(label, Path(p)) for label, p in images if p and Path(p).exists()]
-        if existing:
-            folder = root / f"{name}_REPORT" / f"{n:03d}_{_slug(slug or kind)}"
-            folder.mkdir(parents=True, exist_ok=True)
-            links = []
-            for label, src in existing:
-                dst = folder / src.name
-                if dst.exists():
-                    dst = folder / f"{_slug(label)}_{src.name}"
-                shutil.copy(src, dst)
-                links.append(f"![{label}]({dst.relative_to(root).as_posix()})")
-            text += "\n" + "\n".join(links) + "\n"
-        fh.seek(0, os.SEEK_END)
-        fh.write(text)
-        fh.flush()
-        fcntl.flock(fh, fcntl.LOCK_UN)
+    with open(report, "a+", encoding="utf-8", newline="\n") as fh:
+        with _report_lock(fh):
+            fh.seek(0)
+            nums = [int(n) for n in _HEADING.findall(fh.read())]
+            n = (max(nums) if nums else 0) + 1
+            text = f"\n## {n} · {dt.datetime.now():%Y-%m-%d %H:%M:%S} · {kind}\n\n{body.rstrip()}\n"
+            existing = [(label, Path(p)) for label, p in images if p and Path(p).exists()]
+            if existing:
+                folder = root / f"{name}_REPORT" / f"{n:03d}_{_slug(slug or kind)}"
+                folder.mkdir(parents=True, exist_ok=True)
+                links = []
+                for label, src in existing:
+                    dst = folder / src.name
+                    if dst.exists():
+                        dst = folder / f"{_slug(label)}_{src.name}"
+                    shutil.copy(src, dst)
+                    links.append(f"![{label}]({dst.relative_to(root).as_posix()})")
+                text += "\n" + "\n".join(links) + "\n"
+            fh.seek(0, os.SEEK_END)
+            fh.write(text)
+            fh.flush()
     return n
 
 
@@ -165,10 +183,13 @@ SUMMARY_FIRST = ("ok", "clean", "ready", "match", "netlist_match", "parity", "un
 def rel(text: str, root: Path | None) -> str:
     """An absolute path as the report shows it: relative to the project root when it lies
     inside it or at most two levels up, else unchanged."""
-    if not root or not text.startswith("/"):
+    if not root or not Path(text).is_absolute():
         return text
-    r = os.path.relpath(text, root)
-    return r if not r.startswith("../../../") else text
+    try:
+        r = os.path.relpath(text, root)
+    except ValueError:  # different drives on Windows
+        return text
+    return r if not r.replace("\\", "/").startswith("../../../") else text
 
 
 def _cmdline(args: list[str], root: Path | None) -> str:
@@ -229,7 +250,8 @@ def summarize(result, root: Path | None = None, limit: int = 14) -> list[str]:
 def _json_block(result, root: Path | None) -> str:
     text = json.dumps(env.tidy(result), indent=1, default=list)
     if root:
-        text = text.replace(str(root) + "/", "")
+        prefix = json.dumps(str(root))[1:-1] + os.sep.replace("\\", "\\\\")
+        text = text.replace(prefix, "")
     lines = text.splitlines()
     if len(lines) > JSON_LINES:
         lines = lines[:JSON_LINES] + [f"... cut: {len(lines) - JSON_LINES} more lines"]
@@ -304,7 +326,7 @@ def snapshot_images(path: Path | str, result: dict, call: str, slug: str = "") -
     if found is None:
         return
     root = found[0]
-    call = call.replace(str(Path(path).resolve().parent) + "/", "").replace(str(root) + "/", "")
+    call = call.replace(str(Path(path).resolve().parent) + os.sep, "").replace(str(root) + os.sep, "")
     body = f"`{call}`\n\n" + "\n".join(f"- {line}" for line in summarize(result, root))
     append(root, found[1], "snapshot" if "snapshot" in call else "view", body, images, slug)
 
