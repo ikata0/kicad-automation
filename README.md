@@ -71,10 +71,13 @@ repository root:
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e '.[dev,render]'
+.\.venv\Scripts\python.exe -m pip install -e ".[dev,render]"
 .\.venv\Scripts\kat.exe --help
 .\.venv\Scripts\python.exe -c "from kat.env import run_cli; print(run_cli('version').stdout.strip())"
 ```
+
+If the install fails with `WinError 32` (file in use), a running `kat.exe` still holds the
+old installation: close it and run the install again.
 
 No manual KiCad PATH setup is needed for kat. When a command needs KiCad, kat
 checks `KICAD_CLI`, then PATH, then KiCad 10's per-user and machine-wide Windows
@@ -127,13 +130,36 @@ install it into a separate local environment instead:
 ```powershell
 .\.venv\Scripts\python.exe -m pip wheel . --no-deps --wheel-dir .venv\dist
 python -m venv .venv\installed
-.\.venv\installed\Scripts\python.exe -m pip install '.\.venv\dist\kat-0.1.0-py3-none-any.whl[render]'
+.\.venv\installed\Scripts\python.exe -m pip install ".\.venv\dist\kat-0.1.0-py3-none-any.whl[render]"
 .\.venv\installed\Scripts\python.exe -m pip check
 .\.venv\installed\Scripts\kat.exe --help
 ```
 
 Use the wheel filename produced by the build if the package version changes.
 This installation also auto-discovers KiCad and uses explicit UTF-8 file encoding.
+
+### `kat` on PATH (isolated editable install)
+
+To call plain `kat` from any directory, for example from a project in
+`../kicad-sandbox`, install it as a [uv](https://docs.astral.sh/uv/) tool. uv creates
+a private environment for kat, and it doesn't touch your global Python. Because the
+install is editable, it runs the checkout's `src/`, so code changes apply
+without reinstalling:
+
+```powershell
+winget install --id astral-sh.uv --exact --source winget   # Linux: curl -LsSf https://astral.sh/uv/install.sh | sh
+uv tool install --python 3.12 -e ".[dev,render]"           # from the repository root
+uv tool update-shell                                       # one-time: puts uv's tool folder on PATH
+```
+
+Open a new terminal, then run `kat --help`. The installer doesn't change PATH
+by itself; `uv tool update-shell` adds `~\.local\bin` (Linux: `~/.local/bin`) once.
+Keep the `dev` extra: kat runs SKiDL scripts with its own Python, so SKiDL must
+be installed alongside kat. After the dependencies in `pyproject.toml` change, run
+`uv tool install --reinstall --python 3.12 -e ".[dev,render]"`; remove the tool with
+`uv tool uninstall kat`. `pipx install -e ".[dev,render]"` followed by
+`pipx ensurepath` works the same way. Run the test suite from the repository
+`.venv` as before.
 
 Requirements: KiCad 10 (auto-discovered on Windows/macOS, or `kicad-cli` on PATH,
 or `KICAD_CLI` pointing to the executable), Python ≥ 3.10.
