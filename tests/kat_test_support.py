@@ -189,15 +189,22 @@ def missing(capabilities: dict[str, Capability], names=REQUIRED) -> list[str]:
             if not capabilities[name].available]
 
 
+def _drive(path: Path) -> str:
+    """Lower-case Windows drive of the resolved path ('' without one)."""
+    literal = PureWindowsPath(str(path)).drive
+    if literal and not path.drive:
+        # A Windows path on a POSIX host: resolve() would make it relative to the cwd.
+        return literal.lower()
+    return PureWindowsPath(str(path.resolve())).drive.lower()
+
+
 def configure_windows_temp(root: Path, explicit: str | None, platform: str = sys.platform,
                            system_temp: Path | None = None) -> None:
     """Give pytest a same-drive temp parent, preserving its retention and locks."""
     if explicit or platform != "win32" or os.environ.get("PYTEST_DEBUG_TEMPROOT"):
         return
     system_temp = system_temp or Path(tempfile.gettempdir())
-    if PureWindowsPath(str(system_temp.resolve())).drive.lower() == (
-        PureWindowsPath(str(root.resolve())).drive.lower()
-    ):
+    if _drive(system_temp) == _drive(root):
         return
     venv = root / ".venv"
     parent = venv / "pytest-tmp" if (
