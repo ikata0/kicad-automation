@@ -327,3 +327,7 @@ inspection; `pytest -m 'not slow'` skips the large one.
 - **Lossless editing** — `kat.sexpr` keeps every token. kiutils drops KiCad 8+ syntax;
   kicad-skip preserves tokens but has not been released since 2024 and lacks the geometry
   this needs.
+
+## License
+
+MIT, see [LICENSE](LICENSE). The optional `render` extra installs PyMuPDF, which is AGPL-3.0.
