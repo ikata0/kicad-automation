@@ -217,11 +217,12 @@ class Footprint:
         if rot is not None:
             fps.set_rotation(self.node, rot)
 
-    def flip(self) -> None:
-        """Move to the other side, mirrored like KiCad's flip (y mirror, same position)."""
+    def flip(self, swap=None) -> None:
+        """Move to the other side, mirrored like KiCad's flip (y mirror, same position).
+        ``swap``: layer name -> layer name (default: F./B. swapped)."""
         rot = self.rot
         fps.set_rotation(self.node, 0)
-        fps.mirror(self.node)
+        fps.mirror(self.node, swap=swap or fps.swap_side)
         fps.set_rotation(self.node, rot)
 
     def info(self) -> dict:

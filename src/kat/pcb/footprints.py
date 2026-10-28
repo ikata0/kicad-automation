@@ -54,8 +54,25 @@ def swap_side(layer: str) -> str:
     return layer
 
 
-def mirror(node: list, top: bool = True) -> None:
-    """Mirror footprint-local geometry in y and swap F./B. layers, in place (KiCad's flip)."""
+# per-side options of pads and vias (KiCad 9+): (tenting (front yes) (back no))
+SIDED = {"tenting", "covering", "plugging", "capping"}
+
+
+def swap_sided(node: list) -> None:
+    """Swap the front and back entries of tenting, covering, plugging and capping, in place."""
+    for c in node:
+        if head(c) in SIDED:
+            for j, t in enumerate(c):
+                if head(t) in ("front", "back"):
+                    t[0] = Sym("back" if head(t) == "front" else "front")
+                elif isinstance(t, Sym) and str(t) in ("front", "back"):
+                    c[j] = Sym("back" if str(t) == "front" else "front")
+
+
+def mirror(node: list, top: bool = True, swap=swap_side) -> None:
+    """Mirror footprint-local geometry in y and swap F./B. layers, in place (KiCad's flip).
+    ``swap``: the layer map (default F./B. only; a stamp passes its copper map too)."""
+    swap_sided(node)
     for c in node:
         if not isinstance(c, list):
             continue
@@ -68,7 +85,7 @@ def mirror(node: list, top: bool = True) -> None:
         elif h in ("layer", "layers"):
             for j in range(1, len(c)):
                 if isinstance(c[j], str) and not isinstance(c[j], Sym):
-                    c[j] = swap_side(c[j])
+                    c[j] = swap(c[j])
         elif h == "effects":
             just = find(c, "justify")
             if just is None:
@@ -81,7 +98,7 @@ def mirror(node: list, top: bool = True) -> None:
                 just.append(Sym("mirror"))
             continue
         if h != "model":  # 3D model offsets follow the footprint side by themselves
-            mirror(c, top=False)
+            mirror(c, top=False, swap=swap)
 
 
 def turn(node: list, delta: float) -> None:

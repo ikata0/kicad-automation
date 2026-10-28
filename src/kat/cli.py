@@ -162,7 +162,30 @@ def cmd_pcb(a):
     if a.pcb_cmd == "stamp":
         names = "all" if a.instance == ["all"] else a.instance
         return kat.pcb.stamp(a.pcb, a.block, names, xy(a.at), xy(a.step) if a.step else (0.0, 0.0),
-                             a.rot, not a.no_lock, a.make_room)
+                             a.rot, not a.no_lock, a.make_room, a.side, a.layer_map, a.allow_asymmetric)
+    if a.pcb_cmd == "roles":
+        roles = dict(x.split("=", 1) for x in a.role if "=" in x)
+        if len(roles) != len(a.role):
+            raise env.KatError("give roles as LAYER=ROLE (e.g. L1=in_signal F.Cu=in_signal_top)")
+        return {"board": a.pcb, "roles": kat.pcb.layer_roles(a.pcb, roles or None)}
+    if a.pcb_cmd == "stack":
+        return kat.pcb.stack(a.pcb)
+    if a.pcb_cmd == "netrule":
+        if a.kind == "coupling":
+            if len(a.args) != 2:
+                raise env.KatError("coupling needs two net selectors: A B (e.g. 'OUT*' 'IN*')")
+            return kat.pcb.coupling_rule(a.pcb, a.args[0], a.args[1], a.distance)
+        if a.kind == "layers":
+            if len(a.args) < 2:
+                raise env.KatError("layers needs NETS LAYER... (e.g. 'IN*' F.Cu B.Cu)")
+            return kat.pcb.layer_rule(a.pcb, a.args[0], a.args[1:])
+        if a.kind == "plane":
+            if len(a.args) != 1:
+                raise env.KatError("plane needs one net selector (and --net for the plane's net)")
+            return kat.pcb.plane_rule(a.pcb, a.args[0], a.net)
+        if a.args:
+            raise env.KatError(f"{a.kind} takes no further arguments")
+        return kat.pcb.net_rules(a.pcb, a.kind == "clear")
     if a.pcb_cmd == "instances":
         return kat.pcb.instances(a.pcb, a.block)
     if a.pcb_cmd == "environment":
@@ -193,7 +216,8 @@ def cmd_block(a):
     if a.block_cmd == "build":
         return blocks.build(a.name, a.lib, a.force)
     if a.block_cmd == "check":
-        return blocks.check(a.name, a.lib, () if a.no_require else tuple(a.require_field or ["MPN"]))
+        return blocks.check(a.name, a.lib, () if a.no_require else tuple(a.require_field or ["MPN"]),
+                            a.sides, a.layer_map, a.allow_asymmetric)
     if a.block_cmd == "list":
         return blocks.list_blocks(a.lib)
     raise env.KatError(f"unknown block action {a.block_cmd!r}")
@@ -721,7 +745,8 @@ def build_parser() -> argparse.ArgumentParser:
     s1.add_argument("--no-require", action="store_true", help="gate requires no fields")
     s2 = psp.add_parser("check", formatter_class=_Fmt, help="DRC + parity + kat findings",
                         description="KiCad's DRC with zones refilled (in memory) and schematic parity,\n"
-                                    "plus: outline missing, parts outside the outline.\n"
+                                    "plus: outline missing, parts outside the outline, and the board's net\n"
+                                    "rules (kat pcb netrule: coupling, layers, plane) in net_rules.\n"
                                     "  ok    = no DRC errors, parity 0, nothing unconnected, outline\n"
                                     "  clean = ok, no DRC warnings, no kat findings\n"
                                     "islands counts copper cut off from its net (starved thermals,\n"
@@ -783,7 +808,15 @@ def build_parser() -> argparse.ArgumentParser:
                                     "replaces the copy. The block board's origin is the top-left corner of\n"
                                     "its outline. Refused if the instance is wired differently, if the design's\n"
                                     "net classes on its nets are stricter than the block's, or if design parts\n"
-                                    "overlap the block's parts (--make-room pushes them aside).")
+                                    "overlap the block's parts (courtyards on the same side, through-hole pads on\n"
+                                    "both; --make-room pushes them aside).\n"
+                                    "--side bottom flips the block: mirrored about its vertical axis, then turned\n"
+                                    "by --rot (as seen from the top); --at is the top-left corner of the flipped\n"
+                                    "outline, so both sides share one grid. Layers go through --layer-map: auto\n"
+                                    "(L(k) <-> L(N+1-k), refused on a stack-up that is not mirror-symmetric unless\n"
+                                    "--allow-asymmetric), roles (kat pcb roles on both boards) or explicit\n"
+                                    "\"F.Cu=B.Cu,In1.Cu=In2.Cu\". Without --side/--layer-map an instance keeps what\n"
+                                    "it was stamped with, so `stamp all` does not flip blocks back.")
     s9.add_argument("pcb", metavar="PCB", help="the design's board")
     s9.add_argument("block", metavar="BLOCK_PCB", help="the checked block board")
     s9.add_argument("instance", nargs="+", metavar="INSTANCE", help="/CH_A ... or all")
@@ -792,6 +825,41 @@ def build_parser() -> argparse.ArgumentParser:
     s9.add_argument("--rot", type=float, default=0.0, help="0, 90, 180 or 270")
     s9.add_argument("--no-lock", action="store_true", help="leave the copied copper unlocked")
     s9.add_argument("--make-room", action="store_true", help="move design parts out of the block's way")
+    s9.add_argument("--side", choices=("top", "bottom"), help="side of the block's parts (default: as recorded, else top)")
+    s9.add_argument("--layer-map", metavar="MAP", help='auto (default), roles, or "F.Cu=B.Cu,In1.Cu=In2.Cu,..."')
+    s9.add_argument("--allow-asymmetric", action="store_true",
+                    help="flip with the auto map although the stack-up is not mirror-symmetric")
+    s14 = psp.add_parser("roles", formatter_class=_Fmt, help="read or set what each copper layer is for",
+                         description="Layer roles, e.g. a block: L1=in_signal L2=gnd_ref L3=out L4=out\n"
+                                     "L5=gnd_ref L6=back_signal (as seen from its component side); a design:\n"
+                                     "L1=in_signal_top ... L6=in_signal_bottom (side-specific roles with _top /\n"
+                                     "_bottom, the rest plain). stamp --layer-map roles pairs layers by role, from\n"
+                                     "the component side inwards; net rules may name roles as layers. Stored in\n"
+                                     "<board>.kat.json. Without roles: prints them.")
+    s14.add_argument("pcb", metavar="PCB"); s14.add_argument("role", nargs="*", metavar="LAYER=ROLE")
+    s15 = psp.add_parser("stack", formatter_class=_Fmt, help="stack-up, layer roles, symmetry",
+                         description="Copper and dielectric thicknesses (mm), εr and material top to bottom\n"
+                                     "(KiCad's default build-up when the board stores none), the layer roles,\n"
+                                     "and why the stack-up is not mirror-symmetric (asymmetry).")
+    s15.add_argument("pcb", metavar="PCB")
+    s16 = psp.add_parser("netrule", formatter_class=_Fmt, help="kat's net rules checked by pcb check",
+                         description="Rules DRC does not know, checked by kat pcb check (net_rules; any finding\n"
+                                     "makes the board not clean). Nets are a glob over net names (OUT*, /*/IN)\n"
+                                     "or class:NAME. A net's index is what the glob's first wildcard matched (OUT3\n"
+                                     "-> 3); nets of the same index are one channel and do not couple.\n"
+                                     "  coupling A B [--distance D]  copper of A within D mm (default 0.3) of B of\n"
+                                     "                               another index, same or adjacent layer; overlap\n"
+                                     "                               area, length and parallel-plate pF (stack-up)\n"
+                                     "  layers NETS LAYER...         NETS only on these layers (names, L1, roles);\n"
+                                     "                               stamp refuses blocks that break it\n"
+                                     "  plane NETS [--net GND]       a pour on an adjacent layer under every track\n"
+                                     "  list | clear                 show or remove the rules\n"
+                                     "Stored in <board>.kat.json.")
+    s16.add_argument("pcb", metavar="PCB")
+    s16.add_argument("kind", choices=("coupling", "layers", "plane", "list", "clear"), metavar="KIND")
+    s16.add_argument("args", nargs="*", metavar="ARG")
+    s16.add_argument("--distance", type=float, default=0.3, help="coupling: distance in mm (default 0.3)")
+    s16.add_argument("--net", help="plane: the plane's net (default: any other net)")
     s10 = psp.add_parser("instances", formatter_class=_Fmt, help="instances of a block in a design")
     s10.add_argument("pcb", metavar="PCB"); s10.add_argument("block", metavar="BLOCK_PCB")
     s11 = psp.add_parser("environment", formatter_class=_Fmt, help="name a block board's test-environment zones",
@@ -836,6 +904,11 @@ def build_parser() -> argparse.ArgumentParser:
         if action == "build":
             b.add_argument("--force", action="store_true", help="pass the board sync gate")
         if action == "check":
+            b.add_argument("--sides", choices=("top", "both"), default="top",
+                           help="both: also check the block flipped to the bottom side (stamp --side bottom)")
+            b.add_argument("--layer-map", metavar="MAP", help='flip map: auto (default) or "F.Cu=B.Cu,..."')
+            b.add_argument("--allow-asymmetric", action="store_true",
+                           help="flip with the auto map on a stack-up that is not mirror-symmetric")
             b.add_argument("--require-field", action="append", metavar="NAME",
                            help="field the gate requires of the block's parts (repeatable; default MPN)")
             b.add_argument("--no-require", action="store_true", help="gate requires no fields")

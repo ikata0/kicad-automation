@@ -145,6 +145,16 @@ class SetupMixin:
                 return {"layer": layer, "type": kind}
         raise env.KatError(f"no copper layer {layer!r}; set_copper_layers first")
 
+    def set_stackup(self, dielectrics: list[float], copper: float | list[float] = 0.035,
+                    epsilon_r: float | list[float] = 4.5, material: str = "FR4") -> dict:
+        """Write the stack-up: ``dielectrics`` thicknesses in mm top to bottom (one fewer
+        than copper layers), ``copper`` thickness in mm (one value or one per layer),
+        ``epsilon_r`` (one or per dielectric). Dielectrics alternate prepreg / core, the
+        outer ones prepreg (the type is a label; kat uses thickness, εr and material).
+        Returns the stack-up as ``kat pcb stack`` reads it."""
+        from . import layers
+        return layers.write_stackup(self, dielectrics, copper, epsilon_r, material)
+
     def plane(self, net: str, layer: str, clearance: float = 0.3) -> dict:
         """A whole-board plane of ``net`` on ``layer`` (usually an inner layer): layer type
         power plus a pour over the outline. SMD pads reach it through ``fanout``."""

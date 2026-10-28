@@ -331,3 +331,42 @@ def test_contacts_with_ignored_parts_are_allowed(tmp_path):
         with pytest.raises(kat.KatError, match="R2.1"):
             s.move_symbols([dict(ref="R1", dx=d[0], dy=d[1])])
         s.move_symbols([dict(ref="R1", dx=d[0], dy=d[1])], ignore={"R2"})
+
+
+@pytest.mark.requires("kicad", "symbols", "footprints", "skidl")
+def test_bottom_side_needs_its_own_check_and_mirrors_the_ports(lib, tmp_path, capsys):
+    """`block check --sides both` checks the block turned over (DRC, port points);
+    `stamp --side bottom` warns until then; port points are mirrored with the block."""
+    rc_pcb = lib / "RC" / "RC.kicad_pcb"
+    with kat.pcb.edit(rc_pcb) as b:
+        net = b.footprint("R1").pad("1").net
+        b.via((100.8, 101.5), net=net)
+        b.track(["R1.1", (100.8, 101.5)])
+    kat.pcb.block_port(rc_pcb, "inp", (100.8, 101.5))
+    assert "bottom" not in blocks.check("RC", require=())
+    d = tmp_path / "design"
+    d.mkdir()
+    (d / "design.py").write_text(DESIGN_PY)
+    subprocess.run([sys.executable, "design.py"], cwd=d, check=True, capture_output=True)
+    sch = d / "top" / "top.kicad_sch"
+    assert cli.main(["new", str(sch)]) == 0
+    capsys.readouterr()
+    kat.sync(sch, d / "design.net")
+    pcb = sch.with_suffix(".kicad_pcb")
+    kat.pcb.sync(pcb, force=True)
+    with kat.pcb.edit(pcb) as b:
+        b.set_copper_layers(4)
+        b.outline(rect=(100, 100, 40, 20))
+        b.plane("GND", "In1.Cu")
+        got = b.stamp("RC", "/CH_B", at=(110, 109), side="bottom")
+    assert "not checked on the bottom side" in got["warnings"][0]
+    # mirrored about the block's vertical axis (outline 100..114): x -> 110 + (114 - 100.8)
+    assert (got["ports"]["inp"]["x"], got["ports"]["inp"]["y"]) == (123.2, 110.5)
+    res = run(capsys, "block", "check", "RC", "--no-require", "--sides", "both")
+    assert res["ok"] and res["bottom"]["ok"], res["bottom"]
+    assert res["bottom"]["layer_map"] == {"F.Cu": "B.Cu", "In1.Cu": "In2.Cu", "In2.Cu": "In1.Cu", "B.Cu": "F.Cu"}
+    with kat.pcb.edit(pcb) as b:
+        again = b.stamp("RC", "/CH_B", at=(110, 109))
+    assert again["side"] == "bottom" and "warnings" not in again, again
+    c = check(pcb)
+    assert c["drc_errors"] == 0 and c["parity"] == 0, c

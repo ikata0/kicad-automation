@@ -193,7 +193,7 @@ with kat.pcb.edit(PCB) as b:
 ## Review sub-loop
 
 1. `check.json` / `kat pcb check`: `drc_errors`, `unconnected`, `islands`, `parity`,
-   `outside_outline`, `by_type`. Each finding with a position → `--finding-crops N` or
+   `outside_outline`, `by_type`, `net_rules.findings` (kat's own rules, below). Each finding with a position → `--finding-crops N` or
    `kat pcb view PCB --at X,Y --layers copper`.
 2. Overview pictures: `placement.png` (courtyards, fab), `top.png`, `bottom.png`,
    `In<n>.png`; `tiles/` when the board is large; `3d_top.png` for a last look.
@@ -203,6 +203,18 @@ with kat.pcb.edit(PCB) as b:
 5. Warnings you judge harmless (a port via joined on one layer only: `via_dangling`) and
    edge-mount parts (`overhang` in the check) pass the gate only when named:
    `kat pcb ready PCB --accept via_dangling="port vias of the rows" --overhang J1`.
+
+## Net rules (what DRC does not see)
+
+Sensitive analog boards (multi-channel TIAs, high-impedance inputs) set them before
+routing; `kat pcb check` reports them in `net_rules` and is not `clean` while any remain:
+
+- `kat pcb netrule PCB coupling 'OUT*' 'IN*' --distance 0.3`: one channel's output over
+  or near another channel's input (same or adjacent layer), with area and pF from the
+  stack-up (`kat pcb stack PCB`; set a real one with `b.set_stackup([...])`).
+- `kat pcb netrule PCB layers 'IN*' in_signal_top in_signal_bottom`: layers by name, `L1`
+  or role (`kat pcb roles PCB L1=in_signal_top ...`); `stamp` refuses blocks breaking it.
+- `kat pcb netrule PCB plane 'IN*' --net GND`: a GND pour on an adjacent layer under them.
 
 ## Design change during layout
 

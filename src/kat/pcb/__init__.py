@@ -17,8 +17,9 @@ from ..env import KatError, tidy
 from . import checks, syncer, views
 from .board import Board, Footprint, Pad
 
-__all__ = ["Board", "Footprint", "Pad", "block_environment", "block_port", "remove", "check", "drc", "edit", "fab",
-           "instances", "load", "ready", "refill", "route", "snapshot", "stamp", "sync", "view"]
+__all__ = ["Board", "Footprint", "Pad", "block_environment", "block_port", "remove", "check", "coupling_rule",
+           "drc", "edit", "fab", "instances", "layer_roles", "layer_rule", "load", "net_rules", "plane_rule",
+           "ready", "refill", "route", "snapshot", "stack", "stamp", "sync", "view"]
 
 
 def load(path: Path | str) -> Board:
@@ -106,18 +107,22 @@ def route(pcb: Path | str, passes: int = 20, nets: list[str] | None = None, time
 
 def stamp(pcb: Path | str, block_pcb: Path | str, instances: str | list[str],
           at: tuple[float, float], step: tuple[float, float] = (0.0, 0.0), rot: float = 0.0,
-          lock: bool = True, make_room: bool = False) -> dict:
+          lock: bool = True, make_room: bool = False, side: str | None = None,
+          layer_map: str | None = None, allow_asymmetric: bool = False) -> dict:
     """Stamp a checked block layout onto instances of the block (``Board.stamp``) and save.
     ``instances``: paths such as ``/CH_A`` (a list, or ``"all"`` for every instance). The
     n-th one goes to ``at + n * step`` (mm), turned by ``rot`` degrees. ``make_room``:
-    push the design's parts out of the block parts' way instead of refusing. Ends with
+    push the design's parts out of the block parts' way instead of refusing. ``side``
+    "top"/"bottom" (None: as recorded per instance, else top), ``layer_map`` "auto",
+    "roles" or ``"F.Cu=B.Cu,..."``, ``allow_asymmetric``: see ``Board.stamp``. Ends with
     the board check, like ``sync``."""
     report.touch(pcb)
     with edit(pcb) as b:
         names = b.instances(block_pcb) if instances == "all" else (
             [instances] if isinstance(instances, str) else list(instances))
         done = [b.stamp(block_pcb, name, (at[0] + k * step[0], at[1] + k * step[1]), rot, lock,
-                        make_room=make_room)
+                        make_room=make_room, side=side, layer_map=layer_map,
+                        allow_asymmetric=allow_asymmetric)
                 for k, name in enumerate(names)]
     c = checks.run(Path(pcb))
     return tidy({"board": str(pcb), "instances": done,
@@ -180,3 +185,59 @@ def ready(pcb: Path | str, fab_dir: Path | str | None = None, accept: dict[str, 
     report.touch(pcb)
     from . import fabrication as _fab
     return tidy(_fab.ready(Path(pcb), fab_dir, accept, overhang))
+
+
+def layer_roles(pcb: Path | str, roles: dict[str, str] | None = None) -> dict:
+    """Read or set what each copper layer is for (``{"L1": "in_signal", ...}``; a design
+    names side-specific roles ``in_signal_top`` / ``in_signal_bottom``). Used by
+    ``stamp(layer_map="roles")`` and by layer rules. Stored in ``<board>.kat.json``;
+    returns {layer: role}."""
+    from . import layers
+    report.touch(pcb)
+    return layers.set_layer_roles(pcb, roles)
+
+
+def stack(pcb: Path | str) -> dict:
+    """The board's stack-up (copper and dielectric thicknesses in mm, εr, material; KiCad's
+    default if none is stored), its layer roles and why it is not mirror-symmetric
+    (``asymmetry``, empty if it is)."""
+    from . import layers
+    report.touch(pcb)
+    b = Board(pcb)
+    return {"board": str(pcb), **layers.stackup(b), "roles": layers.set_layer_roles(pcb),
+            "asymmetry": layers.asymmetry(b)}
+
+
+def coupling_rule(pcb: Path | str, a: str, b: str, distance: float = 0.3) -> dict:
+    """``kat pcb check`` flags copper of nets ``a`` (glob such as ``OUT*``, or
+    ``class:NAME``) overlapping or within ``distance`` mm of copper of nets ``b`` of
+    another index (the glob's wildcard part) on the same or an adjacent layer, with the
+    overlap area and a parallel-plate capacitance (pF) from the stack-up. Returns the
+    board's net rules."""
+    from . import coupling
+    report.touch(pcb)
+    return {"board": str(pcb), "net_rules": coupling.coupling_rule(pcb, a, b, distance)}
+
+
+def layer_rule(pcb: Path | str, nets: str, layers: list[str]) -> dict:
+    """Nets ``nets`` may only lie on ``layers`` (KiCad names, ``L1``..., layer roles).
+    Checked by ``kat pcb check`` and by ``stamp`` on what it copies. Returns the net rules."""
+    from . import coupling
+    report.touch(pcb)
+    return {"board": str(pcb), "net_rules": coupling.layer_rule(pcb, nets, layers)}
+
+
+def plane_rule(pcb: Path | str, nets: str, net: str | None = None) -> dict:
+    """Tracks of ``nets`` need a pour of ``net`` (None: any other net) on an adjacent layer
+    under their whole length; ``kat pcb check`` reports the uncovered length. Returns the
+    net rules."""
+    from . import coupling
+    report.touch(pcb)
+    return {"board": str(pcb), "net_rules": coupling.plane_rule(pcb, nets, net)}
+
+
+def net_rules(pcb: Path | str, clear: bool = False) -> dict:
+    """The board's net rules (coupling, layers, plane); ``clear`` removes them."""
+    from . import coupling
+    report.touch(pcb)
+    return {"board": str(pcb), "net_rules": coupling.net_rules(pcb, clear)}

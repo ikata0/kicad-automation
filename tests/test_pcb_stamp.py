@@ -264,3 +264,152 @@ def test_flat_stamp_by_block_and_tag(tmp_path, monkeypatch):
     c = check(top)
     assert c["drc_errors"] == 0 and c["parity"] == 0, c
     assert "/CH_B/RC2 (rc)" in groups(top)
+
+
+# --- the bottom side: flipped block, layer map ----------------------------------------------
+
+def zone_layer(z) -> str:
+    return str((find(z, "layer") or find(z, "layers"))[1])
+
+
+def test_bottom_stamp_is_clean_mirrored_and_kept_on_restamp(hier, tmp_path):
+    """CH_B flipped under the board: parts on B, copper F.Cu -> B.Cu, In1 keep-out -> In2
+    (auto map, 4 layers, KiCad's default stack-up is symmetric), outline mirrored so
+    ``at`` is the flipped block's top-left corner. DRC and parity judge it; stamping
+    again without --side keeps it on the bottom."""
+    c = copy_of(hier, tmp_path)
+    pcb, b1 = c["top"], c["b1"]
+    before = counts(pcb)
+    src = Board(b1)
+    box = src.outline_box()
+    with kat.pcb.edit(pcb) as b:
+        r = b.stamp(b1, "/CH_B", at=(112, 112), side="bottom")
+    assert r["side"] == "bottom" and r["layer_map"] == {"F.Cu": "B.Cu", "In1.Cu": "In2.Cu",
+                                                         "In2.Cu": "In1.Cu", "B.Cu": "F.Cu"}
+    assert counts(pcb) == before
+    d = Board(pcb)
+    for sref, tref in r["pairs"].items():
+        sf, tf = src.footprint(sref), d.footprint(tref)
+        assert tf.side == "B"
+        assert (tf.x, tf.y) == pytest.approx((112 + box[2] - sf.x, 112 + sf.y - box[1]), abs=1e-3)
+        assert tf.rot % 360 == pytest.approx((180 - sf.rot) % 360)
+    g = groups(pcb)
+    assert "/CH_B (BLOCK1, bottom)" in g and "/CH_A (BLOCK1)" in g
+    zones = {str(find(z, "name")[1]): z for z in d.zones() if find(z, "name")}
+    assert zone_layer(zones["/CH_B/RC1: out node"]) == "B.Cu"
+    assert zone_layer(zones["/CH_B/RC1: no GND under OUT"]) == "In2.Cu"
+    ch_b = {t["layer"] for t in d.tracks() if "_B" in t["net"] or t["net"].startswith("/CH_B")}
+    assert ch_b == {"B.Cu"}
+    res = check(pcb)
+    assert res["drc_errors"] == 0 and res["parity"] == 0 and res["unconnected"] == 4, res
+    with kat.pcb.edit(pcb) as b:
+        again = b.stamp(b1, "/CH_B", at=(112, 112))
+    assert again["side"] == "bottom" and counts(pcb) == before
+    assert check(pcb)["drc_errors"] == 0
+    with kat.pcb.edit(pcb) as b:                    # and back to the top
+        top = b.stamp(b1, "/CH_B", at=(112, 112), side="top")
+    assert {Board(pcb).footprint(t).side for t in top["pairs"].values()} == {"F"}
+    res = check(pcb)
+    assert res["drc_errors"] == 0 and res["parity"] == 0 and res["unconnected"] == 4, res
+
+
+def test_bottom_layer_maps_and_asymmetric_stackups(hier, tmp_path):
+    c = copy_of(hier, tmp_path)
+    pcb, b1 = c["top"], c["b1"]
+    with kat.pcb.edit(pcb) as b:                    # In2 under the bottom side is thinner
+        b.set_stackup([0.1, 1.2, 0.2])
+    with pytest.raises(kat.KatError, match=r"not mirror-symmetric.*dielectric 1 vs 3: thickness 0.1 vs 0.2"):
+        Board(pcb).stamp(b1, "/CH_B", at=(112, 112), side="bottom")
+    with kat.pcb.edit(pcb) as b:
+        r = b.stamp(b1, "/CH_B", at=(112, 112), side="bottom", allow_asymmetric=True)
+    assert r["layer_map"]["In1.Cu"] == "In2.Cu"
+    # explicit: the GND reference stays on In1 (unnamed layers follow auto, bijective)
+    with kat.pcb.edit(pcb) as b:
+        r = b.stamp(b1, "/CH_B", at=(112, 112), side="bottom", layer_map="L1=L4,In1.Cu=In1.Cu,In2.Cu=In2.Cu")
+    assert r["layer_map"] == {"F.Cu": "B.Cu", "B.Cu": "F.Cu"}
+    for bad, why in (("F.Cu=F.Cu", "outer layers go to B.Cu"), ("In1.Cu=B.Cu", "not one-to-one|inner layer"),
+                     ("In1.Cu=In1.Cu", "not one-to-one")):
+        with pytest.raises(kat.KatError, match=why):
+            Board(pcb).stamp(b1, "/CH_B", at=(112, 112), side="bottom", layer_map=bad)
+    # roles: the block's gnd_ref next to its component side; the design names each layer's
+    # role for a block on either side, so the flip works on an asymmetric stack too
+    kat.pcb.layer_roles(b1, {"L1": "sig", "L2": "gnd_ref", "L3": "inner", "L4": "back"})
+    kat.pcb.layer_roles(pcb, {"L1": "sig_top|back_bottom", "L2": "gnd_ref_top|inner_bottom",
+                              "L3": "inner_top|gnd_ref_bottom", "L4": "back_top|sig_bottom"})
+    with kat.pcb.edit(pcb) as b:
+        r = b.stamp(b1, "/CH_B", at=(112, 112), side="bottom", layer_map="roles")
+    assert r["layer_map"] == {"F.Cu": "B.Cu", "In1.Cu": "In2.Cu", "In2.Cu": "In1.Cu", "B.Cu": "F.Cu"}
+    kat.pcb.layer_roles(pcb, {"L1": "sig_top", "L2": "gnd_ref", "L3": "gnd_ref", "L4": "sig_bottom"})
+    with pytest.raises(kat.KatError, match="role 'gnd_ref': the block has it on In1.Cu, the design on In2.Cu, In1.Cu"):
+        Board(pcb).stamp(b1, "/CH_B", at=(112, 112), side="bottom", layer_map="roles")
+
+
+def test_bottom_overlap_counts_through_hole_pads_on_both_sides(hier, tmp_path):
+    """J101 (pin header, on top) where a flipped block part goes: its pins go through."""
+    c = copy_of(hier, tmp_path)
+    pcb, b1 = c["top"], c["b1"]
+    with kat.pcb.edit(pcb) as b:
+        r = b.stamp(b1, "/CH_B", at=(112, 112), side="bottom")
+    part = Board(pcb).footprint(r["pairs"]["R101"])
+    with kat.pcb.edit(pcb) as b:
+        b.footprint("J101").place(part.x, part.y, 90)
+    with pytest.raises(kat.KatError, match="overlap J101"):
+        Board(pcb).stamp(b1, "/CH_B", at=(112, 112), side="bottom")
+
+
+def test_layer_rules_refuse_a_flipped_block(hier, tmp_path):
+    c = copy_of(hier, tmp_path)
+    pcb, b1 = c["top"], c["b1"]
+    kat.pcb.layer_roles(pcb, {"F.Cu": "in_signal_top", "B.Cu": "in_signal_bottom"})
+    kat.pcb.layer_rule(pcb, "/CH_*", ["in_signal_top", "In1.Cu", "In2.Cu"])
+    with pytest.raises(kat.KatError, match=r"layer rules: track of /CH_B/RC\d/OUT on B.Cu"):
+        Board(pcb).stamp(b1, "/CH_B", at=(112, 112), side="bottom")
+    kat.pcb.layer_rule(pcb, "/CH_*", ["in_signal_top", "in_signal_bottom", "In1.Cu", "In2.Cu"])
+    with kat.pcb.edit(pcb) as b:
+        b.stamp(b1, "/CH_B", at=(112, 112), side="bottom")
+    assert not check(pcb)["net_rules"]["findings"]
+
+
+def test_flipped_block_board_is_clean(hier, tmp_path):
+    """What `kat block check --sides both` checks: the whole block board turned over."""
+    rc = copy_of(hier, tmp_path)["rc"]
+    res = stamp_mod.flip_board(rc)
+    res["board"].save()
+    c = check(rc)
+    assert c["drc_errors"] == 0 and c["parity"] == 0, c
+    b = Board(rc)
+    assert {f.side for f in b.footprints()} == {"B"}
+    assert {str(find(z, "name")[1]): zone_layer(z) for z in b.zones()} == {
+        "env GND In1": "In2.Cu", "out node": "B.Cu", "no GND under OUT": "In2.Cu"}
+
+
+def test_coupling_rule_estimates_the_crosstalk_capacitance(tmp_path, monkeypatch):
+    """2 mm of OUT1 over IN2 through 0.1 mm (6 layers, 0.1/0.5/0.15/0.5/0.1): ≈ 0.2 pF;
+    the own channel's IN1 under OUT1 does not count, nor does IN4 two layers away."""
+    monkeypatch.setenv("KAT_REPORT", "0")
+    pcb = tmp_path / "c.kicad_pcb"
+    b = Board.create(pcb)
+    b.set_copper_layers(6)
+    b.outline(rect=(0, 0, 20, 10))
+    b.set_stackup([0.1, 0.5, 0.15, 0.5, 0.1])
+    b.add_track((2, 2), (8, 2), 0.25, "F.Cu", "OUT1")
+    b.add_track((6, 2), (12, 2), 0.25, "In1.Cu", "IN2")
+    b.add_track((2, 2), (5, 2), 0.25, "In1.Cu", "IN1")
+    b.add_track((2, 2.45), (4, 2.45), 0.2, "F.Cu", "IN3")
+    b.add_track((9, 2), (12, 2), 0.25, "In2.Cu", "IN4")
+    b.save()
+    assert kat.pcb.stack(pcb)["asymmetry"] == []
+    kat.pcb.coupling_rule(pcb, "OUT*", "IN*", distance=0.3)
+    kat.pcb.plane_rule(pcb, "IN*")
+    res = check(pcb)
+    f = {(x["kind"], x.get("b") or x.get("net")): x for x in res["net_rules"]["findings"]}
+    assert set(f) == {("coupling", "IN2"), ("coupling", "IN3"), ("plane", "IN1"), ("plane", "IN2"),
+                      ("plane", "IN3"), ("plane", "IN4")}
+    over = f[("coupling", "IN2")]
+    assert over["layers"] == ["F.Cu", "In1.Cu"] and over["dielectric"] == 0.1
+    assert 0.5 <= over["area"] <= 0.62 and 2.0 <= over["length"] <= 2.3
+    assert over["capacitance_pf"] == pytest.approx(8.854e-3 * 4.5 * over["area"] / 0.1, rel=1e-3)
+    assert f[("coupling", "IN3")]["distance"] == pytest.approx(0.225, abs=1e-3)
+    assert not res["clean"]
+    assert cli.main(["pcb", "netrule", str(pcb), "clear"]) == 0
+    assert "net_rules" not in check(pcb)

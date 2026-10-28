@@ -344,9 +344,33 @@ classes → `remove_tracks()` (locked copper stays) → route again.
 ### 4.12 Board checks and review
 
 `kat pcb check PCB` runs KiCad's DRC with zones refilled in memory and schematic parity,
-plus kat's findings (outline missing, parts outside the outline). `ok` = no DRC errors,
-parity 0, nothing unconnected, outline present; `clean` = `ok` and no DRC warnings or kat
+plus kat's findings (outline missing, parts outside the outline, net rules). `ok` = no DRC
+errors, parity 0, nothing unconnected, outline present; `clean` = `ok` and no DRC warnings or kat
 findings. `islands` counts copper cut off from its net (starved thermals, isolated copper).
+
+**Net rules** (`kat pcb netrule`, stored in `<board>.kat.json`) check what DRC does not
+know; their findings are in `net_rules.findings` (with positions, so `--finding-crops`
+shows them) and make the board not `clean`:
+
+- `coupling A B [--distance D]`: copper of a net in A (`OUT*`) overlapping, or within D mm
+  (default 0.3) of, copper of a net in B (`IN*`) of *another index*, on the same or an
+  adjacent layer. Nets are globs over net names or `class:NAME`; the index is what the
+  glob's first wildcard matched (`OUT3` → `3`, `/*/IN` → the sheet), so a channel's own
+  output and input do not count. Across layers the finding gives the overlap area and
+  length and C = ε0·εr·A/h from the stack-up (pF; no fringing, so a lower bound). Example:
+  2 mm of a 0.25 mm output over another channel's input through 0.1 mm ≈ 0.2 pF, as much
+  as a 0.1 pF feedback capacitor: crosstalk near 0 dB, and no DRC error.
+- `layers NETS LAYER...`: NETS only on these layers (KiCad names, `L1`…, layer roles).
+  `stamp` refuses a block whose copied copper breaks it (e.g. `IN*` mapped to an inner
+  layer by a flip).
+- `plane NETS [--net GND]`: a pour (of GND, or of any other net) on an adjacent layer under
+  every track of NETS; the finding gives the uncovered length.
+
+Coupling and plane rules see the pours filled (KiCad's filler on a scratch copy).
+`kat pcb stack PCB` shows the stack-up kat uses (KiCad's default build-up when the board
+stores none; `Board.set_stackup` writes one), the layer roles and whether it is
+mirror-symmetric. `kat pcb roles PCB L1=ROLE ...` declares the roles (a layer with several
+roles joins them with `|`).
 
 On a board, numbers come first: unconnected items, islands, clearances and parity are
 exact. Pictures are for what numbers cannot say (fan-out, detours, crowding, silkscreen):
@@ -513,18 +537,48 @@ with kat.pcb.edit("top/top.kicad_pcb") as b:
   stamped copper would be DRC errors); give those nets classes with the block's clearance
   or route the block with the design's. Another track width is a warning only: DRC checks
   a class's clearance, its width is what the router lays.
-- **Room:** design parts where the block's parts go (courtyards on the same side) are
-  refused; `make_room=True` / `--make-room` pushes unlocked ones aside. Parts of block
-  instances not stamped yet are no obstacle.
+- **Room:** design parts where the block's parts go (courtyards on the same side; the
+  through-hole pads and holes of either side's parts collide on both sides) are refused;
+  `make_room=True` / `--make-room` pushes unlocked ones aside. Parts of block instances
+  not stamped yet are no obstacle.
 - **Copied:** the parts' positions, rotations and sides; tracks, arcs, vias (locked unless
   `lock=False`), zones and keep-outs (named `/CH_A/RC1: out node`), graphics not on
   Edge.Cuts, board-only parts (new references). The block board's own groups become
   sub-groups of the instance group `"/CH_A (NAME)"`.
 - **Transform:** the block origin (top-left of its outline) goes to `at`, turned by 0, 90,
-  180 or 270 degrees. The same side as on the block board; a mirrored block is a separate
-  block board.
+  180 or 270 degrees, on the same side as on the block board.
+- **Bottom side** (`side="bottom"`, `--side bottom`): the block is mirrored about its
+  outline's vertical axis (KiCad's left/right flip), *then* turned by `rot` as seen from
+  the top. `at` is the top-left corner of the *flipped* outline as seen from the top (the
+  block origin moves to the other corner), so top and bottom instances share one grid;
+  `--step` is unchanged. Footprints flip (pads, mask, paste, courtyard, fab, silk and
+  texts mirrored, readable from the bottom; custom pad shapes and net-ties too), copper,
+  zones and keep-outs change layers (priority kept, fill dropped: `pcb refill`), board
+  graphics and texts are mirrored, and port points too. The group is `"/CH_A (NAME,
+  bottom)"`. Layers go through the **layer map**:
+  - `auto` (default): L(k) ↔ L(N+1−k) (KiCad's `FlipLayer`), technical layers F↔B,
+    `User.*` and `Edge.Cuts` stay. Only on a mirror-symmetric stack-up of the design
+    (copper L(k) = L(N+1−k), dielectrics mirrored in thickness, εr and material) with the
+    block's layer count; otherwise refused with the differences (`--allow-asymmetric`
+    overrides). A sub-pF feedback capacitance or an input guard depends on the dielectric
+    to its reference plane: an asymmetric stack would change it on every flipped copy.
+  - `roles`: both boards declare layer roles (`kat pcb roles`): the block as seen from its
+    component side (`L1=in_signal L2=gnd_ref …`), the design with `_top` / `_bottom`
+    roles (`L1=in_signal_top|back_bottom …`). Block role R goes to the design's
+    `R_bottom` (on top: `R_top`) layers, else plain `R`, paired from the component side
+    inwards; works on asymmetric stacks; a role that does not pair is refused.
+  - explicit `"F.Cu=B.Cu,In1.Cu=In1.Cu,…"` (or `L1=L4,…`): unnamed layers follow `auto`;
+    refused unless one-to-one, outer layers to the side's outer layer, inner to inner.
+  Through vias stay; a blind/buried/µvia span (a, b) becomes (map(b), map(a)) and is
+  refused unless the stack allows it (a µvia joins an outer layer and its neighbour, a
+  blind via reaches an outer layer); drill and annular ring are DRC's. Padstack
+  front/back definitions and tenting/covering/plugging/capping swap sides. Stamping
+  again without `side`/`layer_map` keeps what the instance was stamped with
+  (`<board>.stamps.json`), so `stamp all` does not flip blocks back. A library block
+  warns unless `kat block check NAME --sides both` passed with the same map.
 - **Refused:** unpaired parts on either side, another footprint, an instance wired
-  differently from the block (a net mapping to two nets), copper layers the design lacks.
+  differently from the block (a net mapping to two nets), copper layers the design lacks,
+  copper that breaks the design's layer rules (§4.12).
 - **Stamping again** removes the instance group's copied items first and places anew.
 - The design is judged as usual: `kat pcb check`, then route what is left
   (`kat pcb route` keeps the locked block copper).
@@ -569,7 +623,10 @@ Each block is a project of its own in `blocks/NAME/` (`KAT_BLOCKS`, else the nea
   points. Open connections to the environment are expected; anything else counts. The
   result is stored with hashes of the files' content (KiCad's instance data and
   references left out, which every design using the block rewrites); `stamp` warns
-  (`warnings`) when a block changed since its last clean check.
+  (`warnings`) when a block changed since its last clean check. `--sides both` also checks
+  the block turned over (a scratch copy of its folder flipped with `--layer-map`, auto or
+  explicit, environment included): DRC, parity and the mirrored port points; the result
+  is `bottom` and `stamp --side bottom` warns without it.
 - A design uses the function (`rc = kat.blocks.use("RC")`, then
   `rc(inp=a, out=b, gnd=gnd, tag="CH_A")`) and stamps the layout by name
   (`b.stamp("RC", {"/CH_A": (x, y)})`, `kat pcb stamp PCB RC all --at X,Y --step DX,DY`).
@@ -672,7 +729,8 @@ kat sync top/top.kicad_sch design.net --sheets ch,rc      # remembered in top.ka
 
 Library: `kat.init`, `kat.new`, `kat.load`, `kat.edit`, `kat.sync`, `kat.stamp`, `kat.check`, `kat.snapshot`, `kat.view`,
 `kat.ready`, `kat.pcb.sync` / `edit` / `check` / `snapshot` / `view` / `route` / `refill` / `fab` /
-`ready` / `drc` / `stamp` / `instances` / `block_environment` / `block_port` / `remove` (board), `kat.hierarchy`,
+`ready` / `drc` / `stamp` / `instances` / `block_environment` / `block_port` / `remove` / `layer_roles` /
+`stack` / `coupling_rule` / `layer_rule` / `plane_rule` / `net_rules` (board), `kat.hierarchy`,
 `kat.skidl_blocks`, `kat.blocks`, `kat.nets`, `kat.lib_search`, `kat.lib_show`, `kat.comment`,
 `kat.batch_exec`, `kat.open_kicad`, and the `kat.Sheet` / `kat.pcb.Board` methods; each returns
 what the matching command prints. `kat api NAME` shows any of them (§4.14).
@@ -695,10 +753,12 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `pcb fab PCB` / `pcb ready PCB [--accept KIND=REASON] [--overhang REF]` | fabrication set / release gate (§4.11) |
 | `pcb route PCB [--passes] [--net NAME] [--install]` | Freerouting through kat's DSN/SES, then the board check (§4.10) |
 | `pcb check PCB` / `pcb snapshot PCB` / `pcb view PCB ...` | board DRC + findings, history step with pictures, zoomed view (§4.12) |
-| `pcb stamp PCB BLOCK_PCB INSTANCE... --at X,Y [--step DX,DY] [--rot R] [--no-lock] [--make-room]` | copy a checked block layout onto instances (`all`), then the board check (§4.18) |
+| `pcb stamp PCB BLOCK_PCB INSTANCE... --at X,Y [--step DX,DY] [--rot R] [--no-lock] [--make-room] [--side bottom] [--layer-map auto/roles/MAP] [--allow-asymmetric]` | copy a checked block layout onto instances (`all`), flipped on the bottom side, then the board check (§4.18) |
+| `pcb netrule PCB coupling A B [--distance D]` / `layers NETS LAYER...` / `plane NETS [--net N]` / `list` / `clear` | kat's net rules, checked by `pcb check` (§4.12) |
+| `pcb roles PCB [LAYER=ROLE ...]` / `pcb stack PCB` | layer roles; stack-up, roles and symmetry (§4.12, §4.18) |
 | `pcb instances PCB BLOCK_PCB` / `pcb environment BLOCK_PCB ZONE...` / `pcb port BLOCK_PCB PORT --at X,Y` | a block's instances in a design / its test-environment zones and keep-outs / where a port leaves it |
 | `pcb remove PCB --uuid U / --at X,Y [--layer] [--kind] [--net]` | remove single tracks and vias, locked ones too (§4.9) |
-| `block new/build/check NAME [--lib DIR]`, `block list` | the block library (§4.19); BLOCK_PCB above may be a block name |
+| `block new/build/check NAME [--lib DIR] [--sides both]`, `block list` | the block library (§4.19); BLOCK_PCB above may be a block name |
 | `stamp SCH BLOCK INSTANCE... [--at X,Y] [--step DX,DY] --expect NETLIST [--make-room] [--plan] [--no-frame]` / `frame SCH BLOCK` | draw block instances like the block's schematic, framed (§4.20) |
 | `snapshot SCH [--slug] [--note] [--expect] [--tiles] [--finding-crops N] [--pages files/instances]` | SVG + trimmed PNG + check into `history/`; tiles and finding close-ups; a hierarchy: a PNG per sheet file (or instance) |
 | `view SCH --around REF / --at X,Y / --region X,Y,W,H` | zoomed PNG of one region into `views/` |
@@ -756,6 +816,8 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
 | Pitfall | Solution |
 |---|---|
 | Project skills point to SPEC/README in an absent automation checkout | init ships self-contained skills and on-demand relative references with the installed kat package |
+| One channel's output over another channel's input on the adjacent layer (≈ 0.2 pF for 2 mm through 0.1 mm) is no DRC error, yet it is 0 dB crosstalk at a 0.1 pF feedback capacitance | `kat pcb netrule PCB coupling 'OUT*' 'IN*'`: overlap area and pF in `pcb check` (§4.12) |
+| A block flipped to the bottom with the mirror map on an asymmetric stack-up silently changes its parasitics (dielectric to the reference plane) | `stamp --side bottom` refuses `auto` on an asymmetric stack-up; map by layer roles or explicitly (§4.18) |
 | Updating agent instructions overwrites project-specific guidance or silently loses skill edits | init preserves text outside its AGENTS section, preflights all conflicts and requires --force for differing managed content; commit the deployed bundle and manifest |
 | **kiutils** drops KiCad 8+ syntax (`(hide yes)`, `exclude_from_sim`, `embedded_fonts`, ...) when writing back: hidden fields become visible, the netlist still matches, so only the image shows it | own lossless parser (`kat.sexpr`); never rewrite files with lossy libraries |
 | The former MCP server did not re-escape `\"` in power-symbol descriptions → file unloadable, calls reported success | correct escaping (tested); every save is validated by KiCad (`sch upgrade`) |

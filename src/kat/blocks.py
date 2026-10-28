@@ -322,11 +322,17 @@ def _env_refs(d: Path) -> set[str]:
     return out
 
 
-def check(name: str, lib: Path | str | None = None, require: tuple[str, ...] = ("MPN",)) -> dict:
+def check(name: str, lib: Path | str | None = None, require: tuple[str, ...] = ("MPN",),
+          sides: str = "top", layer_map: str | dict | None = None, allow_asymmetric: bool = False) -> dict:
     """Is the block ready to be stamped? The schematic check against the harness netlist,
     the gate's part data, and the board check (DRC, parity). Missing connections to the
     harness (environment) parts are expected and not counted. The result and the files'
-    times are stored in the block file; ``stamp`` warns when the block changed since."""
+    times are stored in the block file; ``stamp`` warns when the block changed since.
+
+    ``sides="both"``: also the block flipped to the bottom side (a scratch copy of its
+    project, turned over with ``layer_map``: "auto" or explicit, see ``Board.stamp``):
+    DRC and the port points there. ``stamp --side bottom`` warns without a clean one
+    for the same layer map (``bottom``)."""
     import kat
     from . import gate
     d = find(name, lib)
@@ -350,6 +356,9 @@ def check(name: str, lib: Path | str | None = None, require: tuple[str, ...] = (
     ports = _check_ports(d, f["pcb"])
     ok = bool(sch["ok"] and g["ready"] and board["drc_errors"] == 0 and board["parity"] == 0
               and not open_ and board["outline"] and not ports)
+    if sides not in ("top", "both"):
+        raise env.KatError(f"sides {sides!r}: top or both")
+    bottom = _check_flipped(d, f["pcb"], to_env, layer_map, allow_asymmetric) if sides == "both" else None
     info = _info(d)
     flat, warnings = None, []
     if f["block"].exists() and _has_sheets(f["block"]):
@@ -368,6 +377,8 @@ def check(name: str, lib: Path | str | None = None, require: tuple[str, ...] = (
     keys = tuple(k for k in ("py", "sch", "block", "pcb") if f[k].exists()) + (("flat",) if flat else ())
     info["checked"] = {"ok": ok, "time": dt.datetime.now().isoformat(timespec="seconds"),
                        "hashes": {k: content_hash(f[k]) for k in keys}}
+    if bottom:
+        info["checked"]["bottom"] = {k: bottom[k] for k in ("ok", "layer_map")}
     _write_info(d, info)
     return {"block": name, "ok": ok, "schematic_ok": sch["ok"], **({"flat": flat} if flat else {}),
             **({"warnings": warnings} if warnings else {}), "gate": g["ready"],
@@ -375,14 +386,49 @@ def check(name: str, lib: Path | str | None = None, require: tuple[str, ...] = (
             "drc_warnings": board["drc_warnings"], "parity": board["parity"],
             "unconnected": len(open_), "unconnected_to_environment": len(board["unconnected_items"]) - len(open_),
             "environment_parts": sorted(envs), "unconnected_items": open_,
-            **({"port_problems": ports} if ports else {})}
+            **({"port_problems": ports} if ports else {}), **({"bottom": bottom} if bottom else {})}
+
+
+def _check_flipped(d: Path, pcb: Path, to_env, layer_map, allow_asymmetric: bool) -> dict:
+    """The block turned over on a scratch copy of its folder: DRC, parity, port points."""
+    import shutil
+    import tempfile
+    from .pcb import checks
+    from .pcb.stamping import flip_board
+    with tempfile.TemporaryDirectory() as tmp:
+        dst = Path(tmp) / d.name
+        shutil.copytree(d, dst, ignore=shutil.ignore_patterns("history", "views", "fab", "*_REPORT.md"))
+        scratch = dst / pcb.name
+        flipped = flip_board(scratch, layer_map, allow_asymmetric)
+        flipped["board"].save()
+        board = checks.run(scratch)
+        ports = _check_ports(d, scratch, flipped["point"])
+    open_ = [u for u in board["unconnected_items"] if not to_env(u)]
+    ok = bool(board["drc_errors"] == 0 and board["parity"] == 0 and not open_ and not ports)
+    return {"ok": ok, "layer_map": flipped["layer_map"], "drc_errors": board["drc_errors"],
+            "drc_warnings": board["drc_warnings"], "parity": board["parity"], "unconnected": len(open_),
+            "violations": board["violations"], **({"port_problems": ports} if ports else {})}
+
+
+def bottom_state(d: Path, layer_map: dict) -> str | None:
+    """Why block folder ``d`` is not known to be clean when flipped with ``layer_map``
+    (copper layer -> layer), or None."""
+    b = (_info(d).get("checked") or {}).get("bottom")
+    if not b:
+        return f"not checked on the bottom side (kat block check {d.name} --sides both)"
+    if not b["ok"]:
+        return "its check on the bottom side failed"
+    if b["layer_map"] != layer_map:
+        return f"checked on the bottom side with another layer map ({b['layer_map']})"
+    return None
 
 
 PORT_BAND = 2.5     # mm: a port point lies at most this far inside the outline's edge
 
 
-def _check_ports(d: Path, pcb: Path) -> list[str]:
-    """Problems of the block's port points (``kat.pcb.block_port``)."""
+def _check_ports(d: Path, pcb: Path, point=None) -> list[str]:
+    """Problems of the block's port points (``kat.pcb.block_port``); ``point``: where the
+    recorded points are on ``pcb`` (a flipped copy)."""
     from .pcb.board import Board
     from .pcb.geometry import inside
     info = _info(d)
@@ -394,7 +440,7 @@ def _check_ports(d: Path, pcb: Path) -> list[str]:
     names = set(info.get("ports", [])) | set(info.get("power", []))
     out = []
     for q in pts:
-        x, y = q["x"], q["y"]
+        x, y = point(q["x"], q["y"]) if point else (q["x"], q["y"])
         on = next((v["net"] for v in b.vias() if abs(v["at"][0] - x) < 0.01 and abs(v["at"][1] - y) < 0.01), None)
         if on is None:
             on = next((p.net for p in b.pads() if inside(p.outline, (x, y))), None)

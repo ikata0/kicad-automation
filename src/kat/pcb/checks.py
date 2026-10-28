@@ -50,7 +50,8 @@ ISLAND_TYPES = ("starved_thermal", "isolated_copper", "zone_has_empty_net")
 def run(pcb: Path) -> dict:
     """KiCad's DRC (zones refilled in memory, parity against the schematic) plus kat's
     findings: board outline missing, parts outside the outline (``outside_outline``: pads
-    outside; ``overhang``: pads inside, only the body beyond the edge).
+    outside; ``overhang``: pads inside, only the body beyond the edge), and the board's
+    net rules (``net_rules``: coupling, layers, plane; see ``coupling``).
 
     ``ok``: no DRC errors, parity 0, nothing unconnected, outline present.
     ``clean``: ``ok`` and no DRC warnings and no kat findings."""
@@ -80,16 +81,19 @@ def run(pcb: Path) -> dict:
             pads_in = all(within(q) for p in f.pads() for q in p.outline)
             (overhang if pads_in and f.pads() else outside).append(f.ref)
     islands = [v for v in d["violations"] if v["type"] in ISLAND_TYPES]
+    from . import coupling
+    rules = coupling.run(pcb, b)
     result = {"file": str(pcb), "outline": list(outline) if outline else None,
               "footprints": len(b.footprints()), "tracks": len(b.tracks()), "vias": len(b.vias()),
               "drc_errors": d["errors"], "drc_warnings": d["warnings"], "by_type": d["by_type"],
               "unconnected": len(d["unconnected"]), "parity": len(d["parity"]),
               "islands": len(islands), "outside_outline": outside, "overhang": overhang,
               "violations": d["violations"], "unconnected_items": d["unconnected"],
-              "parity_items": d["parity"]}
+              "parity_items": d["parity"], **({"net_rules": rules} if rules else {})}
     ok = bool(outline) and d["errors"] == 0 and not d["parity"] and not d["unconnected"]
     result["ok"] = ok
-    result["clean"] = ok and d["warnings"] == 0 and not outside and not overhang
+    result["clean"] = (ok and d["warnings"] == 0 and not outside and not overhang
+                       and not (rules and rules["findings"]))
     return result
 
 
@@ -105,4 +109,6 @@ def finding_spots(check: dict) -> list[tuple[str, tuple[float, float]]]:
     for v in check.get("unconnected_items", []):
         for it in v["items"][:1]:
             spots.append(("unconnected", (it["x"], it["y"])))
+    for v in (check.get("net_rules") or {}).get("findings", []):
+        spots.append((v["kind"], (v["x"], v["y"])))
     return spots

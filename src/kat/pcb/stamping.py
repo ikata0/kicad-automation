@@ -18,6 +18,11 @@ refused. Zones named in the block's ``environment`` (the block file ``NAME.block
 see ``set_environment``) are what the block was checked against, e.g. a GND plane, and are
 not copied. Everything copied goes into a KiCad group ``"/CH_A (NAME)"``; stamping the same
 instance again replaces it.
+
+On the bottom side (``side="bottom"``) the block is mirrored about its outline's vertical
+axis (KiCad's left/right flip), then turned, and its layers go through a layer map
+(``layers.copper_map``): footprints flip, copper and zones change layers, via spans map
+(a, b) -> (map(b), map(a)).
 """
 
 from __future__ import annotations
@@ -30,7 +35,8 @@ from .. import env
 from ..schematic import new_uuid
 from ..sexpr import Sym, find, find_all, head, num
 from . import footprints as fps
-from .geometry import box_of, inside, overlap, rotate
+from . import layers as lay
+from .geometry import box_of, inside, overlap, rotate, union
 
 COPPER = ("segment", "arc", "via", "zone")
 GRAPHICS = ("gr_line", "gr_rect", "gr_arc", "gr_circle", "gr_poly", "gr_curve", "gr_text",
@@ -96,26 +102,105 @@ def _norm(instance: str) -> str:
     return "/" + instance.strip("/")
 
 
-def _xf(origin, at, rot):
-    ox, oy = origin
+class _Place:
+    """Where a block board's items go. Top side: the block origin (top-left of ``box``)
+    to ``at``, turned by ``rot``. Bottom side: first mirrored about the box's vertical
+    axis, so ``at`` is the top-left corner of the flipped outline as seen from the top.
+    ``layer``: layer name -> layer name."""
 
-    def f(x: float, y: float) -> tuple[float, float]:
-        dx, dy = rotate(x - ox, y - oy, rot)
-        return round(at[0] + dx, 4), round(at[1] + dy, 4)
-    return f
+    def __init__(self, box, at, rot: float, bottom: bool = False, layer=None):
+        self.box, self.at, self.rot, self.bottom = box, at, rot, bottom
+        self.layer = layer or (lambda name: name)
+
+    def __call__(self, x: float, y: float) -> tuple[float, float]:
+        lx = self.box[2] - x if self.bottom else x - self.box[0]
+        dx, dy = rotate(lx, y - self.box[1], self.rot)
+        return round(self.at[0] + dx, 4), round(self.at[1] + dy, 4)
+
+    def text_angle(self, a: float) -> float:
+        """A board text's angle (KiCad flips text left/right to -angle)."""
+        return ((-a if self.bottom else a) + self.rot) % 360
+
+    def fp_angle(self, a: float) -> float:
+        """A footprint's angle (KiCad's left/right flip: 180 - angle)."""
+        return ((180 - a if self.bottom else a) + self.rot) % 360
+
+    def side(self, side: str) -> str:
+        return ("B" if side == "F" else "F") if self.bottom else side
+
+    def box_of(self, b) -> tuple[float, float, float, float]:
+        return box_of([self(x, y) for x in (b[0], b[2]) for y in (b[1], b[3])])
+
+    def item(self, c: list, order: list[str]) -> None:
+        """Move a copied track, via, zone or graphic in place; ``order``: the design's
+        copper layers, top first (a via's span is written top first)."""
+        _move_points(c, self, self.text_angle)
+        _map_layers(c, self.layer)
+        if head(c) == "via":
+            ls = find(c, "layers")
+            if ls is not None and all(str(t) in order for t in ls[1:]):
+                ls[1:] = sorted(ls[1:], key=lambda t: order.index(str(t)))
+        if self.bottom:
+            fps.swap_sided(c)
+            eff = find(c, "effects")
+            if eff is not None and head(c) in ("gr_text", "gr_text_box"):
+                just = find(eff, "justify")
+                if just is None:
+                    eff.append([Sym("justify"), Sym("mirror")])
+                elif any(str(t) == "mirror" for t in just[1:]):
+                    just[:] = [t for t in just if str(t) != "mirror"]
+                    if len(just) == 1:
+                        eff.remove(just)
+                else:
+                    just.append(Sym("mirror"))
+
+    def footprint(self, c: list, src: list) -> None:
+        """Place a copied footprint ``c`` (a copy of ``src``): flipped on the bottom side."""
+        sat = find(src, "at")
+        a = float(sat[3]) if len(sat) > 3 else 0.0
+        if self.bottom:
+            fps.set_rotation(c, 0)
+            fps.mirror(c, swap=self.layer)
+        fps.set_rotation(c, self.fp_angle(a))
+        cat = find(c, "at")
+        cat[1], cat[2] = (num(v) for v in self(float(sat[1]), float(sat[2])))
 
 
-def _move_points(node: list, f, rot: float) -> None:
+def _move_points(node: list, f, angle) -> None:
+    """Points through ``f``; the angle of a text's ``at`` through ``angle``."""
     for c in node:
         if not isinstance(c, list):
             continue
         h = head(c)
         if h in ("start", "end", "mid", "center", "at", "xy") and len(c) >= 3:
             c[1], c[2] = (num(v) for v in f(float(c[1]), float(c[2])))
-            if h == "at" and len(c) >= 4 and rot:
-                c[3] = num((float(c[3]) + rot) % 360)
+            if h == "at" and len(c) >= 4 and not isinstance(c[3], list):
+                c[3] = num(angle(float(c[3])))
+            elif h == "at" and head(node) in ("gr_text", "gr_text_box") and (a := angle(0.0)):
+                c.append(num(a))
         elif h == "pts" or h not in ("net", "layer", "layers", "uuid"):
-            _move_points(c, f, rot)
+            _move_points(c, f, angle)
+
+
+def _map_layers(node: list, f) -> None:
+    for c in node:
+        if not isinstance(c, list):
+            continue
+        if head(c) in ("layer", "layers"):
+            for j in range(1, len(c)):
+                if isinstance(c[j], str) and not isinstance(c[j], Sym):
+                    c[j] = f(c[j])
+        _map_layers(c, f)
+
+
+def _taken(fp) -> list[tuple[str, tuple]]:
+    """(side, box) a part takes: its courtyard on its side, and its through-hole pads and
+    holes on the other side too."""
+    out = [(fp.side, b)] if (b := fp.box()) else []
+    tht = union(p.box for p in fp.pads() if p.kind in ("thru_hole", "np_thru_hole"))
+    if tht:
+        out.append(("B" if fp.side == "F" else "F", tht))
+    return out
 
 
 def _uuid(node: list) -> str | None:
@@ -330,26 +415,41 @@ class StampMixin:
 
     def stamp(self, block_pcb: Path | str, instance: str | dict, at: tuple[float, float] | None = None,
               rot: float = 0.0, lock: bool = True, source_instance: str | None = None,
-              make_room: bool = False) -> dict:
+              make_room: bool = False, side: str | None = None, layer_map: str | dict | None = None,
+              allow_asymmetric: bool = False) -> dict:
         """Copy a checked block layout (a block board, or a block name from the library)
         onto one instance of the block: parts placed as on
         the block board, tracks, vias, zones, keep-outs, graphics and board-only parts
         copied with the instance's nets. ``at``: where the block board's origin (top-left
         of its outline) goes, mm; ``rot``: 0/90/180/270 degrees. Several instances at
-        once: ``instance={"/CH_A": (x, y), "/CH_B": ((x, y), 180)}``. Copied copper is
+        once: ``instance={"/CH_A": (x, y), "/CH_B": ((x, y), 180)}`` (or
+        ``((x, y), rot, side)``). Copied copper is
         locked (``lock=False`` leaves it free), so routing keeps it. Stamping again
         replaces the earlier copy. Parts of the design that would overlap the block's parts
-        (courtyards, same side) are refused, or with ``make_room`` pushed out of the way;
+        (courtyards on the same side; through-hole pads on both) are refused, or with
+        ``make_room`` pushed out of the way;
         parts of block instances not stamped yet are no obstacles. The design's net classes
-        on the block's nets must not be stricter than the block's. Returns pairs, renamed
-        nets and counts."""
+        on the block's nets must not be stricter than the block's.
+
+        ``side="bottom"``: the block flipped to the other side, mirrored about its
+        vertical axis and then turned by ``rot`` (as seen from the top); ``at`` is the
+        top-left corner of the flipped outline. ``layer_map``: "auto" (the mirror map,
+        refused on an asymmetric stack-up unless ``allow_asymmetric``), "roles", or
+        explicit ``"F.Cu=B.Cu,In1.Cu=In2.Cu"``. ``side``/``layer_map`` None: as recorded
+        for the instance by an earlier stamp, else top / auto. The design's layer rules
+        (``layer_rule``) are checked on the copied copper. Returns pairs, renamed nets,
+        side, layer map and counts."""
         if isinstance(instance, dict):
             out = []
             for name, where in instance.items():
-                pos, r = (where if len(where) == 2 and isinstance(where[0], (tuple, list)) else (where, rot))
-                out.append(self.stamp(block_pcb, name, pos, r, lock, source_instance, make_room))
+                pos, r, sd = where, rot, side
+                if isinstance(where[0], (tuple, list)):
+                    pos, r, sd = (*where, side)[:3] if len(where) == 2 else where
+                out.append(self.stamp(block_pcb, name, pos, r, lock, source_instance, make_room,
+                                      sd, layer_map, allow_asymmetric))
             return {"instances": out}
         from .. import blocks as lib
+        from . import coupling
         from .board import Board
         if at is None:
             raise env.KatError("stamp needs at=(x, y)")
@@ -357,30 +457,42 @@ class StampMixin:
             raise env.KatError("stamp turns blocks by multiples of 90 degrees only")
         block_pcb, lib_instance = lib.board_of(block_pcb, near=self.path)
         source_instance = source_instance or lib_instance
+        instance = _norm(instance)
+        earlier = self._stamp_record(instance)
+        side = side or earlier.get("side", "top")
+        if side not in ("top", "bottom"):
+            raise env.KatError(f"side {side!r}: top or bottom")
+        bottom = side == "bottom"
+        if layer_map is None:
+            layer_map = earlier.get("layer_spec") if earlier.get("side") == side else None
         warnings = []
         if block_info(block_pcb).get("type") and (why := lib.stale(block_pcb.parent)):
             warnings.append(f"block {block_pcb.stem}: {why}")
         src = Board(block_pcb)
         block = block_pcb.stem
-        instance = _norm(instance)
         info = block_info(block_pcb)
         env_zones = set(info.get("environment", []))
         pairs, environment, mode = self._pairs(src, instance, source_instance)
 
-        # layers: the block may only use copper the design has
+        # layers: the block may only use copper the design has, through the layer map
+        cmap = lay.copper_map(layer_map, bottom, self, src, self.path, block_pcb, allow_asymmetric)
+        if bottom and info.get("type") and (why := lib.bottom_state(block_pcb.parent, cmap)):
+            warnings.append(f"block {block}: {why}")
         used = set()
         for n in src.tree:
-            if head(n) in ("segment", "arc", "zone"):
+            if head(n) in ("segment", "arc", "zone", "via"):
                 used |= _item_layers(n)
         for sf in src.footprints():
             if sf.uuid in pairs or sf.board_only:
                 used |= {l for p in find_all(sf.node, "pad") for l in _item_layers(p)}
-        missing = sorted(used - set(self.copper_layers()))
+        missing = sorted(l for l in used if l not in cmap)
         if missing:
             raise env.KatError(f"the block uses copper layers the design lacks: {', '.join(missing)}")
+        order = self.copper_layers()
+        lfn = lay.layer_fn(cmap, bottom)
 
         box = src.outline_box() or _parts_box(src, pairs)
-        f = _xf(box[:2], at, rot)
+        f = _Place(box, at, rot, bottom, lfn)
         moved = self._room_for(src, pairs, instance, f, make_room)
         self._unstamp(instance)
 
@@ -396,10 +508,10 @@ class StampMixin:
             tf = pairs[sf.uuid]
             if tf.lib_id != sf.lib_id:
                 raise env.KatError(f"{sf.ref} -> {tf.ref}: footprint {sf.lib_id} vs {tf.lib_id}")
-            if tf.side != sf.side:
-                tf.flip()
+            if tf.side != f.side(sf.side):          # top again after a bottom stamp: F/B swap
+                tf.flip(lfn if bottom else None)
             x, y = f(sf.x, sf.y)
-            tf.place(x, y, (sf.rot + rot) % 360)
+            tf.place(x, y, f.fp_angle(sf.rot))
             placed[sf.ref] = tf.ref
             members[sf.uuid] = tf.uuid
             for sp in sf.pads():
@@ -448,6 +560,7 @@ class StampMixin:
 
         counts = {"footprints": len(placed), "tracks": 0, "vias": 0, "zones": 0, "keepouts": 0,
                   "graphics": 0, "board_parts": 0, "skipped_environment": 0}
+        copies = []
         for n in list(src.tree):
             h = head(n)
             if h in COPPER:
@@ -481,8 +594,8 @@ class StampMixin:
                         c.insert(next(i for i, x in enumerate(c) if isinstance(x, list)
                                       and head(x) in ("layer", "layers")), [Sym("locked"), Sym("yes")])
             elif h in GRAPHICS:
-                lay = find(n, "layer")
-                if lay is not None and str(lay[1]) == "Edge.Cuts":
+                gl = find(n, "layer")
+                if gl is not None and str(gl[1]) == "Edge.Cuts":
                     continue
                 c = copy.deepcopy(n)
                 counts["graphics"] += 1
@@ -491,31 +604,50 @@ class StampMixin:
                     continue
                 c = copy.deepcopy(n)
                 ref = next(p for p in find_all(c, "property") if str(p[1]) == "Reference")
-                ref[2] = self._next_board_ref(str(ref[2]).rstrip("0123456789") or "H")
+                ref[2] = self._next_board_ref(str(ref[2]).rstrip("0123456789") or "H",
+                                              {str(r[2]) for _, d in copies if head(d) == "footprint"
+                                               for r in find_all(d, "property") if str(r[1]) == "Reference"})
                 counts["board_parts"] += 1
             else:
                 continue
-            if h == "footprint":            # origin and rotation only: its insides are local
-                sat = find(n, "at")
-                fps.set_rotation(c, (float(sat[3]) if len(sat) > 3 else 0.0) + rot)
-                cat = find(c, "at")
-                cat[1], cat[2] = (num(v) for v in f(float(sat[1]), float(sat[2])))
+            if h == "footprint":            # origin and rotation (and side): its insides are local
+                f.footprint(c, n)
             else:
-                _move_points(c, f, rot)
+                f.item(c, order)
+                if h == "via":
+                    _check_via(c, order)
+            copies.append((n, c))
+
+        # the design's layer rules (IN* only on the component side's outer layer, ...)
+        bad = coupling.layer_findings(self, [c for _, c in copies if head(c) in COPPER])
+        if bad:
+            raise env.KatError(f"{instance} on the {side} side breaks the design's layer rules: "
+                               + "; ".join(x["message"] for x in bad[:6]))
+        for n, c in copies:
             members[_uuid(n)] = _fresh(c)
             self._insert(c)
 
-        groups = self._copy_groups(src, instance, block, members)
+        groups = self._copy_groups(src, instance, block + (", bottom" if bottom else ""), members)
         ports = {}
         for q in info.get("port_points", []):
             x, y = f(q["x"], q["y"])
             ports[q["port"]] = {"x": x, "y": y, "net": netmap.get(q["net"], q["net"])}
-        self._stamps[instance] = {"block": str(block_pcb), "at": list(at), "rot": rot, "ports": ports}
+        spec = layer_map if isinstance(layer_map, str) or layer_map is None else dict(layer_map)
+        self._stamps[instance] = {"block": str(block_pcb), "at": list(at), "rot": rot, "side": side,
+                                  "layer_spec": spec, "layer_map": cmap, "ports": ports}
+        shown = {k: v for k, v in cmap.items() if k != v}
         return {"instance": instance, "block": block, "mode": mode, "at": list(at), "rot": rot,
+                "side": side, **({"layer_map": shown} if shown else {}),
                 **({"ports": ports} if ports else {}),
                 **({"made_room": moved} if moved else {}),
                 "pairs": placed, "nets": {k: v for k, v in netmap.items() if k != v},
                 "groups": groups, **counts, **({"warnings": warnings} if warnings else {})}
+
+    def _stamp_record(self, instance: str) -> dict:
+        """What ``<board>.stamps.json`` (or this session) records for an instance."""
+        f = stamps_file(self.path)
+        saved = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
+        return {**saved, **self._stamps}.get(_norm(instance), {})
 
     def ports(self, instance: str | None = None) -> dict:
         """Port points of stamped instances on this board (``set_port`` on the block
@@ -538,27 +670,24 @@ class StampMixin:
                      encoding="utf-8")
         self._stamps = {}
 
-    def _room_for(self, src, pairs: dict, instance: str, f, make_room: bool) -> list[dict]:
+    def _room_for(self, src, pairs: dict, instance: str, f: "_Place", make_room: bool) -> list[dict]:
         """Refuse (or with ``make_room`` move) the design's parts that overlap where the
-        block's parts will go. Obstacles: parts outside any block instance, and parts of
-        instances stamped already; not the instance's own, not those still to be stamped."""
+        block's parts will go: courtyards on the same side, through-hole pads on both.
+        Obstacles: parts outside any block instance, and parts of instances stamped
+        already; not the instance's own, not those still to be stamped."""
         own = {tf.uuid for tf in pairs.values()}
         stamped = set()
         for g in self._groups():
             if not str(g[1]).startswith(f"{instance} ("):
                 stamped |= {str(u) for u in (find(g, "members") or [None])[1:]}
-        after = []                                     # (side, box) of the block's parts, placed
-        for sf in src.footprints():
-            if sf.uuid in pairs and (b := sf.box()):
-                corners = [f(x, y) for x in (b[0], b[2]) for y in (b[1], b[3])]
-                after.append((sf.side, box_of(corners)))
+        after = [(f.side(side), f.box_of(b))           # (side, box) of the block's parts, placed
+                 for sf in src.footprints() if sf.uuid in pairs for side, b in _taken(sf)]
 
         def top_level(fp) -> bool:
             return not fp.field("Block") and fp.path.count("/") <= 1
 
-        obstacles = [fp for fp in self.footprints() if fp.uuid not in own and (fp.box() is not None)
-                     and (top_level(fp) or fp.uuid in stamped)
-                     and any(side == fp.side and overlap(fp.box(), b, -1e-6) for side, b in after)]
+        obstacles = [fp for fp in self.footprints() if fp.uuid not in own and (top_level(fp) or fp.uuid in stamped)
+                     and any(s1 == s2 and overlap(b1, b2, -1e-6) for s1, b1 in _taken(fp) for s2, b2 in after)]
         if not obstacles:
             return []
         fixed = [fp.ref for fp in obstacles if fp.uuid in stamped or find(fp.node, "locked") is not None]
@@ -569,15 +698,15 @@ class StampMixin:
         moved = []
         blocked = [(side, b) for side, b in after]
         for fp in obstacles:
-            b = fp.box()
-            others = [(o.side, o.box()) for o in self.footprints()
-                      if o.uuid not in own and o is not fp and o.box() and (top_level(o) or o.uuid in stamped)]
+            mine = _taken(fp)
+            others = [t for o in self.footprints() if o.uuid not in own and o.node is not fp.node
+                      and (top_level(o) or o.uuid in stamped) for t in _taken(o)]
             best = None
             for ux, uy in ((1, 0), (0, 1), (-1, 0), (0, -1)):
                 d = 0.5
                 while d < 200:
-                    nb = (b[0] + ux * d, b[1] + uy * d, b[2] + ux * d, b[3] + uy * d)
-                    if not any(side == fp.side and overlap(nb, x, 0.25) for side, x in blocked + others):
+                    if not any(s1 == s2 and overlap((b[0] + ux * d, b[1] + uy * d, b[2] + ux * d, b[3] + uy * d), x, 0.25)
+                               for s1, b in mine for s2, x in blocked + others):
                         if best is None or d < best[0]:
                             best = (d, ux * d, uy * d)
                         break
@@ -588,8 +717,8 @@ class StampMixin:
             moved.append({"ref": fp.ref, "by": [best[1], best[2]]})
         return moved
 
-    def _next_board_ref(self, prefix: str) -> str:
-        used = {f.ref for f in self.footprints()}
+    def _next_board_ref(self, prefix: str, also: set[str] = frozenset()) -> str:
+        used = {f.ref for f in self.footprints()} | set(also)
         i = 1
         while f"{prefix}{i}" in used:
             i += 1
@@ -668,6 +797,51 @@ class StampMixin:
         name = f"{instance} ({block})"
         self._insert([Sym("group"), name, [Sym("uuid"), new_uuid()], [Sym("members"), *top]])
         return [name] + names
+
+
+def _check_via(c: list, order: list[str]) -> None:
+    """A blind, buried or micro via after the layer map: still a span the stack-up
+    allows (a µvia joins adjacent layers, one of them outer; a blind via reaches an outer
+    layer). Drill and annular ring are judged by the design's DRC."""
+    kind = str(c[1]) if isinstance(c[1], Sym) else "through"
+    ls = [str(t) for t in (find(c, "layers") or [None])[1:]]
+    if kind == "through" or len(ls) != 2 or not all(l in order for l in ls):
+        return
+    i, j = sorted(order.index(l) for l in ls)
+    outer = i == 0 or j == len(order) - 1
+    at = find(c, "at")
+    where = f"{kind} via at {float(at[1]):g},{float(at[2]):g} ({ls[0]}-{ls[1]})"
+    if kind == "micro" and (j - i != 1 or not outer):
+        raise env.KatError(f"{where}: a µvia must join an outer layer and the one next to it")
+    if kind == "blind" and not outer:
+        raise env.KatError(f"{where}: a blind via must reach an outer layer")
+
+
+def flip_board(pcb: Path | str, layer_map: str | dict | None = None, allow_asymmetric: bool = False) -> dict:
+    """Turn a whole board over in place, as a stamp on the bottom side would: every item
+    mirrored about the outline's vertical axis (same outline box), footprints flipped,
+    layers through the layer map (``auto``: the mirror map on the board's own stack-up).
+    Used by ``kat block check --sides both`` on a scratch copy; not saved here. Returns
+    the board, the copper map and the point transform."""
+    from .board import Board
+    b = Board(pcb)
+    box = b.outline_box()
+    if box is None:
+        raise env.KatError(f"{Path(pcb).name} has no outline to flip about")
+    cmap = lay.copper_map(layer_map, True, b, b, pcb, pcb, allow_asymmetric)
+    order = b.copper_layers()
+    f = _Place(box, box[:2], 0.0, True, lay.layer_fn(cmap, True))
+    for n in b.tree:
+        h = head(n)
+        if h == "footprint":
+            f.footprint(n, copy.deepcopy(n))
+        elif h in COPPER or h in GRAPHICS:
+            if h == "zone":
+                n[:] = [x for x in n if head(x) != "filled_polygon"]
+            f.item(n, order)
+            if h == "via":
+                _check_via(n, order)
+    return {"board": b, "layer_map": cmap, "point": f}
 
 
 def _hier_source_keys(src, sname: str) -> dict[str, str]:
