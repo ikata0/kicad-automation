@@ -1,3 +1,5 @@
+done
+
 ## Feature requests
 
 1. **Net-class coupling check in `kat pcb check`.**
@@ -104,7 +106,10 @@
      way it requires the check today.
    - Optional: render both sides in `kat block check` snapshots.
 
-   **Interaction with request 6.** Layer roles make layer-placement rules
+   **Interaction with request 1.** Layer roles make layer-placement rules
    checkable after flipping, e.g. "in_signal only on the outer layer of the
    component side, gnd_ref directly behind it". A block whose `IN*` nets end up
    on an inner layer after the map should be rejected by the request 6 check.
+
+---
+
