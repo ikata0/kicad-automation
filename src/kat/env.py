@@ -105,7 +105,9 @@ def run_cli(*args: str, check: bool = True) -> subprocess.CompletedProcess:
     encoding = _cli_encoding()
     # Windows text-mode pipe readers can lose decoding errors in worker threads.
     # Capture bytes first so strict decoding failures reach the caller.
-    proc = subprocess.run([cli, *args], capture_output=True, env=env)
+    # stdin=DEVNULL: an inherited invalid stdin (agent shells, pytest fd capture)
+    # makes subprocess fail on Windows with WinError 6.
+    proc = subprocess.run([cli, *args], capture_output=True, env=env, stdin=subprocess.DEVNULL)
     for stream in ("stdout", "stderr"):
         try:
             text = getattr(proc, stream).decode(encoding)

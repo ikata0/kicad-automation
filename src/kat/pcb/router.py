@@ -39,7 +39,7 @@ def java() -> str:
     exe = shutil.which("java")
     if not exe:
         raise env.KatError(f"Freerouting needs Java {JAVA_MIN}+ (java not on PATH)")
-    out = subprocess.run([exe, "-version"], capture_output=True, text=True)
+    out = subprocess.run([exe, "-version"], capture_output=True, text=True, stdin=subprocess.DEVNULL)
     m = re.search(r'version "(\d+)', out.stderr + out.stdout)
     if m and int(m.group(1)) < JAVA_MIN:
         raise env.KatError(f"Freerouting needs Java {JAVA_MIN}+, found {m.group(1)}")
@@ -100,7 +100,8 @@ def route(pcb: Path | str, passes: int = 20, nets: list[str] | None = None, time
         # streamed: the log grows while it runs, and each pass is echoed on stderr
         proc = subprocess.Popen([exe, "-Djava.awt.headless=true", "-jar", str(jar), "--gui.enabled=false",
                                  "-de", str(dsn.resolve()), "-do", str(ses.resolve()), "-mp", str(passes)],
-                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, cwd=work)
+                                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True, cwd=work)
         deadline = t0 + timeout
         import threading
         timer = threading.Timer(timeout, proc.kill)

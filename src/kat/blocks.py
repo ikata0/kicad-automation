@@ -137,7 +137,7 @@ def build(name: str, lib: Path | str | None = None, force: bool = False) -> dict
     d = find(name, lib)
     f = _files(d)
     proc = subprocess.run([sys.executable, str(f["py"]), str(f["net"])], cwd=d,
-                          capture_output=True, text=True)
+                          capture_output=True, text=True, stdin=subprocess.DEVNULL)
     if proc.returncode != 0 or not f["net"].exists():
         raise env.KatError(f"{f['py'].name} failed: {(proc.stderr or proc.stdout).strip()[-1500:]}")
     from .netlist import blocks_file

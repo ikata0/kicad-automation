@@ -102,8 +102,8 @@ def open_file(path: Path | str) -> dict:
     if not path.exists():
         raise env.KatError(f"{path}: no such file")
     exe = _editor(path)
-    proc = subprocess.Popen([exe, str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                            start_new_session=True)
+    proc = subprocess.Popen([exe, str(path)], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                            stderr=subprocess.DEVNULL, start_new_session=True)
     return {"file": str(path), "editor": Path(exe).name, "pid": proc.pid,
             "note": "close the editor before kat edits this file again"}
 
@@ -231,7 +231,8 @@ def verify(path: Path | str, timeout: float = 90.0) -> dict:
     try:
         envv = dict(os.environ, KICAD_CONFIG_HOME=str(_private_settings(tmp)), TMPDIR=str(tmp))
         log = open(tmp / "editor.log", "wb")
-        proc = subprocess.Popen([exe, str(path)], stdout=log, stderr=subprocess.STDOUT,
+        proc = subprocess.Popen([exe, str(path)], stdin=subprocess.DEVNULL, stdout=log,
+                                stderr=subprocess.STDOUT,
                                 env=envv, cwd=path.parent, start_new_session=True)
         if board:
             kicad = _connect(tmp / "kicad" / "api.sock", proc, timeout)

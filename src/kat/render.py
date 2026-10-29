@@ -24,7 +24,7 @@ def rasterize(svg: Path, png: Path, zoom: float = 3.0) -> None:
     """SVG -> PNG with a white background. Uses rsvg-convert if present, else PyMuPDF."""
     if shutil.which("rsvg-convert"):
         subprocess.run(["rsvg-convert", "-z", str(zoom), "-b", "white", "-o", str(png), str(svg)],
-                       check=True)
+                       check=True, stdin=subprocess.DEVNULL)
         return
     try:
         import pymupdf
