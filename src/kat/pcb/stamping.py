@@ -425,10 +425,13 @@ class StampMixin:
         once: ``instance={"/CH_A": (x, y), "/CH_B": ((x, y), 180)}`` (or
         ``((x, y), rot, side)``). Copied copper is
         locked (``lock=False`` leaves it free), so routing keeps it. Stamping again
-        replaces the earlier copy. Parts of the design that would overlap the block's parts
-        (courtyards on the same side; through-hole pads on both) are refused, or with
-        ``make_room`` pushed out of the way;
-        parts of block instances not stamped yet are no obstacles. The design's net classes
+        replaces the earlier copy. Parts of the design outside block instances that would
+        overlap the block's parts (courtyards on the same side; through-hole pads on both)
+        are refused, or with ``make_room`` pushed out of the way. Stamped instances are
+        judged per layer (copper with clearance, same net allowed; courtyards per side;
+        keep-outs), so neighbouring blocks may interlock; a collision is refused
+        (``stamp_collisions``, ``kat.pcb.min_pitch``). Parts of block instances not stamped
+        yet are no obstacles. The design's net classes
         on the block's nets must not be stricter than the block's.
 
         ``side="bottom"``: the block flipped to the other side, mirrored about its
@@ -449,7 +452,7 @@ class StampMixin:
                                       sd, layer_map, allow_asymmetric))
             return {"instances": out}
         from .. import blocks as lib
-        from . import coupling
+        from . import cells, coupling
         from .board import Board
         if at is None:
             raise env.KatError("stamp needs at=(x, y)")
@@ -623,6 +626,15 @@ class StampMixin:
         if bad:
             raise env.KatError(f"{instance} on the {side} side breaks the design's layer rules: "
                                + "; ".join(x["message"] for x in bad[:6]))
+        # stamped neighbours: per layer, so blocks may interlock (cells.py)
+        mine = cells.items([c for _, c in copies if head(c) in COPPER or head(c) == "footprint"]
+                           + [tf.node for tf in pairs.values()], order)
+        hit = cells.against(self, instance, mine, skip=frozenset(tf.uuid for tf in pairs.values()))
+        if hit:
+            raise env.KatError(f"{instance} collides with stamped instances: "
+                               + "; ".join(cells.text(r) for r in hit[:8])
+                               + (f" (+{len(hit) - 8} more)" if len(hit) > 8 else "")
+                               + ": stamp at a larger pitch (kat pcb cell BLOCK --min-pitch x)")
         for n, c in copies:
             members[_uuid(n)] = _fresh(c)
             self._insert(c)
@@ -642,6 +654,15 @@ class StampMixin:
                 **({"made_room": moved} if moved else {}),
                 "pairs": placed, "nets": {k: v for k, v in netmap.items() if k != v},
                 "groups": groups, **counts, **({"warnings": warnings} if warnings else {})}
+
+    def stamp_collisions(self, instances: list[str] | None = None) -> list[dict]:
+        """Collisions between stamped instances, pairwise per layer (``cells``): copper
+        closer than its clearance (same net allowed), overlapping courtyards per side,
+        copper or parts in a keep-out. Rows: ``i``, ``j`` (instances), ``layer``,
+        ``kind``, ``a``/``b`` (items), ``nets``, ``gap``/``need`` (mm), ``x``, ``y``.
+        ``instances``: only collisions of these."""
+        from . import cells
+        return cells.collisions(self, instances)
 
     def _stamp_record(self, instance: str) -> dict:
         """What ``<board>.stamps.json`` (or this session) records for an instance."""
@@ -671,10 +692,10 @@ class StampMixin:
         self._stamps = {}
 
     def _room_for(self, src, pairs: dict, instance: str, f: "_Place", make_room: bool) -> list[dict]:
-        """Refuse (or with ``make_room`` move) the design's parts that overlap where the
-        block's parts will go: courtyards on the same side, through-hole pads on both.
-        Obstacles: parts outside any block instance, and parts of instances stamped
-        already; not the instance's own, not those still to be stamped."""
+        """Refuse (or with ``make_room`` move) the design's parts outside any block instance
+        that overlap where the block's parts will go: courtyards on the same side,
+        through-hole pads on both. Stamped instances are judged per layer afterwards
+        (``cells.against``), so neighbouring blocks may interlock."""
         own = {tf.uuid for tf in pairs.values()}
         stamped = set()
         for g in self._groups():
@@ -684,9 +705,9 @@ class StampMixin:
                  for sf in src.footprints() if sf.uuid in pairs for side, b in _taken(sf)]
 
         def top_level(fp) -> bool:
-            return not fp.field("Block") and fp.path.count("/") <= 1
+            return not fp.field("Block") and fp.path.count("/") <= 1 and fp.uuid not in stamped
 
-        obstacles = [fp for fp in self.footprints() if fp.uuid not in own and (top_level(fp) or fp.uuid in stamped)
+        obstacles = [fp for fp in self.footprints() if fp.uuid not in own and top_level(fp)
                      and any(s1 == s2 and overlap(b1, b2, -1e-6) for s1, b1 in _taken(fp) for s2, b2 in after)]
         if not obstacles:
             return []

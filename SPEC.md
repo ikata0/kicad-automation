@@ -537,10 +537,38 @@ with kat.pcb.edit("top/top.kicad_pcb") as b:
   stamped copper would be DRC errors); give those nets classes with the block's clearance
   or route the block with the design's. Another track width is a warning only: DRC checks
   a class's clearance, its width is what the router lays.
-- **Room:** design parts where the block's parts go (courtyards on the same side; the
-  through-hole pads and holes of either side's parts collide on both sides) are refused;
-  `make_room=True` / `--make-room` pushes unlocked ones aside. Parts of block instances
-  not stamped yet are no obstacle.
+- **Room:** top-level design parts (outside any block instance) where the block's parts go
+  (courtyards on the same side; the through-hole pads and holes of either side's parts
+  collide on both sides) are refused; `make_room=True` / `--make-room` pushes unlocked
+  ones aside. Parts of block instances not stamped yet are no obstacle.
+- **Interlocking cells:** a block is not a rectangle that must keep off its neighbours.
+  Stamped instances are checked against each other **per layer**, after the layer map
+  (`kat.pcb.cells`): copper vs copper on the same copper layer below the larger
+  net-class clearance of the two nets (same net on the design: shared, e.g. GND, no
+  collision), courtyard vs courtyard per side (overlap; touching is fine), keep-out vs
+  the copper kinds it forbids on its layer and vs courtyards on its outer layer. Vias
+  and through-hole pads count on every layer they span; pours are left out (they yield
+  to other nets). So a block may run a rail under its neighbour on an inner layer, or
+  overlap the neighbour's outline, as long as nothing on any layer meets. A stamp that
+  collides is refused with the rows; `b.stamp_collisions()` /
+  `kat pcb collisions PCB [INSTANCE...]` lists the pairs on a design (rows `i`, `j`,
+  `layer`, `kind`, `a`/`b`, `nets`, `gap`, `need`, `x`, `y`).
+  - **Pitch:** `block.json` may hold the stamping grid, `pitch` `[dx, dy]` mm
+    (`kat pcb cell BLOCK_PCB --pitch DX,DY`, `kat.pcb.block_cell`); `stamp` without a
+    step uses it. `kat pcb cell BLOCK_PCB` also returns the per-layer footprint (bounding
+    boxes of copper, courtyards per side, keep-outs per layer, and how far each sticks
+    out of the outline).
+  - **Smallest pitch:** `kat pcb cell BLOCK_PCB --min-pitch x|y|arc [--center CX,CY]
+    [--side top|bottom|alternate] [--layer-map …] [--shared GLOB] [--save]`
+    (`kat.pcb.min_pitch`) stamps the block against its own copies on the block board
+    and returns the smallest collision-free pitch (mm, or degrees about `center` for
+    `arc`, 0.01 resolution) and what limits it (`limited_by`). `alternate` puts every
+    second copy on the bottom (after its layer map). On the block board there is no
+    design net, so which nets are shared between copies is guessed (power names, nets
+    not local to the block: not `/…`, `Net-(…)`, `unconnected-…`); `--shared` names
+    them. `--save` stores an x/y result as the pitch.
+  - Overlap brings neighbours' signals close: after stamping, run the coupling rule
+    (`kat pcb netrule PCB coupling`, §4.12) on the nets that must not couple.
 - **Copied:** the parts' positions, rotations and sides; tracks, arcs, vias (locked unless
   `lock=False`), zones and keep-outs (named `/CH_A/RC1: out node`), graphics not on
   Edge.Cuts, board-only parts (new references). The block board's own groups become
@@ -578,7 +606,8 @@ with kat.pcb.edit("top/top.kicad_pcb") as b:
   warns unless `kat block check NAME --sides both` passed with the same map.
 - **Refused:** unpaired parts on either side, another footprint, an instance wired
   differently from the block (a net mapping to two nets), copper layers the design lacks,
-  copper that breaks the design's layer rules (§4.12).
+  copper that breaks the design's layer rules (§4.12), a collision with a stamped
+  instance on any layer.
 - **Stamping again** removes the instance group's copied items first and places anew.
 - The design is judged as usual: `kat pcb check`, then route what is left
   (`kat pcb route` keeps the locked block copper).
@@ -754,6 +783,8 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `pcb route PCB [--passes] [--net NAME] [--install]` | Freerouting through kat's DSN/SES, then the board check (§4.10) |
 | `pcb check PCB` / `pcb snapshot PCB` / `pcb view PCB ...` | board DRC + findings, history step with pictures, zoomed view (§4.12) |
 | `pcb stamp PCB BLOCK_PCB INSTANCE... --at X,Y [--step DX,DY] [--rot R] [--no-lock] [--make-room] [--side bottom] [--layer-map auto/roles/MAP] [--allow-asymmetric]` | copy a checked block layout onto instances (`all`), flipped on the bottom side, then the board check (§4.18) |
+| `pcb collisions PCB [INSTANCE...]` | per-layer collisions between stamped instances (§4.18) |
+| `pcb cell BLOCK_PCB [--pitch DX,DY / --clear] [--min-pitch x/y/arc [--center CX,CY] [--side top/bottom/alternate] [--layer-map MAP] [--allow-asymmetric] [--shared GLOB] [--save]]` | a block's stamping pitch and per-layer footprint; smallest collision-free pitch (§4.18) |
 | `pcb netrule PCB coupling A B [--distance D]` / `layers NETS LAYER...` / `plane NETS [--net N]` / `list` / `clear` | kat's net rules, checked by `pcb check` (§4.12) |
 | `pcb roles PCB [LAYER=ROLE ...]` / `pcb stack PCB` | layer roles; stack-up, roles and symmetry (§4.12, §4.18) |
 | `pcb instances PCB BLOCK_PCB` / `pcb environment BLOCK_PCB ZONE...` / `pcb port BLOCK_PCB PORT --at X,Y` | a block's instances in a design / its test-environment zones and keep-outs / where a port leaves it |
@@ -897,6 +928,7 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
 | Freerouting routes pins to locked port vias of the net; KiCad warns `via_dangling` for such a via joined on one layer only | judge it; `kat pcb ready --accept via_dangling=REASON` |
 | `kat pcb ready` refused an edge-mount connector (outside the outline) and any warning | `overhang` (pads inside) and `--overhang REF`, `--accept KIND=REASON`; errors never pass |
 | Routing a block board with its harness spent the router's passes on links below the neighbour keep-outs: 7 of the block's own connections stayed open | the router leaves harness pins out of its nets |
+| Dense radial rows (5 mm pitch) needed blocks that interlock (a rail on an inner layer under the neighbour, courtyards past the outline), but stamping treated a stamped block as a rectangle | stamped instances are checked per layer after the layer map (copper with clearance, courtyards per side, keep-outs); `kat pcb cell --min-pitch` finds the smallest pitch |
 | Freerouting ran tracks through the M2 mounting holes: kat's DSN described only copper pads | holes without copper are keep-outs in the DSN |
 
 ## 8. Open points

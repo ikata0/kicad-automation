@@ -13,7 +13,7 @@ from kat import cli, hierarchy
 from kat.pcb import stamping as stamp_mod
 from kat.pcb.board import Board
 from kat.pcb.syncer import _set_child
-from kat.sexpr import find, find_all
+from kat.sexpr import find, find_all, head
 
 sys.path.insert(0, str(Path(__file__).parent))
 from test_hierarchy import build  # noqa: E402
@@ -381,6 +381,46 @@ def test_flipped_block_board_is_clean(hier, tmp_path):
     assert {f.side for f in b.footprints()} == {"B"}
     assert {str(find(z, "name")[1]): zone_layer(z) for z in b.zones()} == {
         "env GND In1": "In2.Cu", "out node": "B.Cu", "no GND under OUT": "In2.Cu"}
+
+
+def test_blocks_interlock_down_to_the_min_pitch(hier, tmp_path, monkeypatch, capsys):
+    """Request 18: copies of RC in a row closer than its outline (7 mm). At the min pitch
+    the stamps are accepted and KiCad's DRC agrees (no errors); also alternating sides.
+    A bit closer is refused, and forced through, DRC finds the collision."""
+    import json
+    from kat.pcb import cells
+    c = copy_of(hier, tmp_path)
+    rc, b1 = c["rc"], c["b1"]
+    cell = kat.pcb.block_cell(rc)
+    assert cell["size"] == [7, 5] and cell["layers"]["In1.Cu"]["keepout"] == [2.2, 0.8, 5.3, 3.1]
+    assert cli.main(["pcb", "cell", str(rc), "--min-pitch", "x", "--save"]) == 0
+    px = json.loads(capsys.readouterr().out)
+    assert 3 < px["pitch"] < 7 and px["interlock"] > 0 and px["limited_by"], px
+    assert kat.pcb.block_cell(rc)["pitch"] == [px["pitch"], 0]
+    with kat.pcb.edit(b1) as b:                  # BLOCK1 without its inter-stage wiring
+        b.tree[:] = [n for n in b.tree if not (head(n) == "segment" and find(n, "locked") is None)]
+    res = kat.pcb.stamp(b1, rc, ["/RC1", "/RC2", "/RC3"], at=(100.5, 100.5))     # step: the pitch
+    assert [i["at"][0] for i in res["instances"]] == pytest.approx([100.5 + k * px["pitch"] for k in range(3)])
+    assert res["check"]["drc_errors"] == 0, check(b1)
+    assert kat.pcb.stamp_collisions(b1)["ok"]
+    with pytest.raises(kat.KatError, match=r"/RC2 collides with stamped instances: .*courtyard"):
+        Board(b1).stamp(rc, "/RC2", at=(100.5 + px["pitch"] - 0.1, 100.5))
+
+    alt = kat.pcb.min_pitch(rc, "x", side="alternate")
+    assert alt["pitch"] < px["pitch"]
+    with kat.pcb.edit(b1) as b:
+        b.stamp(rc, {"/RC1": (100.5, 100.5), "/RC2": ((100.5 + alt["pitch"], 100.5), 0, "bottom"),
+                     "/RC3": (100.5 + 2 * alt["pitch"], 100.5)})
+    assert check(b1)["drc_errors"] == 0
+    assert kat.pcb.stamp_collisions(b1)["ok"]
+
+    monkeypatch.setattr(cells, "against", lambda *a, **k: [])          # forced too close
+    with kat.pcb.edit(b1) as b:
+        b.stamp(rc, {"/RC1": (100.5, 100.5), "/RC2": ((100.5 + px["pitch"] - 0.1, 100.5), 0, "top"),
+                     "/RC3": (100.5 + 2 * px["pitch"], 100.5)})
+    rows = kat.pcb.stamp_collisions(b1)["collisions"]
+    assert {(r["i"], r["j"], r["kind"]) for r in rows} >= {("/RC1", "/RC2", "courtyard")}, rows
+    assert check(b1)["drc_errors"] > 0
 
 
 def test_coupling_rule_estimates_the_crosstalk_capacitance(tmp_path, monkeypatch):

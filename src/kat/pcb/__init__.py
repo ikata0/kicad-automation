@@ -106,17 +106,22 @@ def route(pcb: Path | str, passes: int = 20, nets: list[str] | None = None, time
 
 
 def stamp(pcb: Path | str, block_pcb: Path | str, instances: str | list[str],
-          at: tuple[float, float], step: tuple[float, float] = (0.0, 0.0), rot: float = 0.0,
+          at: tuple[float, float], step: tuple[float, float] | None = None, rot: float = 0.0,
           lock: bool = True, make_room: bool = False, side: str | None = None,
           layer_map: str | None = None, allow_asymmetric: bool = False) -> dict:
     """Stamp a checked block layout onto instances of the block (``Board.stamp``) and save.
     ``instances``: paths such as ``/CH_A`` (a list, or ``"all"`` for every instance). The
-    n-th one goes to ``at + n * step`` (mm), turned by ``rot`` degrees. ``make_room``:
+    n-th one goes to ``at + n * step`` (mm; default step: the block's pitch, ``block_cell``,
+    else 0,0), turned by ``rot`` degrees. ``make_room``:
     push the design's parts out of the block parts' way instead of refusing. ``side``
     "top"/"bottom" (None: as recorded per instance, else top), ``layer_map`` "auto",
     "roles" or ``"F.Cu=B.Cu,..."``, ``allow_asymmetric``: see ``Board.stamp``. Ends with
     the board check, like ``sync``."""
     report.touch(pcb)
+    if step is None:
+        from .. import blocks as lib
+        from .stamping import block_info
+        step = tuple(block_info(lib.board_of(block_pcb, near=Path(pcb))[0]).get("pitch", (0.0, 0.0)))
     with edit(pcb) as b:
         names = b.instances(block_pcb) if instances == "all" else (
             [instances] if isinstance(instances, str) else list(instances))
@@ -133,6 +138,55 @@ def instances(pcb: Path | str, block_pcb: Path | str) -> dict:
     """The instances of a block in a design (``Board.instances``)."""
     report.touch(pcb)
     return {"block": Path(block_pcb).stem, "instances": Board(pcb).instances(block_pcb)}
+
+
+def stamp_collisions(pcb: Path | str, instances: list[str] | None = None) -> dict:
+    """Collisions between the stamped block instances of a design, pairwise per layer
+    (``Board.stamp_collisions``): a table of rows i, j, layer, kind, a, b, nets, gap,
+    need (mm), x, y. ``instances``: only those of these instances."""
+    report.touch(pcb)
+    rows = Board(pcb).stamp_collisions(instances)
+    return {"board": str(pcb), "collisions": rows, "ok": not rows}
+
+
+def block_cell(block_pcb: Path | str, pitch: tuple[float, float] | None = None,
+               clear: bool = False) -> dict:
+    """A block's cell: its stamping ``pitch`` (dx, dy mm; set it with ``pitch``, remove it
+    with ``clear``; ``stamp`` uses it as the default step) and its per-layer footprint,
+    computed from the block board in block coordinates (mm, outline's top-left corner at
+    0,0): per copper layer the box of the copper grown by half its clearance and of the
+    keep-outs, per side the courtyards; ``outside``: how far each reaches past the
+    outline (what interlocks with a neighbour)."""
+    from .. import blocks as lib
+    from . import cells
+    from .stamping import block_info
+    block_pcb = lib.board_of(block_pcb)[0]
+    report.touch(block_pcb)
+    if pitch is not None or clear:
+        cells.set_pitch(block_pcb, None if clear else pitch)
+    return {"block": block_pcb.stem, "pitch": block_info(block_pcb).get("pitch"),
+            **cells.footprint(block_pcb)}
+
+
+def min_pitch(block_pcb: Path | str, axis: str = "x", center: tuple[float, float] | None = None,
+              side: str = "top", layer_map: str | None = None, allow_asymmetric: bool = False,
+              shared: list[str] | None = None, save: bool = False) -> dict:
+    """The smallest pitch at which copies of a block in a row do not collide, per layer
+    (``cells.min_pitch``): ``axis`` "x"/"y" (mm) or "arc" about ``center`` (block
+    coordinates, degrees); ``side`` top, bottom or alternate; ``shared``: globs of nets
+    the copies share (default power nets). ``save``: store it as the block's pitch
+    (x/y only). Returns pitch, outline, interlock (outline - pitch) and what limits it."""
+    from .. import blocks as lib
+    from . import cells
+    block_pcb = lib.board_of(block_pcb)[0]
+    report.touch(block_pcb)
+    out = cells.min_pitch(block_pcb, axis, center, side, layer_map, allow_asymmetric, shared)
+    if save:
+        if axis == "arc":
+            raise KatError("an arc pitch is an angle: save takes x or y pitches only")
+        cells.set_pitch(block_pcb, (out["pitch"], 0.0) if axis == "x" else (0.0, out["pitch"]))
+        out["saved"] = True
+    return out
 
 
 def block_environment(block_pcb: Path | str, zones: list[str]) -> dict:

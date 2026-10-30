@@ -163,7 +163,9 @@ with kat.pcb.edit(PCB) as b:
   ...})` or `kat pcb stamp PCB BLOCK_PCB all --at X,Y --step DX,DY` onto every instance,
   and route only what connects the blocks. Change the block board and stamp again; never
   edit a stamped copy by hand (see [stamping](references/stamping.md)). Re-stamping
-  replaces the instance group's copied items, including its copper. On the block board:
+  replaces the instance group's copied items, including its copper. Blocks may interlock
+  (checked per layer); `kat pcb cell BLOCK_PCB --min-pitch x --save` finds the smallest
+  pitch, which `stamp` then uses without `--step`. On the block board:
   - name its test environment with `kat.pcb.block_environment`: the plane it relies on,
     and keep-outs that stand for the neighbouring blocks, so it is routed as it will sit
     in the design (none of them is stamped);

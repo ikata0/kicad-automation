@@ -37,6 +37,21 @@ route/check the source with the intended clearance first. A track-width
 difference is a warning, not permission to ignore current/fabrication needs.
 
 Overlapping foreign courtyards (same side) and through-hole pads (either side)
-are refused. --make-room shifts unlocked design
+of top-level design parts are refused. --make-room shifts unlocked design
 parts aside; review the changed placement. Run kat pcb check, route remaining
 top-level connections, snapshot, and inspect each affected area.
+
+Stamped blocks may interlock: they are checked against each other per layer
+after the layer map (copper vs copper with the net-class clearance, shared
+nets such as GND exempt; courtyards per side; keep-outs vs the copper they
+forbid; vias and THT pads on all layers they span). A stamp that collides is
+refused with the colliding items; `kat pcb collisions PCB` lists all pairs.
+Find the pitch before stamping a dense row:
+`kat pcb cell BLOCK_PCB --min-pitch x [--side alternate] [--shared GND] --save`
+(or `arc --center CX,CY` for radial rows, in degrees) returns the smallest
+collision-free pitch and what limits it; `--save` writes it to block.json, and
+`kat pcb stamp` without `--step` then uses it. On the block board, name the
+nets shared between copies with `--shared` when the guess (power names, nets
+not local to the block) is wrong. Overlap brings neighbours' signals close:
+add coupling rules (`kat pcb netrule PCB coupling OUT IN`) for nets that must
+not couple, and run kat pcb check.

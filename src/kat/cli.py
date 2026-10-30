@@ -161,8 +161,19 @@ def cmd_pcb(a):
         return kat.pcb.route(a.pcb, a.passes, a.net or None, a.timeout, install=a.install)
     if a.pcb_cmd == "stamp":
         names = "all" if a.instance == ["all"] else a.instance
-        return kat.pcb.stamp(a.pcb, a.block, names, xy(a.at), xy(a.step) if a.step else (0.0, 0.0),
+        return kat.pcb.stamp(a.pcb, a.block, names, xy(a.at), xy(a.step) if a.step else None,
                              a.rot, not a.no_lock, a.make_room, a.side, a.layer_map, a.allow_asymmetric)
+    if a.pcb_cmd == "collisions":
+        return kat.pcb.stamp_collisions(a.pcb, a.instance or None)
+    if a.pcb_cmd == "cell":
+        if a.min_pitch:
+            if a.pitch or a.clear:
+                raise env.KatError("--min-pitch searches the pitch; set it with --save, not --pitch/--clear")
+            return kat.pcb.min_pitch(a.block, a.min_pitch, xy(a.center) if a.center else None, a.side,
+                                     a.layer_map, a.allow_asymmetric, a.shared, a.save)
+        if a.save or a.center or a.shared or a.side != "top":
+            raise env.KatError("--save, --center, --shared and --side go with --min-pitch")
+        return kat.pcb.block_cell(a.block, xy(a.pitch) if a.pitch else None, a.clear)
     if a.pcb_cmd == "roles":
         roles = dict(x.split("=", 1) for x in a.role if "=" in x)
         if len(roles) != len(a.role):
@@ -807,9 +818,11 @@ def build_parser() -> argparse.ArgumentParser:
                                     "(hierarchical) or SKiDL block paths (flat, Block field). Stamping again\n"
                                     "replaces the copy. The block board's origin is the top-left corner of\n"
                                     "its outline. Refused if the instance is wired differently, if the design's\n"
-                                    "net classes on its nets are stricter than the block's, or if design parts\n"
+                                    "net classes on its nets are stricter than the block's, if design parts\n"
                                     "overlap the block's parts (courtyards on the same side, through-hole pads on\n"
-                                    "both; --make-room pushes them aside).\n"
+                                    "both; --make-room pushes them aside), or if it collides with stamped\n"
+                                    "instances per layer (copper within clearance unless the same net, courtyards\n"
+                                    "per side, keep-outs): blocks may interlock (kat pcb cell, kat pcb collisions).\n"
                                     "--side bottom flips the block: mirrored about its vertical axis, then turned\n"
                                     "by --rot (as seen from the top); --at is the top-left corner of the flipped\n"
                                     "outline, so both sides share one grid. Layers go through --layer-map: auto\n"
@@ -821,7 +834,8 @@ def build_parser() -> argparse.ArgumentParser:
     s9.add_argument("block", metavar="BLOCK_PCB", help="the checked block board")
     s9.add_argument("instance", nargs="+", metavar="INSTANCE", help="/CH_A ... or all")
     s9.add_argument("--at", required=True, metavar="X,Y", help="where the block origin goes (mm)")
-    s9.add_argument("--step", metavar="DX,DY", help="offset from one instance to the next (mm)")
+    s9.add_argument("--step", metavar="DX,DY",
+                    help="offset from one instance to the next (mm; default the block's pitch, kat pcb cell)")
     s9.add_argument("--rot", type=float, default=0.0, help="0, 90, 180 or 270")
     s9.add_argument("--no-lock", action="store_true", help="leave the copied copper unlocked")
     s9.add_argument("--make-room", action="store_true", help="move design parts out of the block's way")
@@ -829,6 +843,36 @@ def build_parser() -> argparse.ArgumentParser:
     s9.add_argument("--layer-map", metavar="MAP", help='auto (default), roles, or "F.Cu=B.Cu,In1.Cu=In2.Cu,..."')
     s9.add_argument("--allow-asymmetric", action="store_true",
                     help="flip with the auto map although the stack-up is not mirror-symmetric")
+    s17 = psp.add_parser("collisions", formatter_class=_Fmt, help="collisions between stamped block instances",
+                         description="Stamped instances pairwise, per layer: copper closer than its clearance\n"
+                                     "(the same net, e.g. a shared GND, is allowed), courtyards overlapping on a\n"
+                                     "side, copper or parts in a keep-out. Through-hole pads and vias count on\n"
+                                     "every layer they span; pours are no obstacle. A table of rows i, j\n"
+                                     "(instances), layer, kind, a, b (items), nets, gap, need (mm), x, y.")
+    s17.add_argument("pcb", metavar="PCB")
+    s17.add_argument("instance", nargs="*", metavar="INSTANCE", help="only these instances (default all)")
+    s18 = psp.add_parser("cell", formatter_class=_Fmt, help="a block's pitch, per-layer footprint, min pitch",
+                         description="The block's pitch (its stamping grid, NAME.block.json; stamp's default\n"
+                                     "--step) is separate from what it takes per layer: copper with clearance per\n"
+                                     "copper layer, courtyards per side, keep-outs per layer (block coordinates,\n"
+                                     "outline's top-left at 0,0; outside: how far past the outline). Copies may\n"
+                                     "interlock where these do not collide.\n"
+                                     "--min-pitch x|y|arc: the smallest collision-free pitch of copies in a row\n"
+                                     "(mm; arc: degrees about --center); --side alternate puts every second copy on\n"
+                                     "the bottom (through --layer-map). Nets the copies share (same net may touch):\n"
+                                     "--shared globs, default power nets and nets outside any sheet.")
+    s18.add_argument("block", metavar="BLOCK_PCB", help="block board or library block name")
+    s18.add_argument("--pitch", metavar="DX,DY", help="set the block's pitch (mm)")
+    s18.add_argument("--clear", action="store_true", help="remove the block's pitch")
+    s18.add_argument("--min-pitch", choices=("x", "y", "arc"), help="search the smallest collision-free pitch")
+    s18.add_argument("--center", metavar="CX,CY", help="arc centre in block coordinates (mm)")
+    s18.add_argument("--side", choices=("top", "bottom", "alternate"), default="top",
+                     help="side of the copies (default top)")
+    s18.add_argument("--layer-map", metavar="MAP", help='bottom copies: auto (default) or "F.Cu=B.Cu,..."')
+    s18.add_argument("--allow-asymmetric", action="store_true",
+                     help="flip with the auto map on a stack-up that is not mirror-symmetric")
+    s18.add_argument("--shared", action="append", metavar="GLOB", help="net the copies share (repeatable)")
+    s18.add_argument("--save", action="store_true", help="store the found pitch as the block's pitch")
     s14 = psp.add_parser("roles", formatter_class=_Fmt, help="read or set what each copper layer is for",
                          description="Layer roles, e.g. a block: L1=in_signal L2=gnd_ref L3=out L4=out\n"
                                      "L5=gnd_ref L6=back_signal (as seen from its component side); a design:\n"
