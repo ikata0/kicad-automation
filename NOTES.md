@@ -113,3 +113,51 @@ done
 
 ---
 
+## Findings from the dual-block work (2026-10-29)
+
+The findings are from a development project where kat is used.
+
+### Bugs
+
+9. **Harness power nets break block ports.** If the SKiDL harness drives a
+   block port from a net KiCad treats as a power net (`+5V`, `-5V`), the
+   generated parent sheet has no sheet pin for that port, the block's
+   hierarchical label is isolated, and `PWR_FLAG` is added for `+5V` and `GND`
+   but not for `-5V` (ERC `power_pin_not_driven`). Workaround: non-power names
+   in the harness (`+VS2`/`-VS2`). Expected: ports always get sheet pins, and
+   flags are consistent for all power nets (or a warning explains it).
+10. **Incremental `kat block build` keeps stale harness symbols.** After
+    renaming harness nets, the old `+5V`/`-5V` power symbols and flags stay on
+    the harness sheet next to the new labels (ERC `multiple_net_names`).
+    Deleting the harness sheet to force a fresh one makes `block build` fail
+    with `FileNotFoundError` instead of regenerating it.
+11. **`set_stackup` crashes on cp1252 consoles** (`UnicodeEncodeError`) unless
+    `PYTHONIOENCODING=utf-8` is set.
+
+### Feature requests
+
+12. **Edge ports.** `kat pcb port` needs a via or pad. A stage-1 input must
+    leave the block as a track on L1 without a via (it ends at the outline), so
+    the port point had to be put on the Rf pad instead. Allow a track end on
+    (or within the edge clearance of) the outline as a port point.
+13. **Net-rule exemptions.** The `coupling` rule also reports harness parts
+    (the test connector has neighbouring IN/OUT pins) and the `plane` rule
+    reports the intentional pour cut-out under Rf/Cf. Requests: harness parts
+    exempt by default (as in the gate), and `--except-zone NAME` / an area
+    exemption for `plane`.
+14. **DNP from SKiDL.** There is no way to mark a part DNP (Cf of stage 1) in
+    the SKiDL source; `kat sync` should map e.g. `part.fields["DNP"]="1"` or
+    value `DNP` to the KiCad DNP flag.
+15. **Block board sync gate.** `kat pcb sync` on a block board needs `--force`
+    because the harness connector has no MPN. Harness parts should be exempt
+    from the MPN gate.
+16. **2D coupling estimate.** `netrule coupling` reports parallel-plate pF only.
+    For side-by-side copper (the dominant case in a guarded layout) a small 2D
+    Laplace solver on the cross-section is needed; this project has one
+    (`tools/xtalk2d.py`, ~200 lines, numpy/scipy) that could be the basis.
+17. **View presets.** `kat pcb view` with `F.Fab`/silk is cluttered at block
+    scale (reference texts larger than 0402 parts). A `--layers copper-top`
+    / `assembly` preset and an option to hide reference texts would help.
+
+
+    
