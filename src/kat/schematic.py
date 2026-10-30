@@ -103,6 +103,12 @@ class PlacedSymbol:
         p = prop(self.node, name)
         return str(p[2]) if p else None
 
+    @property
+    def dnp(self) -> bool:
+        """KiCad's DNP (do not populate) flag."""
+        d = find(self.node, "dnp")
+        return bool(d) and len(d) > 1 and str(d[1]) == "yes"
+
 
 class SheetBox:
     """A sheet box (hierarchical instance) on a sheet, as moving and drawing see it."""
@@ -449,6 +455,21 @@ class Schematic:
             if hide is not None:
                 p[:] = [c for c in p if head(c) != "hide"]
                 p.insert(4, [Sym("hide"), Sym("yes" if hide else "no")])
+
+    def set_dnp(self, ref: str, dnp: bool = True) -> bool:
+        """Set KiCad's DNP flag on all units of ``ref``; True if something changed."""
+        changed = False
+        for s in self.find_symbols(ref):
+            if s.dnp == dnp:
+                continue
+            d = find(s.node, "dnp")
+            if d is None:
+                at = next(i for i, c in enumerate(s.node) if head(c) == "uuid")
+                s.node.insert(at, [Sym("dnp"), Sym("yes" if dnp else "no")])
+            else:
+                d[1:] = [Sym("yes" if dnp else "no")]
+            changed = True
+        return changed
 
     def remove_symbol(self, ref: str, unit: int | None = None) -> int:
         doomed = {id(s.node) for s in self.find_symbols(ref, unit)}

@@ -17,6 +17,8 @@ render = ["pymupdf>=1.24"]
 dev = ["pytest>=8", "skidl>=2.3"]
 # `kat open --verify` for boards: talks to the running editor through KiCad's IPC API. MIT.
 gui = ["kicad-python>=0.8"]
+# `kat pcb netrule coupling --estimate 2d`: the cross-section Laplace solver. BSD.
+field = ["numpy>=1.24", "scipy>=1.10"]
 
 [project.scripts]
 kat = "kat.cli:main"

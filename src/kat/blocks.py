@@ -102,6 +102,25 @@ def _info(d: Path) -> dict:
     return json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
 
 
+def instance_of(sch: Path | str) -> str | None:
+    """The block instance (sheet path, e.g. "DUT") if ``sch`` is a block's own schematic
+    (``NAME.kicad_sch`` beside ``NAME.py`` and ``NAME.block.json``), else None. Parts whose
+    Block field is not this instance (or below it) are the harness."""
+    sch = Path(sch)
+    d = sch.parent
+    if sch.stem != d.name or not (d / f"{d.name}.py").exists():
+        return None
+    info = _files(d)["info"]
+    if not info.exists():
+        return None
+    return _info(d).get("instance", HARNESS)
+
+
+def is_harness(block_field: str, instance: str) -> bool:
+    """True if a part with this Block field is harness (not in ``instance``)."""
+    return not (block_field == instance or block_field.startswith(instance + "/"))
+
+
 def _write_info(d: Path, info: dict) -> None:
     _files(d)["info"].write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
 
@@ -154,11 +173,19 @@ def build(name: str, lib: Path | str | None = None, force: bool = False) -> dict
                 ports=sorted(k for k, v in me["ports"].items() if not (isinstance(v, str) and v in power)),
                 power=sorted(k for k, v in me["ports"].items() if isinstance(v, str) and v in power))
     _write_info(d, info)
+    warnings = [f"port {k} is on the power net {v} in the harness: it stays the global {v} in the "
+                f"block (no sheet pin, every design gets {v} there); give the harness net a name "
+                "outside KiCad's power library (+VS, VCC_A) to make it a port"
+                for k, v in sorted(me["ports"].items())
+                if isinstance(v, str) and v in power and not v.upper().startswith(("GND", "0V"))]
     from . import syncer_hier
     # blocks used inside this one that the library has are sheets too (nested blocks)
     known = {json.loads(p.read_text(encoding="utf-8")).get("type") for p in d.parent.glob("*/*.block.json")
              if p.parent != d}
     inner = {i["type"] for p, i in rec["instances"].items() if p.startswith(inst + "/")} & known
+    if not f["sch"].exists():             # deleted to get a fresh harness drawing
+        from .schematic import Schematic
+        Schematic.create(f["sch"])
     sch = syncer_hier.run(f["sch"], f["net"], sorted({me["type"]} | inner), generate={inst: f["block"]})
     if sch["parameters"]:                 # the defaults, when the block is opened on its own
         pro = f["sch"].with_suffix(".kicad_pro")
@@ -169,7 +196,7 @@ def build(name: str, lib: Path | str | None = None, force: bool = False) -> dict
     pcb = kat.pcb.sync(f["pcb"], force=force)
     return {"block": name, "type": me["type"], "ports": info["ports"], "power": info["power"],
             "params": info["params"],
-            "warnings": rec["warnings"], **({"flat": flat} if flat else {}),
+            "warnings": rec["warnings"] + warnings, **({"flat": flat} if flat else {}),
             "schematic": {k: sch.get(k) for k in ("added", "removed", "updated", "parameters")} | {
                 "ok": (sch.get("check") or {}).get("ok")},
             "board": {k: pcb.get(k) for k in ("added", "removed", "updated", "check")}}
@@ -346,8 +373,8 @@ def check(name: str, lib: Path | str | None = None, require: tuple[str, ...] = (
     envs = _env_refs(d)
 
     def to_env(item) -> bool:
-        return any((m := re.search(r" of (\S+)", i["description"])) and m.group(1) in envs
-                   for i in item["items"])
+        # "Pad 2 [/OUT] of J1" (KiCad's language follows the OS: "... von J1")
+        return any(envs & set(i["description"].split()) for i in item["items"])
 
     open_ = [u for u in board["unconnected_items"] if not to_env(u)]
     # the harness is test equipment: its parts need no part data (MPN)
@@ -431,6 +458,7 @@ def _check_ports(d: Path, pcb: Path, point=None) -> list[str]:
     recorded points are on ``pcb`` (a flipped copy)."""
     from .pcb.board import Board
     from .pcb.geometry import inside
+    from .pcb.stamping import _track_end
     info = _info(d)
     pts = info.get("port_points", [])
     if not pts:
@@ -444,10 +472,12 @@ def _check_ports(d: Path, pcb: Path, point=None) -> list[str]:
         on = next((v["net"] for v in b.vias() if abs(v["at"][0] - x) < 0.01 and abs(v["at"][1] - y) < 0.01), None)
         if on is None:
             on = next((p.net for p in b.pads() if inside(p.outline, (x, y))), None)
+        if on is None and (t := _track_end(b, (x, y))) is not None:
+            on = t["net"]
         if names and q["port"] not in names:
             out.append(f"port {q['port']}: the block has no such port ({', '.join(sorted(names))})")
         if on is None:
-            out.append(f"port {q['port']}: no via or pad at {x:g},{y:g} any more")
+            out.append(f"port {q['port']}: no via, pad or track end at {x:g},{y:g} any more")
         elif on != q["net"]:
             out.append(f"port {q['port']}: the copper at {x:g},{y:g} is on {on}, not {q['net']}")
         if box and not (box[0] <= x <= box[2] and box[1] <= y <= box[3]):

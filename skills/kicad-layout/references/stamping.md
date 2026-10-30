@@ -30,7 +30,8 @@ do not edit instance copper expecting it to survive.
 Harness parts are excluded, as are whole routes serving only the harness.
 Use block_environment to name test planes/neighbor keepouts that must not be
 copied. Mark each port with `kat pcb port BLOCK_PCB PORT --at X,Y`, preferably
-on a locked via near the edge, and read transformed points with b.ports(instance).
+on a locked via near the edge (or the end of a track that leaves on its layer at
+the outline: an edge port), and read transformed points with b.ports(instance).
 
 Design net classes asking stricter clearance than the block's are refused;
 route/check the source with the intended clearance first. A track-width

@@ -118,7 +118,8 @@ are preserved. Changing `PYTHONUTF8` cannot repair text KiCad did not emit.
 Standalone SKiDL, Java and other third-party tools retain their own encoding
 behavior; kat does not change their defaults.
 The `render` extra supplies PyMuPDF for PNG snapshots on
-Windows, where `rsvg-convert` is usually unavailable. To run the optional autorouting
+Windows, where `rsvg-convert` is usually unavailable. The `field` extra (numpy, scipy)
+enables the 2D coupling estimate (`kat pcb netrule PCB coupling A B --estimate 2d`). To run the optional autorouting
 tests, install Java 21+ (for example,
 `winget install --id EclipseAdoptium.Temurin.21.JDK --exact --source winget`),
 open a new terminal, then run `.\.venv\Scripts\kat.exe pcb route --install`.

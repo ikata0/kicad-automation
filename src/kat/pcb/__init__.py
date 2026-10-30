@@ -17,7 +17,7 @@ from ..env import KatError, tidy
 from . import checks, syncer, views
 from .board import Board, Footprint, Pad
 
-__all__ = ["Board", "Footprint", "Pad", "block_environment", "block_port", "remove", "check", "coupling_rule",
+__all__ = ["Board", "Footprint", "Pad", "block_environment", "block_port", "remove", "check", "coupling_2d", "coupling_rule",
            "drc", "edit", "fab", "instances", "layer_roles", "layer_rule", "load", "net_rules", "plane_rule",
            "ready", "refill", "route", "snapshot", "stack", "stamp", "sync", "view"]
 
@@ -75,12 +75,14 @@ def snapshot(pcb: Path | str, slug: str = "", note: str | None = None, out: Path
 
 def view(pcb: Path | str, around: str | None = None, at: tuple[float, float] | None = None,
          region: tuple[float, float, float, float] | None = None, layers: str | list[str] = "top",
-         margin: float | None = None, ppm: float | None = None, out: Path | str | None = None) -> dict:
+         margin: float | None = None, ppm: float | None = None, out: Path | str | None = None,
+         texts: bool = True) -> dict:
     """Zoomed PNG of one board region into ``views/``: ``around`` a footprint, ``at`` a
     point (x, y) or a ``region`` (x, y, w, h) in mm; ``layers`` a set name (top, bottom,
-    placement, copper, In1, ...) or KiCad layer names; ``ppm`` px/mm. Journaled with its
-    image."""
-    res = views.view(pcb, around, at, region, layers, margin, ppm, out)
+    placement, copper, copper-top, copper-bottom, assembly, assembly-bottom, In1, ...) or
+    KiCad layer names; ``ppm`` px/mm; ``texts=False`` hides the footprints' reference,
+    value and user texts. Journaled with its image."""
+    res = views.view(pcb, around, at, region, layers, margin, ppm, out, texts)
     what = around or (f"at {at[0]:g},{at[1]:g}" if at else f"region {region}")
     report.snapshot_images(pcb, res, f"kat.pcb.view({str(pcb)!r}, {what}, layers={layers!r})", "view")
     return res
@@ -214,8 +216,10 @@ def remove(pcb: Path | str, uuids: list[str] | None = None, at: tuple[float, flo
 
 def block_port(block_pcb: Path | str, port: str, at: tuple[float, float], net: str | None = None) -> dict:
     """Mark where a port leaves a block board: the via or pad at ``at`` (mm) on the port's
-    net, stored in ``NAME.block.json``. ``kat block check`` checks the port points,
-    ``stamp`` returns them on the design (``Board.ports``)."""
+    net, or the end of a track that leaves at the outline's edge (within the copper-edge
+    clearance plus half its width), stored in ``NAME.block.json``. ``kat block check``
+    checks the port points, ``stamp`` returns them on the design (``Board.ports``; a
+    track port with its layer). Returns port, net, kind (via, pad, track), at."""
     from . import stamping
     report.touch(block_pcb)
     return stamping.set_port(block_pcb, port, at, net)
@@ -262,15 +266,28 @@ def stack(pcb: Path | str) -> dict:
             "asymmetry": layers.asymmetry(b)}
 
 
-def coupling_rule(pcb: Path | str, a: str, b: str, distance: float = 0.3) -> dict:
+def coupling_rule(pcb: Path | str, a: str, b: str, distance: float = 0.3, harness: bool = False,
+                  estimate: str = "plate") -> dict:
     """``kat pcb check`` flags copper of nets ``a`` (glob such as ``OUT*``, or
     ``class:NAME``) overlapping or within ``distance`` mm of copper of nets ``b`` of
     another index (the glob's wildcard part) on the same or an adjacent layer, with the
-    overlap area and a parallel-plate capacitance (pF) from the stack-up. Returns the
-    board's net rules."""
+    overlap area and a parallel-plate capacitance (pF) from the stack-up. ``estimate="2d"``
+    adds a 2D cross-section capacitance (pF, length mm) for side-by-side copper on one
+    layer (needs numpy/scipy: kat[field]). On a block's board the harness parts' pads are
+    exempt unless ``harness``. Returns the board's net rules."""
     from . import coupling
     report.touch(pcb)
-    return {"board": str(pcb), "net_rules": coupling.coupling_rule(pcb, a, b, distance)}
+    return {"board": str(pcb), "net_rules": coupling.coupling_rule(pcb, a, b, distance, harness, estimate)}
+
+
+def coupling_2d(width_a: float, width_b: float, gap: float, below: float, above: float | None = None,
+                epsilon_r: float = 4.5, copper: float = 0.035) -> dict:
+    """Mutual capacitance per length of two tracks side by side on one layer, from a 2D
+    cross-section (finite differences, needs numpy/scipy): widths and edge ``gap`` in mm,
+    reference plane ``below`` mm under them, on an inner layer one ``above`` mm over them
+    (None: outer layer, air above). Returns pf_per_mm (about 10 % accurate)."""
+    from . import field2d
+    return {"pf_per_mm": round(field2d.side_by_side(width_a, width_b, gap, below, above, epsilon_r, copper), 6)}
 
 
 def layer_rule(pcb: Path | str, nets: str, layers: list[str]) -> dict:
@@ -281,13 +298,15 @@ def layer_rule(pcb: Path | str, nets: str, layers: list[str]) -> dict:
     return {"board": str(pcb), "net_rules": coupling.layer_rule(pcb, nets, layers)}
 
 
-def plane_rule(pcb: Path | str, nets: str, net: str | None = None) -> dict:
+def plane_rule(pcb: Path | str, nets: str, net: str | None = None, except_zones: list[str] | None = None,
+               except_areas: list[tuple[float, float, float, float]] | None = None) -> dict:
     """Tracks of ``nets`` need a pour of ``net`` (None: any other net) on an adjacent layer
-    under their whole length; ``kat pcb check`` reports the uncovered length. Returns the
-    net rules."""
+    under their whole length; ``kat pcb check`` reports the uncovered length. Track inside
+    a zone/rule area named in ``except_zones`` or a rectangle of ``except_areas`` (x0, y0,
+    x1, y1 mm) is exempt (an intended cut-out). Returns the net rules."""
     from . import coupling
     report.touch(pcb)
-    return {"board": str(pcb), "net_rules": coupling.plane_rule(pcb, nets, net)}
+    return {"board": str(pcb), "net_rules": coupling.plane_rule(pcb, nets, net, except_zones, except_areas)}
 
 
 def net_rules(pcb: Path | str, clear: bool = False) -> dict:

@@ -46,14 +46,24 @@ def _store(pcb: Path | str, rule: dict, key: tuple) -> list[dict]:
     return data["net_rules"]
 
 
-def coupling_rule(pcb: Path | str, a: str, b: str, distance: float = 0.3) -> list[dict]:
+def coupling_rule(pcb: Path | str, a: str, b: str, distance: float = 0.3, harness: bool = False,
+                  estimate: str = "plate") -> list[dict]:
     """Flag copper of nets ``a`` (glob or ``class:NAME``) overlapping or within
     ``distance`` mm of copper of nets ``b`` of another index, on the same or an adjacent
-    layer (``kat pcb check``: ``net_rules``). Replaces a rule for the same ``a``/``b``.
-    Returns all net rules of the board."""
+    layer (``kat pcb check``: ``net_rules``). On a block board the harness parts' pads are
+    left out unless ``harness``. ``estimate="2d"``: side-by-side copper on one layer also
+    gets a capacitance from a 2D cross-section solve (``field2d``; needs numpy/scipy).
+    Replaces a rule for the same ``a``/``b``. Returns all net rules of the board."""
     if distance < 0:
         raise env.KatError("distance must be >= 0 mm")
-    return _store(pcb, {"kind": "coupling", "a": a, "b": b, "distance": float(distance)}, ("kind", "a", "b"))
+    if estimate not in ("plate", "2d"):
+        raise env.KatError(f"estimate {estimate!r}: plate or 2d")
+    if estimate == "2d":
+        from .field2d import _np
+        _np()                                                   # refuse now when scipy is missing
+    rule = {"kind": "coupling", "a": a, "b": b, "distance": float(distance),
+            **({"harness": True} if harness else {}), **({"estimate": "2d"} if estimate == "2d" else {})}
+    return _store(pcb, rule, ("kind", "a", "b"))
 
 
 def layer_rule(pcb: Path | str, nets: str, layers: list[str]) -> list[dict]:
@@ -65,11 +75,26 @@ def layer_rule(pcb: Path | str, nets: str, layers: list[str]) -> list[dict]:
     return _store(pcb, {"kind": "layers", "nets": nets, "layers": list(layers)}, ("kind", "nets"))
 
 
-def plane_rule(pcb: Path | str, nets: str, net: str | None = None) -> list[dict]:
+def plane_rule(pcb: Path | str, nets: str, net: str | None = None, except_zones: list[str] | None = None,
+               except_areas: list[tuple[float, float, float, float]] | None = None) -> list[dict]:
     """Tracks of ``nets`` need a pour on an adjacent copper layer under their whole length:
-    of ``net`` (e.g. GND), or of any other net if None. Checked by ``kat pcb check`` with
-    the pours filled. Returns all net rules."""
-    return _store(pcb, {"kind": "plane", "nets": nets, "net": net}, ("kind", "nets"))
+    of ``net`` (e.g. GND), or of any other net if None. Track inside the outline of a zone
+    or rule area named in ``except_zones`` (any layer), or inside a rectangle of
+    ``except_areas`` (x0, y0, x1, y1 mm), is exempt: an intended cut-out. Checked by
+    ``kat pcb check`` with the pours filled. Returns all net rules."""
+    if except_zones:
+        from .board import Board
+        names = {str(n[1]) for z in Board(pcb).zones() if (n := find(z, "name")) is not None}
+        if missing := [z for z in except_zones if z not in names]:
+            raise env.KatError(f"no zone named {', '.join(missing)} on {Path(pcb).name} "
+                               f"(named: {', '.join(sorted(names)) or 'none'})")
+    areas = [[float(v) for v in a] for a in except_areas or []]
+    if any(len(a) != 4 or a[0] >= a[2] or a[1] >= a[3] for a in areas):
+        raise env.KatError("an exempt area is x0,y0,x1,y1 with x0 < x1 and y0 < y1 (mm)")
+    rule = {"kind": "plane", "nets": nets, "net": net,
+            **({"except_zones": list(except_zones)} if except_zones else {}),
+            **({"except_areas": areas} if areas else {})}
+    return _store(pcb, rule, ("kind", "nets"))
 
 
 def net_rules(pcb: Path | str, clear: bool = False) -> list[dict]:
@@ -180,9 +205,10 @@ def _span(layers_: list[str], copper: list[str]) -> list[str]:
     return copper[min(idx):max(idx) + 1] if idx else []
 
 
-def _copper(board, filled, nets: set[str]) -> dict[tuple[str, str], list[_Shape]]:
-    """(net, layer) -> shapes, for ``nets``: tracks, arcs, vias, pads and the pours of
-    ``filled`` (a board with filled zones; the zone outline where it has no fill)."""
+def _copper(board, filled, nets: set[str], skip_refs: frozenset = frozenset()) -> dict[tuple[str, str], list[_Shape]]:
+    """(net, layer) -> shapes, for ``nets``: tracks, arcs, vias, pads (but those of
+    ``skip_refs``) and the pours of ``filled`` (a board with filled zones; the zone
+    outline where it has no fill)."""
     copper = board.copper_layers()
     out: dict[tuple[str, str], list[_Shape]] = {}
 
@@ -204,7 +230,7 @@ def _copper(board, filled, nets: set[str]) -> dict[tuple[str, str], list[_Shape]
             for l in _span(list(v["layers"]), copper):
                 add(v["net"], l, _Shape(v["at"], v["at"], v["size"] / 2))
     for p in board.pads():
-        if p.net in nets:
+        if p.net in nets and p.ref not in skip_refs:
             for l in copper:
                 if p.on(l):
                     add(p.net, l, _Shape(poly=p.outline))
@@ -246,6 +272,17 @@ def _union_box(shapes):
 
 # --- the checks ---------------------------------------------------------------------------
 
+def harness_refs(board) -> frozenset[str]:
+    """On a block's own board (``blocks/NAME/NAME.kicad_pcb``): the footprints of its test
+    harness (not in the block instance, not board-only). Empty on any other board."""
+    from ..blocks import instance_of, is_harness
+    inst = instance_of(Path(board.path).with_suffix(".kicad_sch"))
+    if inst is None:
+        return frozenset()
+    return frozenset(f.ref for f in board.footprints()
+                     if not f.board_only and is_harness(f.field("Block") or "", inst))
+
+
 def _coupling(board, filled, rule: dict) -> list[dict]:
     sa, sb = _selector(board, rule["a"]), _selector(board, rule["b"])
     nets = _nets(board)
@@ -253,10 +290,11 @@ def _coupling(board, filled, rule: dict) -> list[dict]:
     B = {n: i for n in nets if (i := sb(n)) is not None}
     if not A or not B:
         return []
-    cu = _copper(board, filled, set(A) | set(B))
+    cu = _copper(board, filled, set(A) | set(B), frozenset() if rule.get("harness") else harness_refs(board))
     copper = board.copper_layers()
     d = rule.get("distance", 0.3)
     boxes = {k: _union_box(v) for k, v in cu.items()}
+    cache: dict = {}
     out = []
     for (na, la), shapes_a in cu.items():
         if na not in A:
@@ -290,8 +328,58 @@ def _coupling(board, filled, rule: dict) -> list[dict]:
                 f.update(x=round(cx, 3), y=round(cy, 3))
                 where = "on " + la if la == lb else f"on {la} / {lb}"
                 f["message"] = f"{na} and {nb} {dist:g} mm apart {where} (rule: {d:g} mm)"
+                if rule.get("estimate") == "2d" and la == lb and dist > 0:
+                    f.update(_estimate_2d(board, la, x, y, dist, shapes_a, shapes_b, max(d, dist + RES), cache))
+                    f["message"] += (f": ≈ {f['capacitance_pf']:g} pF over {f['length']:g} mm "
+                                     f"(2D, {f['pf_per_mm'] * 1000:g} fF/mm)")
             out.append(f)
     return out
+
+
+def _width(s: _Shape) -> float:
+    return 2 * s.r if s.poly is None else min(s.box[2] - s.box[0], s.box[3] - s.box[1])
+
+
+def _spine(s: _Shape) -> list[tuple[float, float]]:
+    """Points every STEP along a shape's centre line (a pad: its box's long axis)."""
+    if s.poly is None:
+        a, b = s.a, s.b
+    else:
+        x0, y0, x1, y1 = s.box
+        a, b = (((x0, (y0 + y1) / 2), (x1, (y0 + y1) / 2)) if x1 - x0 >= y1 - y0
+                else (((x0 + x1) / 2, y0), ((x0 + x1) / 2, y1)))
+    n = max(1, math.ceil(math.hypot(b[0] - a[0], b[1] - a[1]) / STEP))
+    return [(a[0] + (b[0] - a[0]) * k / n, a[1] + (b[1] - a[1]) * k / n) for k in range(n + 1)]
+
+
+def _estimate_2d(board, layer, x: _Shape, y: _Shape, gap: float, shapes_a, shapes_b, reach: float,
+                 cache: dict) -> dict:
+    """Side-by-side coupling of the closest pair from a 2D cross-section (``field2d``),
+    times the length of A that runs within ``reach`` of B; planes assumed on the
+    neighbouring copper layers."""
+    from . import field2d
+    st = lay.stackup(board)
+    copper = board.copper_layers()
+    i = copper.index(layer)
+    if len(copper) < 2:
+        return {}
+    diel = st["dielectrics"]
+    if i == 0 or i == len(copper) - 1:
+        d = diel[0] if i == 0 else diel[-1]
+        below, above, eps = d["thickness"], None, d["epsilon_r"]
+    else:
+        below, above = diel[i]["thickness"], diel[i - 1]["thickness"]
+        eps = (diel[i]["epsilon_r"] + diel[i - 1]["epsilon_r"]) / 2
+    t = st["copper"][i]["thickness"]
+    key = (round(_width(x), 3), round(_width(y), 3), round(gap, 3), below, above, eps, t)
+    if key not in cache:
+        cache[key] = field2d.side_by_side(*key[:5], epsilon_r=eps, copper=t)
+    pts = {(round(p[0] / STEP), round(p[1] / STEP)) for s in shapes_a for p in _spine(s)
+           if any(_Shape(p, p, s.r if s.poly is None else 0.0).distance(o) <= reach for o in shapes_b
+                  if _meets(_grow(o.box, reach + s.r), (p[0], p[1], p[0], p[1])))}
+    length = max(len(pts) - 1, 1) * STEP
+    return {"estimate": "2d", "length": round(length, 3), "pf_per_mm": round(cache[key], 6),
+            "capacitance_pf": round(cache[key] * length, 4)}
 
 
 def _overlap(pairs) -> set[tuple[int, int]]:
@@ -371,6 +459,10 @@ def layer_findings(board, nodes: list | None = None) -> list[dict]:
 def _plane(board, filled, rule: dict) -> list[dict]:
     sel = _selector(board, rule["nets"])
     copper = board.copper_layers()
+    exempt = [(box_of(p), p) for z in board.zones() if (n := find(z, "name")) is not None
+              and str(n[1]) in rule.get("except_zones", ()) for p in [_pts(find(z, "polygon"))] if p]
+    exempt += [((a[0], a[1], a[2], a[3]), [(a[0], a[1]), (a[2], a[1]), (a[2], a[3]), (a[0], a[3])])
+               for a in rule.get("except_areas", ())]
     pours: dict[str, list] = {}
     for z in find_all(filled.tree, "zone"):
         net = find(z, "net")
@@ -400,6 +492,9 @@ def _plane(board, filled, rule: dict) -> list[dict]:
             for k in range(n + 1):
                 c = (p[0] + (q[0] - p[0]) * k / n, p[1] + (q[1] - p[1]) * k / n)
                 probes = [c, (c[0] - uy * w, c[1] + ux * w), (c[0] + uy * w, c[1] - ux * w)]
+                if any(bx[0] <= c[0] <= bx[2] and bx[1] <= c[1] <= bx[3] and inside(poly, c)
+                       for bx, poly in exempt):
+                    continue
                 if all(any(bx[0] <= s[0] <= bx[2] and bx[1] <= s[1] <= bx[3] and inside(poly, s)
                            for _, bx, poly in cand) for s in probes):
                     continue

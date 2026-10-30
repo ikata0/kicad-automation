@@ -273,3 +273,13 @@ def test_python_utf8_mode_off_in_fresh_process():
     info = json.loads(result.stdout)
     assert info["utf8"] == 0
     assert info["default"]
+
+
+def test_cli_text_survives_a_console_without_greek():
+    """`kat api set_stackup` prints its docstring's εr; a cp1252 console used to crash."""
+    child_env = dict(os.environ, PYTHONIOENCODING="cp1252", KAT_REPORT="0")
+    result = subprocess.run(
+        [sys.executable, "-c", "import sys; from kat import cli; sys.exit(cli.main(['api', 'set_stackup']))"],
+        capture_output=True, encoding="cp1252", env=child_env)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "\\u03b5r" in result.stdout

@@ -159,6 +159,8 @@ class Syncer:
                 if have != want:
                     s.set_field(ref, field, want, hide=True if have is None else None)
                     self.report["updated"].append({"ref": ref, "field": field, "from": have or "", "to": want})
+            if c.dnp is not None and syms[0].dnp != c.dnp and s.set_dnp(ref, c.dnp):
+                self.report["updated"].append({"ref": ref, "field": "DNP", "from": not c.dnp, "to": c.dnp})
         new = [c for ref, c in self.comps.items() if ref not in matched]
         self.new_refs = {c.ref for c in new}
         if new:
@@ -188,6 +190,8 @@ class Syncer:
             self.s.set_field(c.ref, TAG, c.tag, hide=True, unit=unit)
         for field, value in c.fields.items():
             self.s.set_field(c.ref, field, value, hide=True, unit=unit)
+        if c.dnp:
+            self.s.set_dnp(c.ref)
         self.s.autoplace_fields(sym)
         return sym
 
@@ -352,6 +356,17 @@ class Syncer:
                         self.report["detached"].append(f"{ref}.{pin}")
                     except env.KatError as e:
                         self.report["unresolved"].append({"pin": f"{ref}.{pin}", "reason": str(e)})
+        # 1b. a lone pin under a name the design no longer gives it (a renamed power net:
+        # its old power symbol and flag would stay beside the new label)
+        stale = [p for dname, dpins in drawn_nets(s).items() if len(dpins) == 1
+                 and not netlist._auto(dname) and (p := next(iter(dpins)))[0] in existing
+                 and net_of.get(p) not in (None, dname)]
+        for ref, pin in sorted(stale):
+            try:
+                s.detach(ref, pin)
+                self.report["detached"].append(f"{ref}.{pin}")
+            except env.KatError as e:
+                self.report["unresolved"].append({"pin": f"{ref}.{pin}", "reason": str(e)})
         # 2. attach pins missing from their net, and make sure each net carries its name
         drawn = drawn_nets(s)
         group_of = {pin: name for name, pins in drawn.items() for pin in pins}
@@ -455,14 +470,25 @@ class Syncer:
         s = self.s
         renamed = False
         for kind in ("label", "global_label", "hierarchical_label"):
-            for n in find_all(s.tree, kind):
-                if str(n[1]) == old:
+            for n in list(find_all(s.tree, kind)):
+                if str(n[1]) != old:
+                    continue
+                renamed = True
+                if new in self.power:
+                    # a power net is named by its symbol: a label (a port's hierarchical
+                    # label too) with a power name would be a second, disconnected name
+                    at = find(n, "at")
+                    x, y, ang = float(at[1]), float(at[2]), round(float(at[3]) if len(at) > 3 else 0) % 360
+                    s.tree.remove(n)
+                    self._power_symbol(new, (x, y), {0: (1, 0), 90: (0, -1), 180: (-1, 0), 270: (0, 1)}.get(ang, (0, -1)))
+                else:
                     n[1] = new
-                    renamed = True
         for sym in s.symbols():
             if sym.ref.startswith("#PWR") and sym.field("Value") == old:
                 at = s.pins(sym)[0]
-                s.remove_symbol(sym.ref, sym.unit)
+                # by node: power refs (#PWR1) are not unique across a block's instances
+                s.tree[:] = [c for c in s.tree if c is not sym.node]
+                s._prune_lib_symbols()
                 if new in self.power:
                     self._power_symbol(new, (at["x"], at["y"]), _power_dir(s, sym))
                 else:
@@ -507,8 +533,32 @@ class Syncer:
             if not net or net in done:
                 continue
             done.add(net)
-            if self._flag(net):
+            if self._flag(net) or self._flag_apart(net):
                 self.report["flags"].append(net)
+            else:
+                self.report["unresolved"].append({"net": net, "reason": "no room for a PWR_FLAG "
+                                                  "(ERC power_pin_not_driven): add one by hand"})
+
+    def _flag_apart(self, net: str) -> bool:
+        """A PWR_FLAG on a power symbol of its own in a free spot near the net's symbols
+        (power symbols of one name are one net), for a symbol in a dense pin row where
+        no stub fits."""
+        from .sch_room import free_spot
+        s = self.s
+        if net not in self.power:
+            return False
+        near = [s.pins(o)[0] for o in s.symbols() if o.ref.startswith("#PWR") and o.field("Value") == net]
+        try:
+            x, y = free_spot(s, (12.7, 10.16), prefer=(near[0]["x"] - 15.24, near[0]["y"] - 5.08) if near else None)
+        except env.KatError:
+            return False
+        d = (0, 1) if net.upper().startswith(("GND", "-", "0")) else (0, -1)
+        a, b = (x + 2.54, y + 5.08), (x + 10.16, y + 5.08)
+        s.add_wire([a, b], junctions=False)
+        self._power_symbol(net, a, d)
+        flag = self._power_symbol("PWR_FLAG", b, d, "power:PWR_FLAG")
+        s.set_field(flag.ref, "Value", hide=True)
+        return True
 
     def _flag(self, net: str) -> bool:
         s = self.s

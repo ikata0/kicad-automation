@@ -451,5 +451,38 @@ def test_coupling_rule_estimates_the_crosstalk_capacitance(tmp_path, monkeypatch
     assert over["capacitance_pf"] == pytest.approx(8.854e-3 * 4.5 * over["area"] / 0.1, rel=1e-3)
     assert f[("coupling", "IN3")]["distance"] == pytest.approx(0.225, abs=1e-3)
     assert not res["clean"]
+    # #13: an intended cut-out (a named rule area, or a rectangle) needs no plane
+    with kat.pcb.edit(pcb) as e:
+        e.keepout("In3.Cu", rect=(8.5, 1, 4, 2), name="CUT")
+    kat.pcb.plane_rule(pcb, "IN*", except_zones=["CUT"], except_areas=[(0, 0, 5.5, 4)])
+    planes = {x["net"] for x in check(pcb)["net_rules"]["findings"] if x["kind"] == "plane"}
+    assert planes == {"IN2"}, planes
+    with pytest.raises(kat.KatError, match="no zone named NOPE"):
+        kat.pcb.plane_rule(pcb, "IN*", except_zones=["NOPE"])
     assert cli.main(["pcb", "netrule", str(pcb), "clear"]) == 0
     assert "net_rules" not in check(pcb)
+
+
+def test_coupling_2d_estimate_side_by_side(tmp_path, monkeypatch):
+    """#16: OUT1 and IN2 side by side on F.Cu for 4 mm (0.2 mm gap, plane 0.1 mm below):
+    no overlap, so the plate estimate has nothing; the 2D cross-section gives pF/mm x length."""
+    pytest.importorskip("scipy")
+    monkeypatch.setenv("KAT_REPORT", "0")
+    pcb = tmp_path / "s.kicad_pcb"
+    b = Board.create(pcb)
+    b.set_copper_layers(4)
+    b.outline(rect=(0, 0, 20, 10))
+    b.set_stackup([0.1, 1.0, 0.1])
+    b.add_track((2, 2), (8, 2), 0.25, "F.Cu", "OUT1")
+    b.add_track((4, 2.45), (8, 2.45), 0.25, "F.Cu", "IN2")
+    b.save()
+    kat.pcb.coupling_rule(pcb, "OUT*", "IN*", distance=0.3, estimate="2d")
+    f = next(x for x in check(pcb)["net_rules"]["findings"] if x["kind"] == "coupling")
+    # 4 mm side by side, plus the run along the round end of IN2 within the rule distance
+    assert f["estimate"] == "2d" and f["length"] == pytest.approx(4.2, abs=0.25), f
+    per_mm = kat.pcb.coupling_2d(0.25, 0.25, 0.2, 0.1)["pf_per_mm"]
+    assert 0.003 < per_mm < 0.012 and f["pf_per_mm"] == pytest.approx(per_mm, rel=0.02)
+    assert f["capacitance_pf"] == pytest.approx(per_mm * f["length"], rel=0.02)
+    # farther apart couples less; an inner layer between two planes is computed too
+    assert kat.pcb.coupling_2d(0.25, 0.25, 0.4, 0.1)["pf_per_mm"] < per_mm
+    assert kat.pcb.coupling_2d(0.25, 0.25, 0.2, 0.1, above=0.1)["pf_per_mm"] > 0

@@ -29,7 +29,10 @@ Know which drawing to edit:
 | `NAME.kicad_pcb` | Checked block layout, including its environment |
 | `NAME.block.json` | Metadata, environment, port points and last check |
 
-Port arguments are nets; power nets remain global. Parameters are numeric/string
+Port arguments are nets; power nets remain global. A harness net named from
+KiCad's power library (`+5V`, `-5V`) turns that port into a global power net
+(`build` warns); use names such as `+VS2` for supply ports. Harness parts are
+exempt from the MPN gate. Parameters are numeric/string
 arguments, including defaults. A part value equal to a harness parameter becomes
 `${param}` in the reusable drawing: give parameters distinct default values so
 the intended substitution is unambiguous.

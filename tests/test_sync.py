@@ -325,6 +325,33 @@ def test_custom_fields_and_project_library(project, tmp_path):
     assert not kat.sync(project, netfile("RC0402-1K2"))["changed"]
 
 
+def test_dnp_from_the_design(project, tmp_path):
+    """#14: part.fields["DNP"]="1" (or value DNP) sets KiCad's DNP flag; "0" clears it;
+    no field leaves it alone. The DNP field itself is not written to the symbol."""
+    parts = {"R1": ("Device", "R", "1k", "r1"), "R2": ("Device", "R", "DNP", "r2")}
+    nets = {"A": [("R1", "1"), ("R2", "1")], "B": [("R1", "2"), ("R2", "2")]}
+
+    def netfile(name, dnp):
+        path = write_netlist(tmp_path / f"{name}.net", parts, nets)
+        if dnp is not None:
+            path.write_text(path.read_text().replace(
+                '(field (name "SKiDL Tag") "r1")', f'(field (name "SKiDL Tag") "r1") (field (name "DNP") "{dnp}")'))
+        return path
+
+    def flags():
+        return {x.ref: x.dnp for x in Schematic(project).symbols() if x.ref in parts}
+
+    sync_ok(project, netfile("a", "1"))
+    assert flags() == {"R1": True, "R2": True}
+    assert Schematic(project).find_symbols("R1")[0].field("DNP") is None
+    report = sync_ok(project, netfile("b", "0"))
+    assert {"ref": "R1", "field": "DNP", "from": True, "to": False} in report["updated"]
+    assert flags() == {"R1": False, "R2": True}
+    with kat.edit(project) as s:
+        s.schematic.set_dnp("R1")
+    assert not kat.sync(project, netfile("c", None))["changed"] and flags()["R1"]
+
+
 @pytest.mark.requires("render")
 def test_sheet_features(project, tmp_path):
     net = write_netlist(tmp_path / "a.net", BASE_PARTS, BASE_NETS)

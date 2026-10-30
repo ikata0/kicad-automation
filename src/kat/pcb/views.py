@@ -26,7 +26,12 @@ SETS = {
     "bottom": ["B.Cu", "B.SilkS", "Edge.Cuts"],
     "placement": ["F.CrtYd", "F.Fab", "B.CrtYd", "B.Fab", "Edge.Cuts"],
     "copper": ["B.Cu", "F.Cu", "Edge.Cuts"],   # bottom-up: later layers are drawn on top
+    "copper-top": ["F.Cu", "Edge.Cuts"],
+    "copper-bottom": ["B.Cu", "Edge.Cuts"],
+    "assembly": ["Edge.Cuts", "F.CrtYd", "F.Fab"],          # pads sketched on the fab layer
+    "assembly-bottom": ["Edge.Cuts", "B.CrtYd", "B.Fab"],
 }
+_SKETCH_PADS = ("assembly", "assembly-bottom")
 OVERVIEW_PX = 2000   # longest side of an overview picture
 TILE_PPM = 30.0      # px/mm of tiles: a 0.2 mm track is 6 px wide
 
@@ -49,25 +54,48 @@ def _layers(b: Board, layers: str | list[str]) -> tuple[str, list[str]]:
     return layers.replace(",", "-"), layers.split(",")
 
 
-def export_svg(pcb: Path, layers: list[str], out: Path) -> Path:
+def export_svg(pcb: Path, layers: list[str], out: Path, sketch_pads: bool = False) -> Path:
     out.parent.mkdir(parents=True, exist_ok=True)
     env.run_cli("pcb", "export", "svg", "--mode-single", "--layers", ",".join(layers),
                 "--page-size-mode", "1", "--exclude-drawing-sheet", "--check-zones",
+                *(["--sketch-pads-on-fab-layers"] if sketch_pads else []),
                 "-o", str(out), str(pcb))
     return out
 
 
-def _svg(pcb: Path, name: str, layers: list[str]) -> Path:
+def _without_texts(pcb: Path, d: Path) -> Path:
+    """A scratch copy of the board (in ``d``) with the footprints' reference, value and
+    user texts emptied: at block scale they hide the parts."""
+    from ..sexpr import dumps, find_all, head, loads
+    tree = loads(pcb.read_text(encoding="utf-8"))
+    for fp in find_all(tree, "footprint"):
+        for c in fp:
+            if head(c) == "property" and str(c[1]) in ("Reference", "Value") or head(c) == "fp_text":
+                c[2] = ""
+    for suffix in (".kicad_pro", ".kicad_dru"):
+        if pcb.with_suffix(suffix).exists():
+            shutil.copy(pcb.with_suffix(suffix), d / (pcb.stem + suffix))
+    out = d / pcb.name
+    out.write_text(dumps(tree), encoding="utf-8")
+    return out
+
+
+def _svg(pcb: Path, name: str, layers: list[str], texts: bool = True) -> Path:
     """Cached SVG of a layer set, per board modification time."""
     import hashlib
+    import tempfile
     cache = pcb.parent / "views" / ".cache"
     stamp = pcb.stat().st_mtime_ns
-    key = hashlib.sha1(",".join(layers).encode()).hexdigest()[:8]  # same name, other layers
+    key = hashlib.sha1((",".join(layers) + ("" if texts else "|notext")).encode()).hexdigest()[:8]
     svg = cache / f"{pcb.stem}.{name}.{stamp}.{key}.svg"
     if not svg.exists():
         for old in cache.glob(f"{pcb.stem}.{name}.*.svg"):
             old.unlink()
-        export_svg(pcb, layers, svg)
+        if texts:
+            export_svg(pcb, layers, svg, name in _SKETCH_PADS)
+        else:
+            with tempfile.TemporaryDirectory() as d:
+                export_svg(_without_texts(pcb, Path(d)), layers, svg, name in _SKETCH_PADS)
     return svg
 
 
@@ -160,11 +188,15 @@ def snapshot(pcb: Path | str, slug: str = "", note: str | None = None, out: Path
 
 def view(pcb: Path | str, around: str | None = None, at: tuple[float, float] | None = None,
          region: tuple[float, float, float, float] | None = None, layers: str | list[str] = "top",
-         margin: float | None = None, ppm: float | None = None, out: Path | str | None = None) -> dict:
+         margin: float | None = None, ppm: float | None = None, out: Path | str | None = None,
+         texts: bool = True) -> dict:
     """Zoomed PNG of one board region into ``views/``: ``around`` a footprint (its box plus
     ``margin`` mm, default 3), ``at`` a point (±``margin``, default 5) or a ``region``
-    (x, y, w, h). ``layers``: a set name (top, bottom, placement, copper, In1, ...) or a
-    comma list of KiCad layer names. ``ppm`` (px/mm) defaults to a 1600 px longest side."""
+    (x, y, w, h). ``layers``: a set name (top, bottom, placement, copper, copper-top,
+    copper-bottom, assembly, assembly-bottom, In1, ...) or a comma list of KiCad layer
+    names; the assembly sets sketch the pads on the fab layer. ``texts=False`` leaves the
+    footprints' reference, value and user texts out (block scale). ``ppm`` (px/mm)
+    defaults to a 1600 px longest side. Returns png, width, height, layers, region."""
     pcb = Path(pcb)
     if sum(v is not None for v in (around, at, region)) != 1:
         raise env.KatError("give exactly one of around, at, region")
@@ -190,7 +222,7 @@ def view(pcb: Path | str, around: str | None = None, at: tuple[float, float] | N
         out = pcb.parent / "views" / f"{stamp}_pcb_{name}_{re.sub(r'[^A-Za-z0-9_.-]', '-', what)}.png"
     out = Path(out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    res = _render(_svg(pcb, name, lay), out, box, ppm)
+    res = _render(_svg(pcb, name, lay, texts), out, box, ppm)
     res["layers"] = lay
     res["region"] = [round(box[0], 2), round(box[1], 2), round(box[2] - box[0], 2), round(box[3] - box[1], 2)]
     return tidy(res)

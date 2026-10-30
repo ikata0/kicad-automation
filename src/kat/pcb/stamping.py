@@ -67,28 +67,48 @@ def set_environment(block_pcb: Path | str, zones: list[str]) -> dict:
 
 def set_port(block_pcb: Path | str, port: str, at: tuple[float, float], net: str | None = None) -> dict:
     """Mark where port ``port`` leaves the block board: the via or pad at ``at`` (mm),
-    on the port's net. Stored in the block file; ``kat block check`` checks it (still
-    there, on its net, near the outline's edge) and ``stamp`` reports it on the design
+    or the end of a track that leaves at the outline (``kind`` track: on the edge or
+    within the copper-edge clearance plus half its width; ``layer`` recorded), on the
+    port's net. Stored in the block file; ``kat block check`` checks it (still there, on
+    its net, near the outline's edge) and ``stamp`` reports it on the design
     (``Board.ports``), so the design is routed to known points."""
     from .board import Board
     b = Board(block_pcb)
     x, y = at
+    layer = None
     hit = next((("via", v["net"]) for v in b.vias()
                 if abs(v["at"][0] - x) < 0.01 and abs(v["at"][1] - y) < 0.01), None)
     if hit is None:
-        hit = next((("pad", f"{p.ref}.{p.number}", p.net) for p in b.pads() if inside(p.outline, (x, y))), None)
-        hit = hit and (hit[0], hit[2])
+        hit = next((("pad", p.net) for p in b.pads() if inside(p.outline, (x, y))), None)
     if hit is None:
-        raise env.KatError(f"no via or pad at {x:g},{y:g} on {Path(block_pcb).name}: place the port's via first")
+        t = _track_end(b, (x, y))
+        if t is not None:
+            box = b.outline_box()
+            reach = (b.board_minimums().get("min_copper_edge_clearance", 0) or 0) + t["width"] / 2 + 0.01
+            d = min(x - box[0], box[2] - x, y - box[1], box[3] - y) if box else None
+            if d is None or not -0.01 <= d <= reach:
+                raise env.KatError(f"the track end at {x:g},{y:g} is {d:g} mm inside the outline: a track "
+                                   f"is a port only where it leaves at the edge (within {reach:g} mm); "
+                                   "else end it on a via" if d is not None else "the block board has no outline")
+            hit, layer = ("track", t["net"]), t["layer"]
+    if hit is None:
+        raise env.KatError(f"no via, pad or track end at {x:g},{y:g} on {Path(block_pcb).name}: "
+                           "place the port's via first")
     kind, on = hit
     if net and on != net:
         raise env.KatError(f"the {kind} at {x:g},{y:g} is on {on or 'no net'}, not {net}")
     info = block_info(block_pcb)
     pts = [q for q in info.get("port_points", []) if q["port"] != port]
-    pts.append({"port": port, "net": on, "x": x, "y": y, "kind": kind})
+    pts.append({"port": port, "net": on, "x": x, "y": y, "kind": kind, **({"layer": layer} if layer else {})})
     info["port_points"] = sorted(pts, key=lambda q: q["port"])
     block_file(block_pcb).write_text(json.dumps(info, indent=2) + "\n", encoding="utf-8")
-    return {"port": port, "net": on, "kind": kind, "at": [x, y]}
+    return {"port": port, "net": on, "kind": kind, "at": [x, y], **({"layer": layer} if layer else {})}
+
+
+def _track_end(b, at: tuple[float, float]) -> dict | None:
+    """The track or arc of board ``b`` that ends at ``at`` (0.01 mm), or None."""
+    return next((t for t in b.tracks() if any(abs(e[0] - at[0]) < 0.01 and abs(e[1] - at[1]) < 0.01
+                                              for e in (t["start"], t["end"]))), None)
 
 
 def stamps_file(pcb: Path | str) -> Path:
@@ -643,7 +663,8 @@ class StampMixin:
         ports = {}
         for q in info.get("port_points", []):
             x, y = f(q["x"], q["y"])
-            ports[q["port"]] = {"x": x, "y": y, "net": netmap.get(q["net"], q["net"])}
+            ports[q["port"]] = {"x": x, "y": y, "net": netmap.get(q["net"], q["net"]),
+                                **({"layer": f.layer(q["layer"])} if q.get("layer") else {})}
         spec = layer_map if isinstance(layer_map, str) or layer_map is None else dict(layer_map)
         self._stamps[instance] = {"block": str(block_pcb), "at": list(at), "rot": rot, "side": side,
                                   "layer_spec": spec, "layer_map": cmap, "ports": ports}

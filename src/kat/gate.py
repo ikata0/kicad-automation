@@ -37,7 +37,8 @@ def run(sch: Path, expect: Path | None = None, require: tuple[str, ...] = ("MPN"
               unannotated reference or one without a number (KiCad's BOM shows "ROUT?"),
               empty value, no footprint, footprint library or file
               not found, symbol pin without a pad, missing ``require`` field (parts
-              excluded from the BOM are exempt)
+              excluded from the BOM and, on a block's own schematic, its harness parts
+              are exempt)
     warnings: no ``expect`` given, numbered pad without a symbol pin, footprint outside the
               symbol's footprint filters, 3D model missing
     """
@@ -71,6 +72,8 @@ def run(sch: Path, expect: Path | None = None, require: tuple[str, ...] = ("MPN"
         pins[(str(find(lp, "lib")[1]), str(find(lp, "part")[1]))] = {
             str(find(p, "num")[1]) for p in find_all(find(lp, "pins") or [], "pin")}
     fp_libs = env.footprint_libraries(project)
+    from .blocks import instance_of, is_harness
+    inst = instance_of(sch)
 
     comps = find_all(find(tree, "components") or [], "comp")
     for c in comps:
@@ -93,7 +96,8 @@ def run(sch: Path, expect: Path | None = None, require: tuple[str, ...] = ("MPN"
             err(ref, "reference_without_number")
         if value in ("", "~"):
             err(ref, "no_value")
-        if "exclude_from_bom" not in props:
+        harness = inst is not None and is_harness(fields.get("Block", ""), inst)
+        if "exclude_from_bom" not in props and not harness:
             for name in require:
                 if not fields.get(name, "").strip():
                     err(ref, "missing_field", name)

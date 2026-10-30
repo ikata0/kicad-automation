@@ -34,11 +34,27 @@ class Component:
     tag: str  # SKiDL tag qualified by the block instance ("CH_A/RC1/r"), "" if absent
     fields: dict[str, str] = field(default_factory=dict)  # custom fields, e.g. MPN
     block: str = ""  # block instance path ("CH_A/RC1"), "" at the top level
+    dnp: bool | None = None  # KiCad's DNP flag; None: the design does not say
 
 
 # netlist fields that are not custom part data
 _STANDARD = {"Reference", "Value", "Footprint", "Description", "SKiDL Tag", "SKiDL Line"}
 BLOCK, BLOCK_TYPE = "Block", "Block Type"
+_YES, _NO = {"1", "yes", "y", "true", "x", "dnp"}, {"0", "no", "n", "false", ""}
+
+
+def _dnp(ref: str, fields: dict[str, str], value: str) -> bool | None:
+    """The DNP flag a design part asks for: a ``DNP`` field (1/yes/true/x or 0/no/false,
+    removed from the custom fields) or the value ``DNP``; None if it says nothing."""
+    key = next((k for k in fields if k.upper() == "DNP"), None)
+    if key is not None:
+        v = fields.pop(key).strip().lower()
+        if v in _YES:
+            return True
+        if v in _NO:
+            return False
+        raise env.KatError(f"{ref}: DNP field {v!r}: use 1/yes/true or 0/no/false")
+    return True if value.strip().upper() == "DNP" else None
 
 
 def blocks_file(path: Path) -> Path:
@@ -74,15 +90,17 @@ def read_design(path: Path) -> tuple[dict[str, Component], dict[str, Net]]:
         tag = fields.get("SKiDL Tag", "")
         custom = {k: v for k, v in fields.items()
                   if k not in _STANDARD and not (k == "Datasheet" and not v)}
+        value = str(val[1]) if val and len(val) > 1 else ""
+        dnp = _dnp(ref, custom, value)
         if block:
             custom[BLOCK] = block
             if block in types:
                 custom[BLOCK_TYPE] = types[block]
         comps[ref] = Component(
             ref=ref, lib_id=f'{find(src, "lib")[1]}:{find(src, "part")[1]}',
-            value=str(val[1]) if val and len(val) > 1 else "",
+            value=value,
             footprint=str(fp[1]) if fp and len(fp) > 1 else "",
-            tag=f"{block}/{tag}" if block and tag else tag, fields=custom, block=block)
+            tag=f"{block}/{tag}" if block and tag else tag, fields=custom, block=block, dnp=dnp)
     return comps, read(path)
 
 

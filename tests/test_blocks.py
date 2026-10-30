@@ -223,6 +223,26 @@ def test_design_uses_the_block_and_stamps_it_by_name(lib, tmp_path, capsys):
 
 
 @pytest.mark.requires("kicad", "symbols", "footprints", "skidl")
+def test_power_net_on_a_port_and_back(lib, capsys):
+    """#9/#10: a harness power net on a port warns (no sheet pin); renaming it back leaves
+    no stale power symbol or flag; a deleted harness sheet is drawn anew."""
+    from kat.schematic import Schematic
+    d = lib / "RC"
+    (d / "RC.py").write_text(RC_PY.replace('Net("OUT")', 'Net("+5V")'))
+    built = run(capsys, "block", "build", "RC", "--force")
+    assert any(w.startswith("port out is on the power net +5V") for w in built["warnings"]), built
+    assert kat.check(d / "RC.kicad_sch", d / "RC.net")["erc"]["errors"] == 0
+    (d / "RC.py").write_text(RC_PY)
+    run(capsys, "block", "build", "RC", "--force")
+    assert not [x for x in Schematic(d / "RC.kicad_sch").symbols() if x.lib_id == "power:+5V"]
+    c = kat.check(d / "RC.kicad_sch", d / "RC.net")
+    assert c["ok"] and c["erc"]["errors"] == 0, c["erc"]
+    (d / "RC.kicad_sch").unlink()
+    run(capsys, "block", "build", "RC", "--force")
+    assert kat.check(d / "RC.kicad_sch", d / "RC.net")["ok"]
+
+
+@pytest.mark.requires("kicad", "symbols", "footprints", "skidl")
 def test_port_points_are_checked_and_stamped(lib, tmp_path, capsys):
     """I1: a via at the block's edge marks where port inp leaves it; block check checks
     it, the stamp reports it on the design; D4: the harness needs no MPN."""
@@ -232,10 +252,33 @@ def test_port_points_are_checked_and_stamped(lib, tmp_path, capsys):
         b.via((100.8, 101.5), net=net)
         b.track(["R1.1", (100.8, 101.5)])
     assert kat.pcb.block_port(rc_pcb, "inp", (100.8, 101.5))["net"] == net
-    with pytest.raises(kat.KatError, match="no via or pad"):
+    with pytest.raises(kat.KatError, match="no via, pad or track end"):
         kat.pcb.block_port(rc_pcb, "out", (107, 107))
+    # #12: a track that leaves at the edge is a port without a via; one ending inside is not
+    with kat.pcb.edit(rc_pcb) as b:
+        edge = b.add_track((100.8, 101.5), (100.1, 101.5), 0.25, "F.Cu", net)["uuid"]
+        inner = b.add_track((103.0, 108.0), (104.0, 108.0), 0.25, "F.Cu", net)["uuid"]
+    got = kat.pcb.block_port(rc_pcb, "inp", (100.1, 101.5))
+    assert got["kind"] == "track" and got["layer"] == "F.Cu" and got["net"] == net, got
+    assert "port_problems" not in blocks.check("RC", require=())
+    with pytest.raises(kat.KatError, match="leaves at the edge"):
+        kat.pcb.block_port(rc_pcb, "inp", (104.0, 108.0))
+    with kat.pcb.edit(rc_pcb) as b:
+        b.remove([edge, inner])
+    kat.pcb.block_port(rc_pcb, "inp", (100.8, 101.5))
     res = blocks.check("RC", require=("MPN",))
     assert "port_problems" not in res and not any(e["ref"] == "J1" for e in res["gate_errors"]), res
+    # #15: the gate itself (kat ready, kat pcb sync) exempts the harness from part data
+    from kat import gate
+    g = gate.run(lib / "RC" / "RC.kicad_sch", lib / "RC" / "RC.net")
+    assert {e["ref"] for e in g["errors"] if e["problem"] == "missing_field"} == {"R1", "C1"}, g
+    # #13: the coupling rule leaves the harness's pads out on a block board
+    from kat.pcb import coupling
+    bd = kat.pcb.Board(rc_pcb)
+    assert coupling.harness_refs(bd) == {"J1"}
+    nets = {p.net for p in bd.pads() if p.ref == "J1"}
+    count = lambda cu: sum(len(v) for v in cu.values())  # noqa: E731
+    assert count(coupling._copper(bd, bd, nets)) > count(coupling._copper(bd, bd, nets, coupling.harness_refs(bd)))
     with kat.pcb.edit(rc_pcb) as b:
         b.via((106.0, 105.0), net=net)
     kat.pcb.block_port(rc_pcb, "inp", (106.0, 105.0))

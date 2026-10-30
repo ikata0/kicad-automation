@@ -161,8 +161,9 @@ re-attached pins) and fold them into the arrangement with another pass.
 | part removed | symbol deleted; wires, labels, power symbols and flags left dangling are pruned |
 | part's library symbol changed | replaced at the same position and rotation; pins re-attached |
 | pin moved to another net | pin detached (its own wiring up to the next branch point) and attached to the new net |
-| net renamed | labels renamed; power symbols swapped (or replaced by a label if no such power symbol exists) |
-| undriven power net | one PWR_FLAG added, value hidden |
+| net renamed | labels renamed; power symbols swapped (or replaced by a label if no such power symbol exists); renamed to a power net, labels (hierarchical ones too) become its power symbol. A lone pin under an old name (a renamed power net) is detached, so no old power symbol or flag stays beside the new one |
+| DNP (`part.fields["DNP"] = "1"`, yes/no/true/false/1/0, or value `DNP`) | KiCad's DNP flag set or cleared (`{"field": "DNP"}`); no such field or value: a flag set in KiCad stays. The field itself is not written |
+| undriven power net | one PWR_FLAG added, value hidden; where its power symbol has no free stub (a dense pin row), on a power symbol of its own nearby |
 | power pin in a dense pin row (connector) | the power symbol sits beyond the neighbours' labels on a longer stub, so its text does not cover them |
 
 A pin that directly touches another part's pin and must change net cannot be fixed
@@ -360,11 +361,19 @@ shows them) and make the board not `clean`:
   length and C = ε0·εr·A/h from the stack-up (pF; no fringing, so a lower bound). Example:
   2 mm of a 0.25 mm output over another channel's input through 0.1 mm ≈ 0.2 pF, as much
   as a 0.1 pF feedback capacitor: crosstalk near 0 dB, and no DRC error.
+  `--estimate 2d` adds, for side-by-side copper on one layer, a 2D field solution of the
+  cross-section (finite differences; planes on the neighbouring copper layers, air above an
+  outer layer; ±10 %): `pf_per_mm`, `length`, `capacitance_pf`. It needs the extra
+  `kat[field]` (numpy, scipy); `kat.pcb.coupling_2d(...)` gives the per-mm value alone.
+  On a block board the harness pads are left out (their connector pins sit side by side by
+  design); `--harness` includes them.
 - `layers NETS LAYER...`: NETS only on these layers (KiCad names, `L1`…, layer roles).
   `stamp` refuses a block whose copied copper breaks it (e.g. `IN*` mapped to an inner
   layer by a flip).
 - `plane NETS [--net GND]`: a pour (of GND, or of any other net) on an adjacent layer under
-  every track of NETS; the finding gives the uncovered length.
+  every track of NETS; the finding gives the uncovered length. Intentional cut-outs (the
+  pour opened under a feedback network) are exempt with `--except-zone NAME` (a named
+  zone's outline, e.g. a rule area) or `--except-area X0,Y0,X1,Y1` (both repeatable).
 
 Coupling and plane rules see the pours filled (KiCad's filler on a scratch copy).
 `kat pcb stack PCB` shows the stack-up kat uses (KiCad's default build-up when the board
@@ -380,7 +389,10 @@ exact. Pictures are for what numbers cannot say (fan-out, detours, crowding, sil
   `tiles/top|bottom/` at 30 px/mm when the overview is coarser, `findings/` close-ups
   (`--finding-crops N`), `3d_top.png` / `3d_bottom.png`, `check.json`, a board copy.
 - `kat pcb view PCB --around REF | --at X,Y | --region X,Y,W,H --layers SET` → `views/`.
-  Sets: `top`, `bottom`, `placement`, `copper`, `In1`…, or KiCad layer names.
+  Sets: `top`, `bottom`, `placement`, `copper`, `copper-top`, `copper-bottom` (copper and
+  outline only), `assembly`, `assembly-bottom` (fab and courtyard, pads sketched), `In1`…,
+  or KiCad layer names. `--no-texts` hides footprint references and values (at block
+  scale a reference is larger than an 0402 part).
 
 SVGs are exported in page coordinates (`--page-size-mode 1`), so SVG units are board mm
 and regions are cut by rewriting the viewBox, as for the schematic. Pours are filled for
@@ -526,9 +538,10 @@ with kat.pcb.edit("top/top.kicad_pcb") as b:
   (`NAME.block.json`): name the test plane there, and keep-outs that model the
   neighbouring blocks (the next row, the rows above) so the block is routed as it will
   sit in the design; they are not stamped.
-- **Ports:** `kat pcb port BLOCK_PCB PORT --at X,Y` (`kat.pcb.block_port`) marks the via or
-  pad where a port leaves the block, best a locked via near the outline's edge that the
-  block's own routing reaches. `kat block check` checks every port point (there, on its
+- **Ports:** `kat pcb port BLOCK_PCB PORT --at X,Y` (`kat.pcb.block_port`) marks the via,
+  pad or track end where a port leaves the block, best a locked via near the outline's edge
+  that the block's own routing reaches. A track end is an edge port: a track that leaves the
+  block on its layer without a via; it must end on the outline (within the edge band). `kat block check` checks every port point (there, on its
   net, at most 2.5 mm inside the edge); `stamp` returns them transformed (`ports`) and
   `b.ports(instance)` reads them back (`<board>.stamps.json`). The design's top level
   then connects known points instead of pins deep inside a dense block.
@@ -631,7 +644,11 @@ Each block is a project of its own in `blocks/NAME/` (`KAT_BLOCKS`, else the nea
   syncs the harness and the block sheet (§4.21: the block instance is written into
   `NAME_block.kicad_sch`) and the board, and records type, ports and parameters.
 - **Ports** are the block call's net arguments (power nets such as GND stay global and get
-  no port). **Parameters**: a part value (or a nested block's parameter) equal to a
+  no port). A harness net with a name from KiCad's power library (`+5V`, `-5V`) makes
+  that argument a power port too: `build` warns, since every design then gets that net
+  there; name it outside the library (`+VS2`) to keep it a port. Switching a port between
+  the two re-draws its labels as power symbols and back.
+- A deleted harness sheet (`NAME.kicad_sch`) is drawn anew by the next `build`. **Parameters**: a part value (or a nested block's parameter) equal to a
   parameter's value in the harness call becomes `${param}`; the harness value is the
   project's default. Give parameters distinct default values.
 - Blocks used inside a block that are themselves in the library are drawn as nested sheets.
@@ -759,7 +776,7 @@ kat sync top/top.kicad_sch design.net --sheets ch,rc      # remembered in top.ka
 Library: `kat.init`, `kat.new`, `kat.load`, `kat.edit`, `kat.sync`, `kat.stamp`, `kat.check`, `kat.snapshot`, `kat.view`,
 `kat.ready`, `kat.pcb.sync` / `edit` / `check` / `snapshot` / `view` / `route` / `refill` / `fab` /
 `ready` / `drc` / `stamp` / `instances` / `block_environment` / `block_port` / `remove` / `layer_roles` /
-`stack` / `coupling_rule` / `layer_rule` / `plane_rule` / `net_rules` (board), `kat.hierarchy`,
+`stack` / `coupling_rule` / `coupling_2d` / `layer_rule` / `plane_rule` / `net_rules` (board), `kat.hierarchy`,
 `kat.skidl_blocks`, `kat.blocks`, `kat.nets`, `kat.lib_search`, `kat.lib_show`, `kat.comment`,
 `kat.batch_exec`, `kat.open_kicad`, and the `kat.Sheet` / `kat.pcb.Board` methods; each returns
 what the matching command prints. `kat api NAME` shows any of them (§4.14).
@@ -785,7 +802,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `pcb stamp PCB BLOCK_PCB INSTANCE... --at X,Y [--step DX,DY] [--rot R] [--no-lock] [--make-room] [--side bottom] [--layer-map auto/roles/MAP] [--allow-asymmetric]` | copy a checked block layout onto instances (`all`), flipped on the bottom side, then the board check (§4.18) |
 | `pcb collisions PCB [INSTANCE...]` | per-layer collisions between stamped instances (§4.18) |
 | `pcb cell BLOCK_PCB [--pitch DX,DY / --clear] [--min-pitch x/y/arc [--center CX,CY] [--side top/bottom/alternate] [--layer-map MAP] [--allow-asymmetric] [--shared GLOB] [--save]]` | a block's stamping pitch and per-layer footprint; smallest collision-free pitch (§4.18) |
-| `pcb netrule PCB coupling A B [--distance D]` / `layers NETS LAYER...` / `plane NETS [--net N]` / `list` / `clear` | kat's net rules, checked by `pcb check` (§4.12) |
+| `pcb netrule PCB coupling A B [--distance D] [--estimate plate/2d] [--harness]` / `layers NETS LAYER...` / `plane NETS [--net N] [--except-zone NAME] [--except-area X0,Y0,X1,Y1]` / `list` / `clear` | kat's net rules, checked by `pcb check` (§4.12) |
 | `pcb roles PCB [LAYER=ROLE ...]` / `pcb stack PCB` | layer roles; stack-up, roles and symmetry (§4.12, §4.18) |
 | `pcb instances PCB BLOCK_PCB` / `pcb environment BLOCK_PCB ZONE...` / `pcb port BLOCK_PCB PORT --at X,Y` | a block's instances in a design / its test-environment zones and keep-outs / where a port leaves it |
 | `pcb remove PCB --uuid U / --at X,Y [--layer] [--kind] [--net]` | remove single tracks and vias, locked ones too (§4.9) |
@@ -836,7 +853,7 @@ netlist difference).
 | reference not annotated (`R?`) or without a number (`ROUT`: KiCad's BOM prints `ROUT?`), empty value | numbered pad without a symbol pin (mounting, shield or thermal pads are often fine) |
 | no footprint; footprint library not in `fp-lib-table` (global + project); footprint file missing | footprint outside the symbol's footprint filters (`ki_fp_filters`) |
 | a symbol pin without a pad of that number (the part cannot be connected) | footprint has no 3D model file |
-| a required field empty (default `MPN`, `--require-field` repeatable, `--no-require`); parts excluded from the BOM are exempt (and a block's harness parts in `kat block check`) | |
+| a required field empty (default `MPN`, `--require-field` repeatable, `--no-require`); parts excluded from the BOM are exempt, and so are a library block's harness parts (`ready`, `pcb sync` and `block check` on the block's own schematic) | |
 
 `ready` is true when there are no errors; `by_problem` counts both lists. Footprints and
 part numbers are chosen in SKiDL (`footprint=`, `part.fields["MPN"]`) and reach the
@@ -930,6 +947,14 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
 | Routing a block board with its harness spent the router's passes on links below the neighbour keep-outs: 7 of the block's own connections stayed open | the router leaves harness pins out of its nets |
 | Dense radial rows (5 mm pitch) needed blocks that interlock (a rail on an inner layer under the neighbour, courtyards past the outline), but stamping treated a stamped block as a rectangle | stamped instances are checked per layer after the layer map (copper with clearance, courtyards per side, keep-outs); `kat pcb cell --min-pitch` finds the smallest pitch |
 | Freerouting ran tracks through the M2 mounting holes: kat's DSN described only copper pads | holes without copper are keep-outs in the DSN |
+| A block harness drove a port from `+5V`/`-5V`: no sheet pin, the block's hierarchical label isolated, PWR_FLAG on `+5V` but not `-5V` | `build` warns about ports on power nets; a PWR_FLAG with no free stub goes on a power symbol of its own |
+| Renaming harness nets left the old `+5V` power symbols and flags beside the new labels (ERC `multiple_net_names`); a deleted harness sheet made `block build` fail | stale lone pins are detached; the harness sheet is created anew |
+| Switching a port to a power net and back deleted the block's GND symbol: power references (`#PWR1`) repeat across a block's instances | power symbols are replaced by their node, not by reference |
+| kat crashed with `UnicodeEncodeError` on a cp1252 console | output streams fall back to escapes for characters the console cannot show |
+| A stage input leaves the block as a track on L1, without a via: no port point possible | a track end on the outline is a port point |
+| `netrule coupling` reported the harness connector's neighbouring IN/OUT pins, `plane` the intended pour cut-out under Rf/Cf | harness pads are left out (`--harness`); `--except-zone` / `--except-area` |
+| Side-by-side copper (the main case in a guarded layout) has no parallel-plate overlap, so `coupling` gave no pF | `--estimate 2d`: 2D field solution of the cross-section |
+| `pcb sync` on a block board needed `--force`: the harness connector has no MPN | harness parts are exempt from the required fields |
 
 ## 8. Open points
 

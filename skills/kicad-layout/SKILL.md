@@ -200,7 +200,8 @@ with kat.pcb.edit(PCB) as b:
 2. Overview pictures: `placement.png` (courtyards, fab), `top.png`, `bottom.png`,
    `In<n>.png`; `tiles/` when the board is large; `3d_top.png` for a last look.
 3. Close-ups: `kat pcb view PCB --around U1 --layers copper` (sets: top, bottom, placement,
-   copper, In1…, or `F.Cu,F.SilkS`). Pixel → mm: `x = region[0] + px / px_per_mm`.
+   copper, copper-top, copper-bottom, assembly, assembly-bottom, In1…, or `F.Cu,F.SilkS`;
+   `--no-texts` hides references at block scale). Pixel → mm: `x = region[0] + px / px_per_mm`.
 4. Write down what you found; it goes into the next pass's docstring.
 5. Warnings you judge harmless (a port via joined on one layer only: `via_dangling`) and
    edge-mount parts (`overhang` in the check) pass the gate only when named:
@@ -213,10 +214,14 @@ routing; `kat pcb check` reports them in `net_rules` and is not `clean` while an
 
 - `kat pcb netrule PCB coupling 'OUT*' 'IN*' --distance 0.3`: one channel's output over
   or near another channel's input (same or adjacent layer), with area and pF from the
-  stack-up (`kat pcb stack PCB`; set a real one with `b.set_stackup([...])`).
+  stack-up (`kat pcb stack PCB`; set a real one with `b.set_stackup([...])`). Side-by-side
+  copper has no overlap: `--estimate 2d` adds a 2D field estimate in pF (needs `kat[field]`).
+  On a block board the harness pads are left out (`--harness` to include them).
 - `kat pcb netrule PCB layers 'IN*' in_signal_top in_signal_bottom`: layers by name, `L1`
   or role (`kat pcb roles PCB L1=in_signal_top ...`); `stamp` refuses blocks breaking it.
-- `kat pcb netrule PCB plane 'IN*' --net GND`: a GND pour on an adjacent layer under them.
+- `kat pcb netrule PCB plane 'IN*' --net GND`: a GND pour on an adjacent layer under them;
+  an intended cut-out (under Rf/Cf) is exempt with `--except-zone NAME` or
+  `--except-area X0,Y0,X1,Y1`.
 
 ## Design change during layout
 

@@ -185,7 +185,7 @@ def cmd_pcb(a):
         if a.kind == "coupling":
             if len(a.args) != 2:
                 raise env.KatError("coupling needs two net selectors: A B (e.g. 'OUT*' 'IN*')")
-            return kat.pcb.coupling_rule(a.pcb, a.args[0], a.args[1], a.distance)
+            return kat.pcb.coupling_rule(a.pcb, a.args[0], a.args[1], a.distance, a.harness, a.estimate)
         if a.kind == "layers":
             if len(a.args) < 2:
                 raise env.KatError("layers needs NETS LAYER... (e.g. 'IN*' F.Cu B.Cu)")
@@ -193,7 +193,8 @@ def cmd_pcb(a):
         if a.kind == "plane":
             if len(a.args) != 1:
                 raise env.KatError("plane needs one net selector (and --net for the plane's net)")
-            return kat.pcb.plane_rule(a.pcb, a.args[0], a.net)
+            return kat.pcb.plane_rule(a.pcb, a.args[0], a.net, a.except_zone,
+                                      [tuple(float(v) for v in x.split(",")) for x in a.except_area or []])
         if a.args:
             raise env.KatError(f"{a.kind} takes no further arguments")
         return kat.pcb.net_rules(a.pcb, a.kind == "clear")
@@ -216,7 +217,7 @@ def cmd_pcb(a):
             except (ValueError, AssertionError):
                 raise env.KatError("--region needs X,Y,W,H")
         return kat.pcb.view(a.pcb, a.around, xy(a.at) if a.at else None, region, a.layers,
-                            a.margin, a.ppm)
+                            a.margin, a.ppm, texts=not a.no_texts)
     raise env.KatError(f"unknown pcb action {a.pcb_cmd!r}")
 
 
@@ -893,17 +894,29 @@ def build_parser() -> argparse.ArgumentParser:
                                      "-> 3); nets of the same index are one channel and do not couple.\n"
                                      "  coupling A B [--distance D]  copper of A within D mm (default 0.3) of B of\n"
                                      "                               another index, same or adjacent layer; overlap\n"
-                                     "                               area, length and parallel-plate pF (stack-up)\n"
+                                     "                               area, length and parallel-plate pF (stack-up);\n"
+                                     "                               a block board's harness pads are left out\n"
+                                     "                               (--harness: include them); --estimate 2d:\n"
+                                     "                               side-by-side copper gets pF from a 2D\n"
+                                     "                               cross-section solve (pip install kat[field])\n"
                                      "  layers NETS LAYER...         NETS only on these layers (names, L1, roles);\n"
                                      "                               stamp refuses blocks that break it\n"
-                                     "  plane NETS [--net GND]       a pour on an adjacent layer under every track\n"
+                                     "  plane NETS [--net GND]       a pour on an adjacent layer under every track,\n"
+                                     "                               except in --except-zone NAME / --except-area\n"
                                      "  list | clear                 show or remove the rules\n"
                                      "Stored in <board>.kat.json.")
     s16.add_argument("pcb", metavar="PCB")
     s16.add_argument("kind", choices=("coupling", "layers", "plane", "list", "clear"), metavar="KIND")
     s16.add_argument("args", nargs="*", metavar="ARG")
     s16.add_argument("--distance", type=float, default=0.3, help="coupling: distance in mm (default 0.3)")
+    s16.add_argument("--harness", action="store_true", help="coupling: include a block board's harness parts")
+    s16.add_argument("--estimate", choices=("plate", "2d"), default="plate",
+                     help="coupling: plate (overlap only, default) or 2d (also side by side; numpy/scipy)")
     s16.add_argument("--net", help="plane: the plane's net (default: any other net)")
+    s16.add_argument("--except-zone", action="append", metavar="NAME",
+                     help="plane: no pour needed inside this named zone / rule area (repeatable)")
+    s16.add_argument("--except-area", action="append", metavar="X0,Y0,X1,Y1",
+                     help="plane: no pour needed inside this rectangle, mm (repeatable)")
     s10 = psp.add_parser("instances", formatter_class=_Fmt, help="instances of a block in a design")
     s10.add_argument("pcb", metavar="PCB"); s10.add_argument("block", metavar="BLOCK_PCB")
     s11 = psp.add_parser("environment", formatter_class=_Fmt, help="name a block board's test-environment zones",
@@ -921,11 +934,13 @@ def build_parser() -> argparse.ArgumentParser:
     s13.add_argument("--kind", choices=("track", "via"), help="only tracks or only vias")
     s13.add_argument("--net", help="only this net")
     s12 = psp.add_parser("port", formatter_class=_Fmt, help="mark where a port leaves a block board",
-                         description="The via or pad at X,Y on the port's net is the port's point: kat block check\n"
-                                     "checks it (there, on its net, near the outline's edge), stamp returns it on\n"
-                                     "the design (ports), so the top level is routed to known points.")
+                         description="The via or pad at X,Y on the port's net is the port's point, or the end\n"
+                                     "of a track that leaves at the outline (within the copper-edge clearance\n"
+                                     "plus half its width; no via needed): kat block check checks it (there, on\n"
+                                     "its net, near the outline's edge), stamp returns it on the design (ports;\n"
+                                     "a track port with its layer), so the top level is routed to known points.")
     s12.add_argument("block", metavar="BLOCK_PCB"); s12.add_argument("port", metavar="PORT")
-    s12.add_argument("--at", required=True, metavar="X,Y", help="the via or pad (mm)")
+    s12.add_argument("--at", required=True, metavar="X,Y", help="the via, pad or track end (mm)")
     s12.add_argument("--net", help="refuse unless the copper there is on this net")
 
     # --- block library ---
@@ -958,12 +973,15 @@ def build_parser() -> argparse.ArgumentParser:
             b.add_argument("--no-require", action="store_true", help="gate requires no fields")
     s4 = psp.add_parser("view", formatter_class=_Fmt, help="zoomed PNG of one board region",
                         description="Into views/ next to the board; not a history step. Layer sets:\n"
-                                    "top, bottom, placement, copper, In1, ... or KiCad layer names.\n"
+                                    "top, bottom, placement, copper, copper-top, copper-bottom, assembly,\n"
+                                    "assembly-bottom (fab + courtyard, pads sketched), In1, ... or KiCad layer\n"
+                                    "names. --no-texts leaves the reference/value texts out (block scale).\n"
                                     "A pixel maps back to board mm as x = region[0] + px / px_per_mm.")
     s4.add_argument("pcb", metavar="PCB")
     s4.add_argument("--around", metavar="REF"); s4.add_argument("--at", metavar="X,Y")
     s4.add_argument("--region", metavar="X,Y,W,H")
     s4.add_argument("--layers", default="top", help="set name or F.Cu,B.Cu,... (default top)")
+    s4.add_argument("--no-texts", action="store_true", help="hide the footprints' reference, value and user texts")
     s4.add_argument("--margin", type=float); s4.add_argument("--ppm", type=float, help="px per mm")
     return p
 
@@ -972,7 +990,18 @@ def build_parser() -> argparse.ArgumentParser:
 NOT_JOURNALED = ("api", "lib", "init", "comment", "batch-exec")
 
 
+def _robust_streams() -> None:
+    """Text that the console's encoding lacks (εr, µm on a cp1252 console) is escaped
+    instead of raising UnicodeEncodeError."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="backslashreplace")
+        except (AttributeError, ValueError):
+            pass
+
+
 def main(argv: list[str] | None = None) -> int:
+    _robust_streams()
     argv = sys.argv[1:] if argv is None else list(argv)
     args = build_parser().parse_args(argv)
     report._disabled = args.no_report

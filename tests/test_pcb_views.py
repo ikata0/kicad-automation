@@ -52,3 +52,17 @@ def test_view_around_part_and_cache(board, capsys):
     assert out["region"] == [0, 0, 10, 5] and out["layers"] == ["F.Cu", "Edge.Cuts"]
     with pytest.raises(kat.KatError):
         kat.pcb.view(board, around="R1", at=(1, 1))
+
+
+def test_view_presets_and_no_texts(board):
+    """#17: block-scale presets (copper-top, assembly) and the reference texts left out,
+    from a scratch copy: the board file stays as it is."""
+    from kat.pcb import views
+    b = kat.pcb.Board(board)
+    assert views._layers(b, "assembly")[1] == ["Edge.Cuts", "F.CrtYd", "F.Fab"]
+    assert views._layers(b, "copper-top")[1] == ["F.Cu", "Edge.Cuts"]
+    before = board.read_bytes()
+    lay = views.SETS["assembly"]
+    full = views._svg(board, "assembly", lay).stat().st_size
+    bare = views._svg(board, "assembly", lay, texts=False).stat().st_size
+    assert bare < full and board.read_bytes() == before
