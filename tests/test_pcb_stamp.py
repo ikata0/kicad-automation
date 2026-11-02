@@ -444,6 +444,76 @@ def test_port_order_per_edge():
     assert order(270) == {"right": ["a", "b"], "bottom": ["c"], "left": ["d"]}
 
 
+def layout_of(pcb: Path) -> dict:
+    """What a stamp decided, without the fresh uuids."""
+    b = Board(pcb)
+    return {"parts": sorted((f.ref, f.x, f.y, f.rot, f.side) for f in b.footprints()),
+            "tracks": sorted((t["start"], t["end"], t["layer"], t["net"]) for t in b.tracks()),
+            "vias": sorted((v["at"], v["net"]) for v in b.vias()),
+            "groups": groups(pcb)}
+
+
+def test_batch_swap_does_not_depend_on_the_order_named(hier, tmp_path):
+    """FR-016: two stamped instances swap places. Judged by their final geometry, in either
+    named order, with the same board as the outcome, and DRC agrees."""
+    results = []
+    for k, names in enumerate((("/CH_A", "/CH_B"), ("/CH_B", "/CH_A"))):
+        pcb, b1 = (c := copy_of(hier, tmp_path / str(k)))["top"], c["b1"]
+        spots = {"/CH_A": (112, 112), "/CH_B": (112, 102)}
+        with kat.pcb.edit(pcb) as b:
+            res = b.stamp(b1, {n: spots[n] for n in names})
+        assert res["order"] == ["/CH_A", "/CH_B"], res["order"]
+        assert [i["instance"] for i in res["instances"]] == res["order"]
+        results.append(layout_of(pcb))
+        ch = check(pcb)
+        assert ch["drc_errors"] == 0 and ch["parity"] == 0, ch["by_type"]
+        assert kat.pcb.stamp_collisions(pcb)["ok"]
+    assert results[0] == results[1]
+
+
+def test_batch_refusal_lists_every_collision_and_changes_nothing(hier, tmp_path):
+    """FR-016: three copies on one spot: all three pairs named, whichever way round they were
+    named, and the board in memory and on disk as it was."""
+    from kat.sexpr import dumps
+    c = copy_of(hier, tmp_path)
+    b1, rc = c["b1"], c["rc"]
+    with kat.pcb.edit(b1) as b:                 # BLOCK1 without its inter-stage wiring
+        b.tree[:] = [n for n in b.tree if not (head(n) == "segment" and find(n, "locked") is None)]
+    on_disk = b1.read_bytes()
+    texts = set()
+    for names in (("/RC1", "/RC2", "/RC3"), ("/RC3", "/RC1", "/RC2")):
+        b = Board(b1)
+        before = dumps(b.tree)
+        with pytest.raises(kat.KatError) as e:
+            b.stamp(rc, {n: (100.5, 100.5) for n in names})
+        texts.add(str(e.value))
+        assert dumps(b.tree) == before and not b._stamps
+    assert len(texts) == 1, texts
+    text = texts.pop()
+    assert "/RC2, /RC3 collide with stamped instances" in text
+    for pair in ("/RC2 / /RC1", "/RC3 / /RC1", "/RC3 / /RC2"):
+        assert pair in text, text
+    assert "stamped in the order /RC1, /RC2, /RC3" in text
+    assert b1.read_bytes() == on_disk
+    with pytest.raises(kat.KatError, match="named twice"):
+        Board(b1).stamp(rc, {"/RC1": (100.5, 100.5), "RC1": (110, 100.5)})
+    with pytest.raises(kat.KatError, match="/RC2 collides with stamped instances"):     # one alone
+        Board(b1).stamp(rc, "/RC2", at=Board(b1)._stamp_record("/RC1")["at"])
+
+
+def test_batch_make_room_does_not_depend_on_the_order_named(hier, tmp_path):
+    """FR-016: the parts pushed aside are the same however the instances are named."""
+    moved = []
+    for k, names in enumerate((("/CH_A", "/CH_B"), ("/CH_B", "/CH_A"))):
+        pcb, b1 = (c := copy_of(hier, tmp_path / str(k)))["top"], c["b1"]
+        r = Board(pcb).footprint("R201")
+        with kat.pcb.edit(pcb) as b:
+            b.footprint("J101").place(r.x, r.y, 0)
+            res = b.stamp(b1, {n: {"/CH_A": (112, 102), "/CH_B": (112, 112)}[n] for n in names}, make_room=True)
+        moved.append([i.get("made_room") for i in res["instances"]])
+    assert moved[0] == moved[1] and moved[0][0]
+
+
 def guide_holes(b, ref, at, spacing, drill=1.0):
     """A board-only part of two distant holes and no courtyard (a connector's guide pegs)."""
     from copy import deepcopy

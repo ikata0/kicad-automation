@@ -299,6 +299,22 @@ def port_order(box, f: "_Place", ports: dict) -> dict[str, list[str]]:
     return {e: [n for _, n in sorted(v)] for e, v in sorted(out.items())}
 
 
+def _collision_text(rows: list[dict], order: list[str]) -> str:
+    """The refusal for collisions found while stamping ``order``: the first rows, and every
+    colliding pair when there are several."""
+    from collections import Counter
+    from . import cells
+    names = sorted({r["i"] for r in rows}, key=order.index)
+    pairs = Counter((r["i"], r["j"]) for r in rows)
+    return (f"{', '.join(names)} collide{'s' if len(names) == 1 else ''} with stamped instances: "
+            + "; ".join(cells.text(r) for r in rows[:8])
+            + (f" (+{len(rows) - 8} more)" if len(rows) > 8 else "")
+            + (f"; colliding pairs: {', '.join(f'{a} / {b} ({n})' for (a, b), n in pairs.items())}"
+               if len(pairs) > 1 else "")
+            + (f"; stamped in the order {', '.join(order)}" if len(order) > 1 else "")
+            + ": stamp at a larger pitch (kat pcb cell BLOCK --min-pitch x)")
+
+
 def _uuid(node: list) -> str | None:
     u = find(node, "uuid")
     return str(u[1]) if u is not None else None
@@ -522,8 +538,12 @@ class StampMixin:
         ``at`` is the top-left corner of the turned outline's bounding box instead (None: as
         recorded for the instance, else ``"origin"``). The result gives the turned bounds as
         ``outline`` (x0, y0, x1, y1 mm) and the point the origin went to as ``origin``;
-        ``stamp_preview`` tells the same without stamping. Several instances at once: ``instance={"/CH_A": (x, y), "/CH_B": ((x, y), 180)}`` (or
-        ``((x, y), rot, side)``). Copied copper is
+        ``stamp_preview`` tells the same without stamping. Several instances at once:
+        ``instance={"/CH_A": (x, y), "/CH_B": ((x, y), 180)}`` (or ``((x, y), rot, side)``):
+        the result does not depend on their order. All of them come off the board first, so
+        they may swap places and only their final geometry counts; then they go on in ``order``
+        (natural order of their names, returned), and every collision is reported at once. If
+        anything is refused, the board stays as it was. Copied copper is
         locked (``lock=False`` leaves it free), so routing keeps it. Stamping again
         replaces the earlier copy. Parts of the design outside block instances that would
         overlap the block's parts (courtyards on the same side; through-hole pads on both)
@@ -542,18 +562,53 @@ class StampMixin:
         explicit ``"F.Cu=B.Cu,In1.Cu=In2.Cu"``. ``side``/``layer_map`` None: as recorded
         for the instance by an earlier stamp, else top / auto. The design's layer rules
         (``layer_rule``) are checked on the copied copper. Returns pairs, renamed nets,
-        side, layer map, origin, outline and counts."""
+        side, layer map, origin, outline and counts; several instances: ``instances`` (those
+        results, in ``order``) and ``order``."""
         if isinstance(instance, dict):
-            out = []
+            wanted = []
             for name, where in instance.items():
                 pos, r, sd = where, rot, side
                 if isinstance(where[0], (tuple, list)):
                     pos, r, sd = (*where, side)[:3] if len(where) == 2 else where
-                out.append(self.stamp(block_pcb, name, pos, r, lock, source_instance, make_room,
-                                      sd, layer_map, allow_asymmetric, anchor))
-            return {"instances": out}
+                wanted.append((name, pos, r, sd))
+            return self._stamp_batch(block_pcb, wanted, lock, source_instance, make_room, layer_map,
+                                     allow_asymmetric, anchor)
+        return self._stamp_batch(block_pcb, [(instance, at, rot, side)], lock, source_instance, make_room,
+                                 layer_map, allow_asymmetric, anchor)["instances"][0]
+
+    def _stamp_batch(self, block_pcb, wanted: list[tuple], lock: bool, source_instance: str | None,
+                     make_room: bool, layer_map, allow_asymmetric: bool, anchor: str | None) -> dict:
+        """Stamp (instance, at, rot, side) entries: all off the board, then on in natural order,
+        collisions gathered and reported together; on any refusal the board is restored."""
+        from ..syncer import natural_key
+        where = {}
+        for name, pos, r, sd in wanted:
+            if _norm(name) in where:
+                raise env.KatError(f"{_norm(name)} is named twice in one stamp")
+            where[_norm(name)] = (pos, r, sd)
+        order = sorted(where, key=natural_key)
+        saved = copy.deepcopy(self.tree), dict(self._stamps)
+        try:
+            for name in order:
+                self._unstamp(name)
+            done, rows = [], []
+            for name in order:
+                pos, r, sd = where[name]
+                done.append(self._stamp_one(block_pcb, name, pos, r, lock, source_instance, make_room, sd,
+                                            layer_map, allow_asymmetric, anchor, rows))
+            if rows:
+                raise env.KatError(_collision_text(rows, order))
+        except Exception:
+            self.tree[:] = saved[0]
+            self._stamps = saved[1]
+            raise
+        return {"instances": done, "order": order}
+
+    def _stamp_one(self, block_pcb, instance: str, at, rot: float, lock: bool, source_instance: str | None,
+                   make_room: bool, side: str | None, layer_map, allow_asymmetric: bool, anchor: str | None,
+                   collisions: list[dict]) -> dict:
+        """One instance of ``stamp``; its collisions with stamped instances go to ``collisions``."""
         from . import cells, coupling
-        instance = _norm(instance)
         plan = self._stamp_plan(block_pcb, instance, at, rot, side, layer_map, allow_asymmetric,
                                 source_instance, anchor)
         block_pcb, side, bottom, layer_map, warnings = (plan.block_pcb, plan.side, plan.bottom,
@@ -689,12 +744,7 @@ class StampMixin:
         # stamped neighbours: per layer, so blocks may interlock (cells.py)
         mine = cells.items([c for _, c in copies if head(c) in COPPER or head(c) == "footprint"]
                            + [tf.node for tf in pairs.values()], order)
-        hit = cells.against(self, instance, mine, skip=frozenset(tf.uuid for tf in pairs.values()))
-        if hit:
-            raise env.KatError(f"{instance} collides with stamped instances: "
-                               + "; ".join(cells.text(r) for r in hit[:8])
-                               + (f" (+{len(hit) - 8} more)" if len(hit) > 8 else "")
-                               + ": stamp at a larger pitch (kat pcb cell BLOCK --min-pitch x)")
+        collisions += cells.against(self, instance, mine, skip=frozenset(tf.uuid for tf in pairs.values()))
         for n, c in copies:
             members[_uuid(n)] = _fresh(c)
             self._insert(c)

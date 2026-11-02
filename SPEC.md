@@ -597,6 +597,12 @@ with kat.pcb.edit("top/top.kicad_pcb") as b:
   makes `at` the top-left corner of the turned outline's bounding box instead; existing
   stamps keep what they recorded, and the default stays `origin`. The result gives where
   the origin went (`origin`) and the turned bounds (`outline`, x0, y0, x1, y1 mm).
+- **Several instances** (`b.stamp(block, {"/CH_A": at, "/CH_B": (at, rot)})`, `kat pcb stamp
+  ... all`): the outcome does not depend on the order they are named in. All of them come
+  off the board first, so they may swap places and only their final geometry counts. They
+  then go on in natural order of their names (returned as `order`), so `make_room` is
+  repeatable too. A refusal lists every collision with its pairs and order, and the board
+  stays as it was. `--step` still follows the order the instances are named in.
 - **Preview:** `b.stamp_preview(block, at, rot, instance, side, ...)` /
   `kat pcb stamp PCB BLOCK [INSTANCE...] --at X,Y --preview` answers the same without
   changing the board, with `ports` in the design frame and `order`, the ports per outline
@@ -973,6 +979,7 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
 | `netrule coupling` reported the harness connector's neighbouring IN/OUT pins, `plane` the intended pour cut-out under Rf/Cf | harness pads are left out (`--harness`); `--except-zone` / `--except-area` |
 | Side-by-side copper (the main case in a guarded layout) has no parallel-plate overlap, so `coupling` gave no pF | `--estimate 2d`: 2D field solution of the cross-section |
 | `pcb sync` on a block board needed `--force`: the harness connector has no MPN | harness parts are exempt from the required fields |
+| Swapping or re-placing several stamped instances failed against a neighbour's old copy, and whether it failed depended on the order they were named in | a batch takes them all off first, then stamps them in natural order and reports every collision (§4.18) |
 | A turned stamp's outline is not where people expect: `at` places the block origin and the block turns about it, so at 90 degrees it lies above `at` | the result gives `origin` and the bounds as `outline`; `--preview` tells before stamping; `--anchor top-left` places the turned outline's corner instead (§4.18) |
 | Stamping on the other side of a connector's guide holes was refused: its through-hole pads counted as one box spanning all of them | one box per pad or hole, slots included; DRC agrees (`pth_inside_courtyard` looks at the holes) |
 | A part locked in KiCad was still moved by `Board.move` and `stamp`; only `make_room` honoured the flag | `Footprint.lock()` / `unlock()` / `locked`; moves refuse unless `force=True`, `stamp` refuses unless unlocked |

@@ -84,14 +84,6 @@ before detailed routing; fitting by area alone is insufficient.
 collision checks, and transformed ports. `StampMixin.stamp` in
 `src\kat\pcb\stamping.py` currently rejects rotations not divisible by 90 degrees.
 
-### FR-016: Make batch restamping independent of input order
-
-**Open.** Define deterministic batch placement/replacement semantics and report
-the order and collisions. Replacing several existing instances should evaluate
-their intended final geometry rather than fail against a neighbour's stale
-placement. The dictionary form of `stamp` currently processes instances
-sequentially in caller order.
-
 ## Routing and board-editing APIs
 
 ### FR-017: Build and route blind/buried vias
@@ -233,3 +225,10 @@ the explicit alternative; the default stays `origin` and existing placements are
 origin, outline, ports in the design frame and `order` (ports per outline edge) without
 changing the board, and work without an instance, using the block's own net names.
 Collisions are not part of the preview.
+
+### FR-016: Make batch restamping independent of input order
+
+`Board.stamp` with a dict and `kat.pcb.stamp` take all named instances off first, stamp them
+in natural order of their names (returned as `order`) and judge only their final geometry.
+A refusal lists every collision and its pairs, and restores the board. Single stamps go the
+same way, so they no longer leave a half-changed board in memory when refused.

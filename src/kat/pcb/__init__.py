@@ -119,19 +119,21 @@ def stamp(pcb: Path | str, block_pcb: Path | str, instances: str | list[str],
     push the design's parts out of the block parts' way instead of refusing. ``side``
     "top"/"bottom" (None: as recorded per instance, else top), ``layer_map`` "auto",
     "roles" or ``"F.Cu=B.Cu,..."``, ``allow_asymmetric``: see ``Board.stamp``. Ends with
-    the board check, like ``sync``. Each instance's result has ``origin`` and ``outline``
-    (the turned bounds x0, y0, x1, y1 mm)."""
+    the board check, like ``sync``. All instances are judged on their final geometry, so they
+    may swap places and the outcome does not depend on the order they are processed in
+    (``order``, returned with their results); a refusal lists every collision and saves
+    nothing. Each instance's result has ``origin`` and ``outline`` (the turned bounds x0, y0,
+    x1, y1 mm)."""
     report.touch(pcb)
     step = _step_of(pcb, block_pcb) if step is None else step
     with edit(pcb) as b:
         names = b.instances(block_pcb) if instances == "all" else (
             [instances] if isinstance(instances, str) else list(instances))
-        done = [b.stamp(block_pcb, name, (at[0] + k * step[0], at[1] + k * step[1]), rot, lock,
-                        make_room=make_room, side=side, layer_map=layer_map,
-                        allow_asymmetric=allow_asymmetric, anchor=anchor)
-                for k, name in enumerate(names)]
+        done = b.stamp(block_pcb, {name: ((at[0] + k * step[0], at[1] + k * step[1]), rot)
+                                   for k, name in enumerate(names)}, lock=lock, make_room=make_room,
+                       side=side, layer_map=layer_map, allow_asymmetric=allow_asymmetric, anchor=anchor)
     c = checks.run(Path(pcb))
-    return tidy({"board": str(pcb), "instances": done,
+    return tidy({"board": str(pcb), "instances": done["instances"], "order": done["order"],
                  "check": {k: c[k] for k in ("ok", "drc_errors", "unconnected", "parity")}})
 
 

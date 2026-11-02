@@ -42,6 +42,10 @@ Design net classes asking stricter clearance than the block's are refused;
 route/check the source with the intended clearance first. A track-width
 difference is a warning, not permission to ignore current/fabrication needs.
 
+Several instances in one stamp are judged by their final geometry, in any named
+order: they may swap places, a refusal lists every collision, and the board then
+stays as it was.
+
 Overlapping foreign courtyards (same side) and individual through-hole pads or
 holes (either side) of top-level design parts are refused; the space between
 distant holes is free. --make-room shifts unlocked design
