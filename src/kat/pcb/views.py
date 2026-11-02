@@ -45,21 +45,43 @@ def layer_sets(b: Board) -> dict[str, list[str]]:
     return sets
 
 
+def _known_layers(b: Board) -> set[str]:
+    """The board's layer names, with their user names (``F.SilkS``, ``F.Silkscreen``)."""
+    from ..sexpr import find
+    out = set()
+    for l in find(b.tree, "layers")[1:]:
+        out.add(str(l[1]))
+        out.update(str(t) for t in l[3:] if not isinstance(t, list))
+    return out
+
+
 def _layers(b: Board, layers: str | list[str]) -> tuple[str, list[str]]:
+    """(name for the file, layers) of a set name or explicit layer names; KatError for a
+    layer this board does not have (kicad-cli writes nothing for those and still says OK)."""
     if isinstance(layers, list):
-        return "-".join(l.split(".")[0] for l in layers), layers
-    sets = layer_sets(b)
-    if layers in sets:
-        return layers, sets[layers]
-    return layers.replace(",", "-"), layers.split(",")
+        name, lay = "-".join(l.split(".")[0] for l in layers), list(layers)
+    else:
+        sets = layer_sets(b)
+        if layers in sets:
+            return layers, sets[layers]
+        name, lay = layers.replace(",", "-"), [l.strip() for l in layers.split(",")]
+    known = _known_layers(b)
+    if missing := [l for l in lay if l not in known]:
+        raise env.KatError(f"{b.path.name} has no layer {', '.join(missing)} (sets: "
+                           f"{', '.join(sorted(layer_sets(b)))}; copper: {', '.join(b.copper_layers())})")
+    return name, lay
 
 
 def export_svg(pcb: Path, layers: list[str], out: Path, sketch_pads: bool = False) -> Path:
+    """One SVG of ``layers`` in page coordinates (units are board mm); KatError if kicad-cli
+    wrote nothing. Returns ``out``."""
     out.parent.mkdir(parents=True, exist_ok=True)
     env.run_cli("pcb", "export", "svg", "--mode-single", "--layers", ",".join(layers),
                 "--page-size-mode", "1", "--exclude-drawing-sheet", "--check-zones",
                 *(["--sketch-pads-on-fab-layers"] if sketch_pads else []),
                 "-o", str(out), str(pcb))
+    if not out.exists():
+        raise env.KatError(f"kicad-cli wrote no picture of {', '.join(layers)} for {pcb.name}")
     return out
 
 

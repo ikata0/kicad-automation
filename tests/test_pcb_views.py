@@ -66,3 +66,40 @@ def test_view_presets_and_no_texts(board):
     full = views._svg(board, "assembly", lay).stat().st_size
     bare = views._svg(board, "assembly", lay, texts=False).stat().st_size
     assert bare < full and board.read_bytes() == before
+
+
+def test_inner_layer_views_show_only_that_layer(tmp_path, monkeypatch):
+    """FR-028: a downstream report of an inner-layer view with other layers in it, gone on
+    the next render. Every copper layer has its own track (and two a pour): each SVG holds
+    one layer's colour, in any order and from the cache."""
+    import re
+    from kat.pcb import views
+    monkeypatch.setenv("KAT_REPORT", "0")
+    pcb = tmp_path / "six.kicad_pcb"
+    b = kat.pcb.Board.create(pcb)
+    b.set_copper_layers(6)
+    b.outline(rect=(0, 0, 50, 40))
+    copper = b.copper_layers()
+    for i, layer in enumerate(copper):
+        b.add_track((5, 4 + i * 5), (45, 4 + i * 5), 0.5, layer, f"N{i}")
+    b.zone("P2", "In2.Cu", polygon=[(10, 33), (40, 33), (40, 38), (10, 38)], name="p2")
+    b.zone("PF", "F.Cu", polygon=[(2, 33), (9, 33), (9, 38), (2, 38)], name="pf")
+    b.save()
+
+    def colours(layers: list[str]) -> set[str]:
+        svg = views._svg(pcb, "-".join(l.split(".")[0] for l in layers), layers)
+        return set(re.findall(r"(?:stroke|fill):#([0-9A-Fa-f]{6})", svg.read_text())) - {"000000", "FFFFFF"}
+
+    seen = {layer: colours([layer]) for layer in copper}
+    assert all(len(c) == 1 for c in seen.values()), seen
+    assert len(set().union(*seen.values())) == len(copper)             # all different
+    for layer in ("In1.Cu", "In2.Cu", "F.Cu", "In2.Cu", "In1.Cu", "In4.Cu"):
+        assert colours([layer]) == seen[layer], layer                  # later, and cached
+
+
+def test_view_of_a_layer_the_board_does_not_have(board):
+    """kicad-cli says OK and writes nothing for a layer name the board lacks."""
+    for bad in ("In9.Cu", "F.Cu,In9.Cu", ["In9.Cu"], "In1"):
+        with pytest.raises(kat.KatError, match="has no layer"):
+            kat.pcb.view(board, around="R1", layers=bad)
+    assert kat.pcb.view(board, around="R1", layers="F.Silkscreen, Edge.Cuts")["layers"] == ["F.Silkscreen", "Edge.Cuts"]

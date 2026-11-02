@@ -222,17 +222,6 @@ identity mechanism, during hierarchical sync. Preserve sheet UUIDs, placement,
 and wiring rather than removing/recreating renamed sheets. `_boxes` in
 `src\kat\syncer_hier.py` currently matches by sheet name.
 
-## Rendering reports requiring reproduction
-
-### FR-028: Verify explicit inner-layer rendering isolation
-
-**Needs reproduction.** A downstream report described an explicit inner-copper
-view containing other layers, with a subsequent render working. Current
-`src\kat\pcb\views.py` forwards explicit layer names and keys its SVG cache by
-layer list, so this is not yet a confirmed missing feature or identified bug.
-Reproduce with a minimal generic multilayer board, checking exported SVG contents
-as well as cache reuse, before deciding on a fix.
-
 ## Resolved
 
 ### FR-027: Document literal SKiDL pin-name selection
@@ -241,3 +230,12 @@ Documented in `skills/kicad-schematic/references/troubleshooting.md` and SPEC.md
 section 7. On SKiDL 2.3 names match exactly by default, so the requested escaping
 is only right with `match_pin_regex=True`. `tests/test_skidl_blocks.py` checks each
 statement against the installed SKiDL.
+
+### FR-028: Verify explicit inner-layer rendering isolation
+
+Not reproduced. On a generic 6-layer board with pours, each explicit single-layer view
+held only that layer's colour, in any order and from the SVG cache; the regression test is
+in `tests/test_pcb_views.py`. Reopen with a failing board if it recurs. Vias and
+through-hole pads do appear on inner layers, because they have copper there.
+Checking this found a separate bug, now fixed: a layer the board lacks (`In9.Cu`) raised a
+raw `FileNotFoundError`, because kicad-cli exits 0 and writes nothing. It is now a `KatError`.
