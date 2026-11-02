@@ -341,15 +341,37 @@ class SetupMixin:
         self._route_edits.setdefault("class_clearance", {})[key] = clearance
         return {"classes": [a, b], "clearance": clearance}
 
+    def route_vias(self, spans: list[tuple], through: bool = True) -> dict:
+        """Which vias the router may lay (default: through vias only): ``spans`` entries
+        (top, bottom), optionally with kind, size and drill mm, e.g. ``("F.Cu", "In1.Cu",
+        "micro")`` or ``("In1.Cu", "In2.Cu", "buried", 0.45, 0.2)`` (kind as ``via_kind``; size
+        and drill default to the class's via or µvia); the router prefers these. ``through=False``:
+        no through vias: tracks stay on the layers the spans reach, and a net the router still
+        joins by a through via gets none of its new copper (``disallowed_vias`` in the result, the
+        net unconnected). Freerouting joins layers with one via only, so it does not stack blind
+        and buried vias. Stored with the router's other settings. Returns the setting."""
+        from .structure import via_kind
+        copper = self.copper_layers()
+        out = []
+        for s in spans:
+            top, bottom, kind, size, drill = (*s, None, None, None)[:5]
+            kind, span = via_kind(top, bottom, copper, kind)
+            out.append({"layers": list(span), "kind": kind, **({"size": size} if size else {}),
+                        **({"drill": drill} if drill else {})})
+        self._route_edits["vias"] = {"spans": out, "through": bool(through)}
+        return self._route_edits["vias"]
+
     def route_settings(self) -> dict:
-        """What the router gets beyond KiCad's classes: ``layers`` per class and
-        ``class_clearance`` ({"A B": mm}), with pending changes."""
+        """What the router gets beyond KiCad's classes: ``layers`` per class,
+        ``class_clearance`` ({"A B": mm}) and ``vias`` (``route_vias``), with pending changes."""
         from ..syncer_hier import settings_file
         f = settings_file(self.path)
         saved = (json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}).get("route", {})
-        out = {k: dict(saved.get(k, {})) for k in ("layers", "class_clearance")}
+        out = {k: dict(saved.get(k, {})) for k in ("layers", "class_clearance", "vias")}
         for k, v in self._route_edits.items():
             out[k].update(v)
+        if not out["vias"]:
+            del out["vias"]
         return out
 
     def _write_route_settings(self) -> None:

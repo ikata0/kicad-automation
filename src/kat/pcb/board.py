@@ -606,13 +606,18 @@ class Board(SetupMixin, PlacementMixin, StructureMixin, StampMixin, FinishMixin)
         return out
 
     def vias(self) -> list[dict]:
-        """Vias: at, size, drill, net, layers, locked, uuid, node."""
+        """Vias: at, size, drill, net, layers (the two it joins), span (every copper layer it
+        crosses, top first), kind (through, blind, buried, micro), locked, uuid, node."""
+        from .coupling import _span
+        copper = self.copper_layers()
         out = []
         for n in find_all(self.tree, "via"):
             at, net = find(n, "at"), find(n, "net")
+            layers = tuple(str(l) for l in find(n, "layers")[1:])
             out.append({"at": (float(at[1]), float(at[2])), "size": _f(n, "size"),
                         "drill": _f(n, "drill"), "net": str(net[1]) if net is not None else "",
-                        "layers": tuple(str(l) for l in find(n, "layers")[1:]),
+                        "layers": layers, "span": tuple(_span(list(layers), copper)),
+                        "kind": str(n[1]) if isinstance(n[1], Sym) else "through",
                         "locked": find(n, "locked") is not None, "uuid": str(find(n, "uuid")[1]),
                         "node": n})
         return out

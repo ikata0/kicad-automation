@@ -1043,21 +1043,18 @@ class StampMixin:
 
 
 def _check_via(c: list, order: list[str]) -> None:
-    """A blind, buried or micro via after the layer map: still a span the stack-up
-    allows (a µvia joins adjacent layers, one of them outer; a blind via reaches an outer
-    layer). Drill and annular ring are judged by the design's DRC."""
+    """A blind, buried or micro via after the layer map: still a span the stack-up allows
+    (``structure.via_kind``). Drill and annular ring are judged by the design's DRC."""
+    from .structure import via_kind
     kind = str(c[1]) if isinstance(c[1], Sym) else "through"
     ls = [str(t) for t in (find(c, "layers") or [None])[1:]]
     if kind == "through" or len(ls) != 2 or not all(l in order for l in ls):
         return
-    i, j = sorted(order.index(l) for l in ls)
-    outer = i == 0 or j == len(order) - 1
     at = find(c, "at")
-    where = f"{kind} via at {float(at[1]):g},{float(at[2]):g} ({ls[0]}-{ls[1]})"
-    if kind == "micro" and (j - i != 1 or not outer):
-        raise env.KatError(f"{where}: a µvia must join an outer layer and the one next to it")
-    if kind == "blind" and not outer:
-        raise env.KatError(f"{where}: a blind via must reach an outer layer")
+    try:
+        via_kind(ls[0], ls[1], order, kind)
+    except env.KatError as e:
+        raise env.KatError(f"via at {float(at[1]):g},{float(at[2]):g}: {e}") from None
 
 
 def flip_board(pcb: Path | str, layer_map: str | dict | None = None, allow_asymmetric: bool = False) -> dict:

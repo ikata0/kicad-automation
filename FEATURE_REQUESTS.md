@@ -80,14 +80,6 @@ before detailed routing; fitting by area alone is insufficient.
 
 ## Routing and board-editing APIs
 
-### FR-017: Build and route blind/buried vias
-
-**Partial.** Add a layer-pair parameter to `b.via()`, infer or validate the via
-type, and make routing respect legal spans. Stamping already maps existing
-blind/buried vias, but `via` in `src\kat\pcb\structure.py` creates through vias
-only, and the router's DSN padstacks in `src\kat\pcb\specctra.py` span all copper
-layers.
-
 ### FR-018: Improve autorouter scaling and rule handling
 
 **Needs reproduction.** Investigate poor convergence/runtime on dense multilayer
@@ -234,3 +226,12 @@ local checks keep. Also corrected the docs: a matching rule can lower the board 
 `b.zone(pads="thermal"|"solid"|"none"|"thru_hole_only")`, per pad `b.pad_connection("U1.8",
 mode)` and `Pad.zone_connection`. Stamps carry a block's per-pad overrides. A changed mode now
 counts as a changed zone. Judged by KiCad's filled copper and DRC (`tests/test_pcb_zones.py`).
+
+### FR-017: Build and route blind/buried vias
+
+`b.via(at, net, layers=(a, b), kind=None)` infers or validates the kind (`via_kind`), and
+`vias()` reports `kind` and `span`. Clearance checks, the DSN and the session read-back use each
+via's own span. `b.route_vias(spans, through=False)` sets what the router may lay. Two
+Freerouting 2.4.1 limits are worked around and documented in SPEC.md section 4.10: it lays no
+vias unless one spans every layer, so with `through=False` the session is checked and a net that
+used a through via stays unconnected and reported; and it does not stack blind and buried vias.

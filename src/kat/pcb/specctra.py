@@ -35,8 +35,51 @@ def _xy(x: float, y: float) -> str:
     return f"{_um(x)} {_um(-y)}"
 
 
-def _via_name(size: float, drill: float) -> str:
-    return f"Via[0-1]_{_um(size)}:{_um(drill)}_um"
+def _via_name(size: float, drill: float, top: int, bottom: int) -> str:
+    """A via padstack's name, with the copper layers (indices, top first) it spans; ``read_ses``
+    reads them back."""
+    return f"Via[{top}-{bottom}]_{_um(size)}:{_um(drill)}_um"
+
+
+def router_vias(b: Board, net_rule: dict) -> list[dict]:
+    """The vias the DSN offers a class, in the order the router prefers them: name, size, drill,
+    top and bottom index, kind. The allowed spans come first, then a through via, always:
+    Freerouting 2.4.1 lays no via at all when none spans every layer. With ``through=False`` that
+    one is only there for this reason, and ``apply_session`` refuses it if it gets used."""
+    copper = b.copper_layers()
+    last = len(copper) - 1
+    setting = b.route_settings().get("vias", {})
+    spans = setting.get("spans", [])
+    if not setting.get("through", True) and not spans:
+        raise env.KatError("the router has no via to lay: route_vias with through=False needs spans")
+    out = []
+    for s in spans:
+        micro = s["kind"] == "micro"
+        size = s.get("size") or net_rule["microvia" if micro else "via"]
+        drill = s.get("drill") or net_rule["microvia_drill" if micro else "via_drill"]
+        top, bottom = (copper.index(l) for l in s["layers"])
+        out.append({"name": _via_name(size, drill, top, bottom), "size": size, "drill": drill, "top": top,
+                    "bottom": bottom, "kind": s["kind"]})
+    out.append({"name": _via_name(net_rule["via"], net_rule["via_drill"], 0, last), "size": net_rule["via"],
+                "drill": net_rule["via_drill"], "top": 0, "bottom": last, "kind": "through"})
+    return out
+
+
+def _class_layers(b: Board, wanted: list[str]) -> list[str]:
+    """The layers a class may use: its own setting; without through vias only those the allowed
+    spans reach (else the router would use the through via to get to the others)."""
+    setting = b.route_settings().get("vias", {})
+    if setting.get("through", True):
+        return wanted
+    copper = b.copper_layers()
+    reach = {l for s in setting.get("spans", [])
+             for l in copper[copper.index(s["layers"][0]):copper.index(s["layers"][1]) + 1]}
+    return [l for l in (wanted or copper) if l in reach]
+
+
+def _via_padstack(name: str, size: float, layers: list[str]) -> str:
+    shapes = " ".join(f"(shape (circle {_q(l)} {_um(size)}))" for l in layers)
+    return f'    (padstack "{name}" {shapes} (attach off))'
 
 
 def _outline_points(b: Board) -> list[tuple[float, float]]:
@@ -117,7 +160,10 @@ def write_dsn(b: Board, path: Path, nets: list[str] | None = None, skip_pins: se
                 lines.append(f'    (wire_keepout "" {_poly(layer, circle)})')
                 lines.append(f'    (via_keepout "" {_poly(layer, circle)})')
     default = b.net_rules("")
-    lines.append(f'    (via "{_via_name(default["via"], default["via_drill"])}")')
+    allowed = {v["name"]: v for v in router_vias(b, default)}
+    for n in _net_names(b):
+        allowed.update({v["name"]: v for v in router_vias(b, b.net_rules(n))})
+    lines.append("    (via " + " ".join(f'"{n}"' for n in sorted(allowed)) + ")")
     # KiCad's hole clearance (hole edge to copper) as the via's copper clearance: the
     # router only knows copper, and a via's ring is thinner than the hole clearance asks
     mins = b.board_minimums()
@@ -150,11 +196,11 @@ def write_dsn(b: Board, path: Path, nets: list[str] | None = None, skip_pins: se
         lines.append("    )")
     for name, text in padstacks.items():
         lines.append(text)
-    vias = {(r["via"], r["via_drill"]) for r in [default] + [b.net_rules(n) for n in _net_names(b)]}
-    vias |= {(v["size"], v["drill"]) for v in b.vias()}
-    for size, drill in sorted(vias):
-        shapes = " ".join(f"(shape (circle {_q(l)} {_um(size)}))" for l in copper)
-        lines.append(f'    (padstack "{_via_name(size, drill)}" {shapes} (attach off))')
+    stacks = {name: (v["size"], copper[v["top"]:v["bottom"] + 1]) for name, v in allowed.items()}
+    for v in b.vias():                                     # what is on the board, its own span
+        stacks[_via_name(v["size"], v["drill"], *_span_of(v, copper))] = (v["size"], list(v["span"]))
+    for name in sorted(stacks):
+        lines.append(_via_padstack(name, *stacks[name]))
     lines.append("  )")
 
     # network: nets (with pins) and classes (rules per net class)
@@ -175,9 +221,10 @@ def write_dsn(b: Board, path: Path, nets: list[str] | None = None, skip_pins: se
     extra = b.route_settings()
     for cname, members in classes.items():
         r = b.net_rules(members[0])
-        use = "".join(f" (use_layer {_q(l)})" for l in extra["layers"].get(cname, []))
+        use = "".join(f" (use_layer {_q(l)})" for l in _class_layers(b, extra["layers"].get(cname, [])))
+        use_via = " ".join(f'"{v["name"]}"' for v in router_vias(b, r))
         lines.append(f"    (class {_q(cname)} " + " ".join(_q(n) for n in members) +
-                     f' (circuit{use} (use_via "{_via_name(r["via"], r["via_drill"])}"))'
+                     f" (circuit{use} (use_via {use_via}))"
                      f" (rule (width {_um(r['track'])}) (clearance {_um(r['clearance'])})))")
     skipped = []
     for key, mm in sorted(extra["class_clearance"].items()):
@@ -202,7 +249,7 @@ def write_dsn(b: Board, path: Path, nets: list[str] | None = None, skip_pins: se
         if not v["net"]:
             continue
         kind = "protect" if v["locked"] or (nets is not None and v["net"] not in nets) else "route"
-        lines.append(f'    (via "{_via_name(v["size"], v["drill"])}" {_xy(*v["at"])}'
+        lines.append(f'    (via "{_via_name(v["size"], v["drill"], *_span_of(v, copper))}" {_xy(*v["at"])}'
                      f" (net {_q(v['net'])}) (type {kind}))")
     lines.append("  )")
     lines.append(")")
@@ -210,6 +257,11 @@ def write_dsn(b: Board, path: Path, nets: list[str] | None = None, skip_pins: se
     return {"dsn": str(path), "nets": len(routed), "footprints": len(fps), "padstacks": len(padstacks),
             **({"class_clearance_not_applied": [f"{k}: route a net of both classes together (--net)"
                                                 for k in skipped]} if skipped else {})}
+
+
+def _span_of(v: dict, copper: list[str]) -> tuple[int, int]:
+    """A via's top and bottom layer as indices."""
+    return copper.index(v["span"][0]), copper.index(v["span"][-1])
 
 
 def _pins(f, copper: list[str]) -> list[tuple]:
@@ -248,7 +300,8 @@ def _padstack(p, layers: list[str], cache: dict) -> str:
 
 
 def read_ses(path: Path) -> dict:
-    """Wires and vias of a Freerouting session, in board mm (y down)."""
+    """Wires and vias of a Freerouting session, in board mm (y down); a via's ``span`` gives
+    its top and bottom copper layer as indices."""
     tree = loads(Path(path).read_text(encoding="utf-8"))
     routes = find(tree, "routes")
     if routes is None:
@@ -269,6 +322,8 @@ def read_ses(path: Path) -> dict:
         for v in find_all(net, "via"):
             m = re.search(r"_([\d.]+):([\d.]+)_um", str(v[1]))
             size, drill = (float(m.group(1)) / 1000, float(m.group(2)) / 1000) if m else (0.6, 0.3)
+            s = re.search(r"\[(\d+)-(\d+)\]", str(v[1]))
             vias.append({"net": name, "at": (float(v[2]) / per_mm, -float(v[3]) / per_mm),
-                         "size": size, "drill": drill})
+                         "size": size, "drill": drill,
+                         "span": (int(s.group(1)), int(s.group(2))) if s else None})
     return {"wires": wires, "vias": vias}

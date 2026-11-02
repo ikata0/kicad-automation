@@ -274,7 +274,7 @@ the GND pour into islands. So the agent lays the structure first and locks it:
 | Method | Effect |
 |---|---|
 | `track(["R1.2", "D1.2"], layer, width)` | net from the pads it touches; refused if they disagree (connections come from the schematic) or if it comes closer than the net-class clearance to other-net copper |
-| `via(at, net)` | through via; on a pad (`"U1.9"`) it takes the pad's net |
+| `via(at, net, layers=(a, b), kind=None)` | a via; on a pad (`"U1.9"`) it takes the pad's net. Without `layers` a through via; otherwise blind, buried or (`kind="micro"`) a µvia, the kind inferred and the span checked against the stack-up (`via_kind`), since KiCad's DRC does not judge it. Size and drill default to the class's via or µvia; clearance is checked on the span only. `vias()` gives `kind` and `span` |
 | `via_to_plane("D1.1")`, `fanout(refs, nets=["GND"])` | short stub + via next to an SMD pad (outward first, then sideways), so it reaches its plane; fanout gives each of several pads with one number its own via (`J1.2@3`), pads on F and B at one spot share it |
 | `stitch("GND", pitch)` | stitching vias on a grid where they clear copper and courtyards (after the structure) |
 | `lock(net)`, `remove_tracks(net, layer)` | locked copper stays for the router and for rip-up |
@@ -323,6 +323,13 @@ runs `kat pcb check`. No pcbnew involved.
 - Tracks the router narrowed at fine-pitch pads are widened to the net-class width where
   the clearance allows (`widened`; the rest in `narrow`), checked against all the router's
   new copper.
+- **Vias:** every via has its own span in the DSN, so a locked blind via no longer looks like a
+  through via to the router. `b.route_vias([("F.Cu", "In1.Cu"), ("F.Cu", "In1.Cu", "micro")],
+  through=False)` lets the router lay other vias; it prefers those listed. Freerouting 2.4.1
+  lays no via at all unless one spans every layer, so the DSN always offers a through via last.
+  With `through=False`, tracks stay on the layers the spans reach, and a net that still uses
+  the through via gets none of its new copper: listed in `disallowed_vias`, and unconnected in
+  the check. It joins layers by one via only: no stacked blind and buried vias.
 - The router connects pins to locked vias of their net (port vias, §4.18). A via that
   ends up joined on one layer only is a `via_dangling` warning; judge it and accept it
   at the gate (`kat pcb ready --accept via_dangling=REASON`) or connect it.
@@ -989,6 +996,8 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
 | Side-by-side copper (the main case in a guarded layout) has no parallel-plate overlap, so `coupling` gave no pF | `--estimate 2d`: 2D field solution of the cross-section |
 | `pcb sync` on a block board needed `--force`: the harness connector has no MPN | harness parts are exempt from the required fields |
 | kat's docs said DRC ignores a custom rule below the board minimum; on KiCad 10.0.6 a matching rule replaces it, and local checks only took the larger class clearance | `Board.clearance` resolves it as DRC does and is checked against it; the warning from `rules` says so |
+| Freerouting 2.4.1 lays no vias when only blind or buried ones are offered, and with a through via offered too it may use that instead | the DSN offers the allowed ones first and a through via last; with `through=False` the session is checked and such a net is left unconnected, reported (§4.10) |
+| Blind vias counted on every layer: local checks refused copper they do not touch, and the router saw them as through vias, joining layers they do not reach | each via has its own span in `_Copper` and the DSN |
 | An exception to a zone's thermal relief needed direct node edits, and a changed connection mode counted as an unchanged zone | `zone(pads=...)`, `pad_connection(pads, mode)`; stamps carry a block's overrides |
 | `Pad.outline` used a custom pad's anchor only and ignored trapezoid tapers and drill offsets, so clearance checks could pass copper that DRC refuses; flipping also left tapers and chamfered corners unmirrored | outlines now cover them; `Pad.polygons` is exact and checked against the distances DRC reports |
 | A stamp accepted at its tightest spacing can still fail DRC with `starved_thermal`: the collision check does not fill pours, and a neighbour's copper can take a thermal spoke's room | `pcb stamp` ends with the board check; judge by that and step out a little |

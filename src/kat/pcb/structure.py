@@ -20,6 +20,36 @@ from .geometry import Index, inside, point_seg, poly_seg, seg_seg
 
 EDGE_CLEARANCE = 0.5   # copper to board edge, mm
 VIA = (0.6, 0.3)       # default size and drill, as KiCad's Default class
+MICROVIA = (0.3, 0.1)  # the same for a µvia
+VIA_KINDS = ("through", "blind", "buried", "micro")
+
+
+def via_kind(a: str, b: str, copper: list[str], kind: str | None = None) -> tuple[str, tuple[str, str]]:
+    """Check a via's span against the stack-up: the layers it joins, ``a`` and ``b``, in
+    ``copper`` (top first) and ``kind`` (None: inferred, through if it joins both outer layers,
+    blind if one, buried if none). A µvia joins an outer layer and the one next to it. KiCad's
+    DRC does not judge this. Returns (kind, (top layer, bottom layer)); KatError if illegal."""
+    missing = [l for l in (a, b) if l not in copper]
+    if missing:
+        raise env.KatError(f"no copper layer {', '.join(missing)} on this board")
+    i, j = sorted((copper.index(a), copper.index(b)))
+    if i == j:
+        raise env.KatError(f"a via joins two layers, not {a} with itself")
+    outer = (i == 0) + (j == len(copper) - 1)
+    inferred = {2: "through", 1: "blind", 0: "buried"}[outer]
+    kind = kind or inferred
+    if kind not in VIA_KINDS:
+        raise env.KatError(f"via kind {kind!r}: {', '.join(VIA_KINDS)}")
+    where = f"{kind} via {copper[i]}-{copper[j]}"
+    if kind == "micro" and (j - i != 1 or outer != 1):
+        raise env.KatError(f"{where}: a µvia must join an outer layer and the one next to it")
+    if kind == "blind" and outer != 1:
+        raise env.KatError(f"{where}: a blind via must reach one outer layer")
+    if kind == "buried" and outer:
+        raise env.KatError(f"{where}: a buried via must stay inside")
+    if kind == "through" and outer != 2:
+        raise env.KatError(f"{where}: a through via joins both outer layers")
+    return kind, (copper[i], copper[j])
 
 
 class _Copper:
@@ -35,7 +65,7 @@ class _Copper:
         for t in board.tracks():
             self.add_track(t["start"], t["end"], t["width"], t["layer"], t["net"])
         for v in board.vias():
-            self.add_via(v["at"], v["size"], v["net"], set(board.copper_layers()))
+            self.add_via(v["at"], v["size"], v["net"], set(v["span"]))
 
     def add_track(self, a, b, width, layer, net):
         h = width / 2
@@ -118,7 +148,9 @@ class StructureMixin:
         name = next((p["netclass"] for p in patterns if fnmatch.fnmatchcase(net, p["pattern"])), "Default")
         c = {**classes.get("Default", {}), **classes.get(name, {})}
         return {"netclass": name, "track": c.get("track_width", 0.2), "clearance": c.get("clearance", 0.2),
-                "via": c.get("via_diameter", VIA[0]), "via_drill": c.get("via_drill", VIA[1])}
+                "via": c.get("via_diameter", VIA[0]), "via_drill": c.get("via_drill", VIA[1]),
+                "microvia": c.get("microvia_diameter", MICROVIA[0]),
+                "microvia_drill": c.get("microvia_drill", MICROVIA[1])}
 
     def clearance(self, a: str, b: str, layer: str | None = None) -> dict:
         """The effective clearance between two nets (or pads ``"U1.8"``), resolved as KiCad's
@@ -184,9 +216,9 @@ class StructureMixin:
         self._insert(node)
         return node
 
-    def _via(self, at, net, size, drill, lock) -> list:
-        node = [Sym("via"), [Sym("at"), num(at[0]), num(at[1])], [Sym("size"), num(size)],
-                [Sym("drill"), num(drill)], [Sym("layers"), "F.Cu", "B.Cu"]]
+    def _via(self, at, net, size, drill, lock, layers=("F.Cu", "B.Cu"), kind="through") -> list:
+        node = [Sym("via"), *([Sym(kind)] if kind != "through" else []), [Sym("at"), num(at[0]), num(at[1])],
+                [Sym("size"), num(size)], [Sym("drill"), num(drill)], [Sym("layers"), *layers]]
         if lock:
             node.append([Sym("locked"), Sym("yes")])
         node += [[Sym("net"), net], [Sym("uuid"), new_uuid()]]
@@ -226,21 +258,30 @@ class StructureMixin:
         return {"net": net, "layer": layer, "width": width, "segments": uuids}
 
     def via(self, at, net: str | None = None, size: float | None = None, drill: float | None = None,
-            lock: bool = False, check: bool = True) -> dict:
-        """A through via at (x, y) or on a pad ("REF.PAD", net from the pad)."""
+            lock: bool = False, check: bool = True, layers: tuple[str, str] | None = None,
+            kind: str | None = None) -> dict:
+        """A via at (x, y) or on a pad ("REF.PAD", net from the pad). ``layers``: the two copper
+        layers it joins (default both outer ones); ``kind``: through, blind, buried or micro
+        (default inferred from the span, ``via_kind``, which refuses an illegal one). Size and
+        drill (mm) default to the net class's via, or its µvia. Its clearance is checked only on
+        the layers it spans. Returns net, at, kind, layers, uuid."""
         xy, pad = self._resolve(at)
         net = pad.net if pad is not None else net
         if not net:
             raise env.KatError("a via needs a net (or a pad to sit on)")
+        copper = self.copper_layers()
+        kind, span = via_kind(*(layers or (copper[0], copper[-1])), copper, kind)
         rules = self.net_rules(net)
-        size, drill = size or rules["via"], drill or rules["via_drill"]
+        micro = kind == "micro"
+        size = size or rules["microvia" if micro else "via"]
+        drill = drill or rules["microvia_drill" if micro else "via_drill"]
         if check:
-            hits = _Copper(self).conflicts(net, set(self.copper_layers()), self._clearance_fn(),
-                                           circle=(xy, size / 2))
+            on = copper[copper.index(span[0]):copper.index(span[1]) + 1]
+            hits = _Copper(self).conflicts(net, set(on), self._clearance_fn(), circle=(xy, size / 2))
             if hits:
                 raise env.KatError(f"via at {xy} too close to {hits[:3]}")
-        node = self._via(xy, net, size, drill, lock)
-        return {"net": net, "at": list(xy), "uuid": str(find(node, "uuid")[1])}
+        node = self._via(xy, net, size, drill, lock, span, kind)
+        return {"net": net, "at": list(xy), "kind": kind, "layers": list(span), "uuid": str(find(node, "uuid")[1])}
 
     def _free_via_spot(self, cu, pad, net, size, width, layer, max_reach: float = 3.0):
         """First spot for a via next to ``pad``: along the pad's outward direction first,
@@ -419,9 +460,9 @@ class StructureMixin:
                     out.append({k: v for k, v in t.items() if k != "node"})
         if kind in (None, "via"):
             for v in self.vias():
-                if (net is None or v["net"] == net) and (layer is None or layer in self.copper_layers()) \
+                if (net is None or v["net"] == net) and (layer is None or layer in v["span"]) \
                         and math.dist(v["at"], (x, y)) <= v["size"] / 2 + radius:
-                    out.append({"kind": "via", **{k: w for k, w in v.items() if k != "node"}})
+                    out.append({**{k: w for k, w in v.items() if k != "node"}, "kind": "via", "via_kind": v["kind"]})
         return out
 
     def remove_at(self, at, layer: str | None = None, kind: str | None = None,
