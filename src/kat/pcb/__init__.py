@@ -19,7 +19,7 @@ from .board import Board, Footprint, Pad
 
 __all__ = ["Board", "Footprint", "Pad", "block_environment", "block_port", "remove", "check", "coupling_2d", "coupling_rule",
            "drc", "edit", "fab", "instances", "layer_roles", "layer_rule", "load", "net_rules", "plane_rule",
-           "ready", "refill", "route", "snapshot", "stack", "stamp", "sync", "view"]
+           "ready", "refill", "route", "snapshot", "stack", "stamp", "stamp_preview", "sync", "view"]
 
 
 def load(path: Path | str) -> Board:
@@ -110,30 +110,54 @@ def route(pcb: Path | str, passes: int = 20, nets: list[str] | None = None, time
 def stamp(pcb: Path | str, block_pcb: Path | str, instances: str | list[str],
           at: tuple[float, float], step: tuple[float, float] | None = None, rot: float = 0.0,
           lock: bool = True, make_room: bool = False, side: str | None = None,
-          layer_map: str | None = None, allow_asymmetric: bool = False) -> dict:
+          layer_map: str | None = None, allow_asymmetric: bool = False, anchor: str | None = None) -> dict:
     """Stamp a checked block layout onto instances of the block (``Board.stamp``) and save.
     ``instances``: paths such as ``/CH_A`` (a list, or ``"all"`` for every instance). The
     n-th one goes to ``at + n * step`` (mm; default step: the block's pitch, ``block_cell``,
-    else 0,0), turned by ``rot`` degrees. ``make_room``:
+    else 0,0), turned by ``rot`` degrees about that point. ``anchor="top-left"``: that point
+    is the turned outline's top-left corner instead of the block origin. ``make_room``:
     push the design's parts out of the block parts' way instead of refusing. ``side``
     "top"/"bottom" (None: as recorded per instance, else top), ``layer_map`` "auto",
     "roles" or ``"F.Cu=B.Cu,..."``, ``allow_asymmetric``: see ``Board.stamp``. Ends with
-    the board check, like ``sync``."""
+    the board check, like ``sync``. Each instance's result has ``origin`` and ``outline``
+    (the turned bounds x0, y0, x1, y1 mm)."""
     report.touch(pcb)
-    if step is None:
-        from .. import blocks as lib
-        from .stamping import block_info
-        step = tuple(block_info(lib.board_of(block_pcb, near=Path(pcb))[0]).get("pitch", (0.0, 0.0)))
+    step = _step_of(pcb, block_pcb) if step is None else step
     with edit(pcb) as b:
         names = b.instances(block_pcb) if instances == "all" else (
             [instances] if isinstance(instances, str) else list(instances))
         done = [b.stamp(block_pcb, name, (at[0] + k * step[0], at[1] + k * step[1]), rot, lock,
                         make_room=make_room, side=side, layer_map=layer_map,
-                        allow_asymmetric=allow_asymmetric)
+                        allow_asymmetric=allow_asymmetric, anchor=anchor)
                 for k, name in enumerate(names)]
     c = checks.run(Path(pcb))
     return tidy({"board": str(pcb), "instances": done,
                  "check": {k: c[k] for k in ("ok", "drc_errors", "unconnected", "parity")}})
+
+
+def _step_of(pcb: Path | str, block_pcb: Path | str) -> tuple[float, float]:
+    from .. import blocks as lib
+    from .stamping import block_info
+    return tuple(block_info(lib.board_of(block_pcb, near=Path(pcb))[0]).get("pitch", (0.0, 0.0)))
+
+
+def stamp_preview(pcb: Path | str, block_pcb: Path | str, instances: str | list[str] | None = None,
+                  at: tuple[float, float] = (0.0, 0.0), step: tuple[float, float] | None = None,
+                  rot: float = 0.0, side: str | None = None, layer_map: str | None = None,
+                  allow_asymmetric: bool = False, anchor: str | None = None) -> dict:
+    """What ``stamp`` with these arguments would place, without changing the board
+    (``Board.stamp_preview``): per instance ``origin``, ``outline`` (bounds x0, y0, x1, y1
+    mm), ``ports`` in the design frame and ``order`` (ports per outline edge). ``instances``
+    None: one entry with the block's own net names, for pin assignment before the design
+    has the instance. Returns board, instances."""
+    report.touch(pcb)
+    b = Board(pcb)
+    step = _step_of(pcb, block_pcb) if step is None else step
+    names = b.instances(block_pcb) if instances == "all" else (
+        [instances] if isinstance(instances, str) else list(instances or [None]))
+    return tidy({"board": str(pcb), "instances": [
+        b.stamp_preview(block_pcb, (at[0] + k * step[0], at[1] + k * step[1]), rot, name, side, layer_map,
+                        allow_asymmetric, anchor=anchor) for k, name in enumerate(names)]})
 
 
 def instances(pcb: Path | str, block_pcb: Path | str) -> dict:

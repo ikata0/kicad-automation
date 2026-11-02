@@ -71,29 +71,12 @@ via span.
 
 ## Block building and placement
 
-### FR-010: Clarify rotated stamp placement and return bounds
-
-**Partial.** The library/SPEC document that `at` places the block origin before
-rotation, but callers still need the resulting rotated outline bounds. Return
-those bounds and make the pivot convention consistent and explicit in CLI help.
-Alternatively, introduce an explicitly selected rotated-top-left convention
-without silently changing existing placements.
-See `StampMixin.stamp` in `src\kat\pcb\stamping.py` and SPEC.md section 4.18.
-
 ### FR-013: Check floorplan port accessibility
 
 **Open.** Given candidate cells, port positions, allowed layers, and a source
 region, report which ports can reach the source without crossing occupied cells
 or keepouts. A coarse maze/grid check should detect inaccessible placements
 before detailed routing; fitting by area alone is insufficient.
-
-### FR-014: Preview transformed ports before stamping
-
-**Partial.** Expose port positions and ordering in the design frame for a proposed
-side, rotation, and placement without modifying the board. This supports
-mirror-aware pin assignment. Stamping already returns transformed ports and
-`b.ports()` reads stamped instances; `kat pcb cell` currently reports cell
-geometry, not a pre-placement port preview.
 
 ### FR-015: Support non-orthogonal stamp rotation
 
@@ -237,3 +220,16 @@ was added: KiCad's DRC reports a hole overlapping a courtyard, and the pad-and-h
 already at least as large. Footprints with only holes and no courtyard are treated hole by
 hole on their own side too. `kat pcb cell` and `min_pitch` use the same boxes, so their
 results can shrink for blocks with distant holes.
+
+### FR-010: Clarify rotated stamp placement and return bounds
+
+`stamp` returns `origin` and the turned bounds as `outline`. The pivot convention is spelled
+out in `kat pcb stamp --help` and SPEC.md section 4.18. `--anchor top-left` / `anchor=` is
+the explicit alternative; the default stays `origin` and existing placements are unchanged.
+
+### FR-014: Preview transformed ports before stamping
+
+`Board.stamp_preview`, `kat.pcb.stamp_preview` and `kat pcb stamp ... --preview` report
+origin, outline, ports in the design frame and `order` (ports per outline edge) without
+changing the board, and work without an instance, using the block's own net names.
+Collisions are not part of the preview.

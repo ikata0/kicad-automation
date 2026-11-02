@@ -161,8 +161,13 @@ def cmd_pcb(a):
         return kat.pcb.route(a.pcb, a.passes, a.net or None, a.timeout, install=a.install)
     if a.pcb_cmd == "stamp":
         names = "all" if a.instance == ["all"] else a.instance
+        if a.preview:
+            return kat.pcb.stamp_preview(a.pcb, a.block, names or None, xy(a.at), xy(a.step) if a.step else None,
+                                         a.rot, a.side, a.layer_map, a.allow_asymmetric, a.anchor)
+        if not names:
+            raise env.KatError("name the instances (/CH_A ... or all); only --preview works without")
         return kat.pcb.stamp(a.pcb, a.block, names, xy(a.at), xy(a.step) if a.step else None,
-                             a.rot, not a.no_lock, a.make_room, a.side, a.layer_map, a.allow_asymmetric)
+                             a.rot, not a.no_lock, a.make_room, a.side, a.layer_map, a.allow_asymmetric, a.anchor)
     if a.pcb_cmd == "collisions":
         return kat.pcb.stamp_collisions(a.pcb, a.instance or None)
     if a.pcb_cmd == "cell":
@@ -819,7 +824,12 @@ def build_parser() -> argparse.ArgumentParser:
                                     "nets, into a KiCad group \"/CH_A (NAME)\". Instances are sheet paths\n"
                                     "(hierarchical) or SKiDL block paths (flat, Block field). Stamping again\n"
                                     "replaces the copy. The block board's origin is the top-left corner of\n"
-                                    "its outline. Refused if the instance is wired differently, if the design's\n"
+                                    "its outline: --at places it, and --rot turns the block about that point,\n"
+                                    "counter-clockwise, so at 90 the block lies above --at. --anchor top-left\n"
+                                    "makes --at the top-left corner of the turned outline's bounding box. The\n"
+                                    "result gives origin and the turned bounds as outline; --preview tells that\n"
+                                    "and the ports (positions, order per edge) without changing the board, and\n"
+                                    "works without an instance, for assigning pins first. Refused if the instance is wired differently, if the design's\n"
                                     "net classes on its nets are stricter than the block's, if design parts\n"
                                     "overlap the block's parts (courtyards on the same side, through-hole pads on\n"
                                     "both; --make-room pushes them aside), or if it collides with stamped\n"
@@ -834,8 +844,14 @@ def build_parser() -> argparse.ArgumentParser:
                                     "it was stamped with, so `stamp all` does not flip blocks back.")
     s9.add_argument("pcb", metavar="PCB", help="the design's board")
     s9.add_argument("block", metavar="BLOCK_PCB", help="the checked block board")
-    s9.add_argument("instance", nargs="+", metavar="INSTANCE", help="/CH_A ... or all")
-    s9.add_argument("--at", required=True, metavar="X,Y", help="where the block origin goes (mm)")
+    s9.add_argument("instance", nargs="*", metavar="INSTANCE", help="/CH_A ... or all")
+    s9.add_argument("--at", required=True, metavar="X,Y",
+                    help="where the block origin goes (mm), or the corner named by --anchor")
+    s9.add_argument("--anchor", choices=("origin", "top-left"),
+                    help="what --at places: the block origin, which --rot turns about, or the turned\n"
+                         "outline's top-left corner (default: as recorded, else origin)")
+    s9.add_argument("--preview", action="store_true",
+                    help="only report origin, outline and ports; the board stays as it is")
     s9.add_argument("--step", metavar="DX,DY",
                     help="offset from one instance to the next (mm; default the block's pitch, kat pcb cell)")
     s9.add_argument("--rot", type=float, default=0.0, help="0, 90, 180 or 270")

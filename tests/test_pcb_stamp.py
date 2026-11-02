@@ -357,6 +357,93 @@ def test_bottom_overlap_counts_through_hole_pads_on_both_sides(hier, tmp_path):
         Board(pcb).stamp(b1, "/CH_B", at=(112, 112), side="bottom")
 
 
+def test_stamp_bounds_and_anchor(hier, tmp_path):
+    """FR-010: the turned outline as worked out by hand for the 29 x 6 mm block, the same from
+    the preview and the stamp; --anchor top-left puts that corner at `at`, and stays recorded."""
+    c = copy_of(hier, tmp_path)
+    pcb, b1 = c["top"], c["b1"]
+    b = Board(pcb)
+    expect = {0: (112, 102, 141, 108), 90: (112, 73, 118, 102), 180: (83, 96, 112, 102),
+              270: (106, 102, 112, 131)}
+    for rot, outline in expect.items():
+        got = b.stamp_preview(b1, (112, 102), rot)
+        assert got["outline"] == pytest.approx(outline) and got["origin"] == [112, 102], rot
+        assert got["anchor"] == "origin" and got["instance"] is None
+        turned = b.stamp_preview(b1, (112, 102), rot, anchor="top-left")
+        assert turned["outline"][:2] == pytest.approx([112, 102]), rot
+        assert turned["outline"][2] - turned["outline"][0] == pytest.approx(outline[2] - outline[0])
+    flipped = b.stamp_preview(b1, (112, 102), 90, side="bottom")
+    assert flipped["outline"] == pytest.approx((112, 73, 118, 102)) and flipped["side"] == "bottom"
+    with pytest.raises(kat.KatError, match="anchor 'x'"):
+        b.stamp_preview(b1, (112, 102), anchor="x")
+
+    with kat.pcb.edit(pcb) as e:
+        r = e.stamp(b1, "/CH_B", at=(112, 112), rot=270, anchor="top-left")
+    assert r["outline"] == pytest.approx((112, 112, 118, 141)) and r["origin"] == pytest.approx((118, 112))
+    placed = [Board(pcb).footprint(x) for x in r["pairs"].values()]
+    assert all(r["outline"][0] <= f.x <= r["outline"][2] and r["outline"][1] <= f.y <= r["outline"][3]
+               for f in placed)
+    with kat.pcb.edit(pcb) as e:                                # recorded, like side
+        again = e.stamp(b1, "/CH_B", at=(112, 112), rot=270)
+    assert again["anchor"] == "top-left" and again["outline"] == r["outline"]
+    with kat.pcb.edit(pcb) as e:
+        back = e.stamp(b1, "/CH_B", at=(118, 112), rot=270, anchor="origin")
+    assert back["origin"] == [118, 112] and back["outline"] == pytest.approx(r["outline"])
+
+
+def test_preview_tells_ports_without_changing_the_board(hier, tmp_path, capsys):
+    """FR-014: ports where the stamp will put them, mirrored on the bottom side, in order per
+    edge, with the file untouched; with an instance their nets are the instance's."""
+    import json
+    c = copy_of(hier, tmp_path)
+    pcb, rc, b1 = c["top"], c["rc"], c["b1"]
+    via = next(v for v in Board(rc).vias())
+    pad = Board(rc).footprint("R1").pad("1")
+    stamp_mod.set_port(rc, "gnd", via["at"])
+    stamp_mod.set_port(rc, "inp", (pad.x, pad.y))
+    box = Board(rc).outline_box()
+    before = pcb.read_bytes(), stamp_mod.stamps_file(pcb).read_bytes()
+    assert cli.main(["pcb", "stamp", str(pcb), str(rc), "/CH_A/RC1", "--at", "120,110", "--preview"]) == 0
+    top = json.loads(capsys.readouterr().out)["instances"][0]
+    assert (pcb.read_bytes(), stamp_mod.stamps_file(pcb).read_bytes()) == before
+    assert top["ports"]["inp"]["x"] == pytest.approx(120 + pad.x - box[0])
+    assert top["ports"]["inp"]["net"] == "/IN_A"                # the instance's net
+    assert top["ports"]["gnd"]["net"] == "GND"
+    assert cli.main(["pcb", "stamp", str(pcb), str(rc), "--at", "120,110", "--side", "bottom", "--preview"]) == 0
+    bottom = json.loads(capsys.readouterr().out)["instances"][0]
+    assert bottom["instance"] is None and bottom["ports"]["inp"]["net"] == "/IN"     # the block's net
+    assert bottom["ports"]["inp"]["x"] == pytest.approx(120 + box[2] - pad.x)        # mirrored
+    assert bottom["ports"]["inp"]["y"] == pytest.approx(top["ports"]["inp"]["y"])
+    assert cli.main(["pcb", "stamp", str(pcb), str(rc), "--at", "120,110"]) == 2     # stamping needs a name
+    assert "error" in json.loads(capsys.readouterr().out)
+    # what the stamp then does is what the preview said
+    with kat.pcb.edit(pcb) as e:
+        e.tree[:] = [n for n in e.tree if not (head(n) == "group" and str(n[1]).startswith("/CH_A"))]
+    b = Board(pcb)
+    want = b.stamp_preview(rc, (120, 110), 90, "/CH_A/RC1")
+    done = b.stamp(rc, "/CH_A/RC1", at=(120, 110), rot=90)
+    for k in ("origin", "outline", "ports"):
+        assert want[k] == done[k], k
+
+
+def test_port_order_per_edge():
+    """Names follow the way an edge faces once placed; lists run left to right, sides top to
+    bottom; a flip reverses a row, a turn moves it to another edge."""
+    box = (0, 0, 10, 4)
+    src = {"a": (2, 0), "b": (8, 0), "c": (10, 2), "d": (5, 4)}
+
+    def order(rot, bottom=False):
+        f = stamp_mod._Place(box, (100, 100), rot, bottom)
+        ports = {n: dict(zip("xy", f(*p))) for n, p in src.items()}
+        return stamp_mod.port_order(box, f, ports)
+
+    assert order(0) == {"top": ["a", "b"], "right": ["c"], "bottom": ["d"]}
+    assert order(0, True) == {"top": ["b", "a"], "left": ["c"], "bottom": ["d"]}
+    assert order(90) == {"left": ["b", "a"], "top": ["c"], "right": ["d"]}
+    assert order(180) == {"bottom": ["b", "a"], "left": ["c"], "top": ["d"]}
+    assert order(270) == {"right": ["a", "b"], "bottom": ["c"], "left": ["d"]}
+
+
 def guide_holes(b, ref, at, spacing, drill=1.0):
     """A board-only part of two distant holes and no courtyard (a connector's guide pegs)."""
     from copy import deepcopy

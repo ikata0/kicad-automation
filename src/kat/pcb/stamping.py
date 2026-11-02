@@ -29,14 +29,16 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 from pathlib import Path
+from types import SimpleNamespace
 
 from .. import env
 from ..schematic import new_uuid
 from ..sexpr import Sym, find, find_all, head, num
 from . import footprints as fps
 from . import layers as lay
-from .geometry import box_of, inside, overlap, rotate, union
+from .geometry import box_of, inside, overlap, point_seg, rotate, union
 
 COPPER = ("segment", "arc", "via", "zone")
 GRAPHICS = ("gr_line", "gr_rect", "gr_arc", "gr_circle", "gr_poly", "gr_curve", "gr_text",
@@ -243,6 +245,58 @@ def _refuse_locked(src, pairs: dict, instance: str, f: "_Place") -> None:
     if held:
         raise env.KatError(f"{instance}: {', '.join(sorted(held))} locked where the stamp would move "
                            "them: unlock them first (b.footprint(ref).unlock()), or stamp elsewhere")
+
+
+def _netmap(src, pairs: dict, instance: str) -> dict[str, str]:
+    """Block net -> the instance's net, through the paired pads; KatError if the instance is
+    wired differently from the block."""
+    out: dict[str, str] = {}
+    for sf in src.footprints():
+        tf = pairs.get(sf.uuid)
+        if tf is None:
+            continue
+        for sp in sf.pads():
+            if not sp.net:
+                continue
+            tp = tf.pad(sp.number)
+            if out.setdefault(sp.net, tp.net) != tp.net:
+                raise env.KatError(f"net {sp.net} maps to {out[sp.net]} and {tp.net}: "
+                                   f"{instance} is wired differently from the block")
+    return out
+
+
+def _placed_ports(info: dict, f: "_Place", netmap: dict) -> dict:
+    """The block file's port points through a placement: {port: {x, y, net[, layer]}}."""
+    out = {}
+    for q in info.get("port_points", []):
+        x, y = f(q["x"], q["y"])
+        out[q["port"]] = {"x": x, "y": y, "net": netmap.get(q["net"], q["net"]),
+                          **({"layer": f.layer(q["layer"])} if q.get("layer") else {})}
+    return out
+
+
+EDGES = {0: "right", 45: "top-right", 90: "top", 135: "top-left", 180: "left", 225: "bottom-left",
+         270: "bottom", 315: "bottom-right"}
+
+
+def port_order(box, f: "_Place", ports: dict) -> dict[str, list[str]]:
+    """Ports per edge of the placed outline, as seen from the top: {edge: [port, ...]}. Edges
+    are named by the way they face (``top``, ``right``, ``bottom``, ``left``; at 45 degrees
+    ``top-right``, ...); each list runs left to right, on ``left``/``right`` top to bottom. A
+    port belongs to the nearest edge."""
+    corners = [f(x, y) for x, y in ((box[0], box[1]), (box[2], box[1]), (box[2], box[3]), (box[0], box[3]))]
+    cx, cy = sum(c[0] for c in corners) / 4, sum(c[1] for c in corners) / 4
+    edges = []
+    for a, b in zip(corners, corners[1:] + corners[:1]):
+        mx, my = (a[0] + b[0]) / 2, (a[1] + b[1]) / 2
+        deg = round(math.degrees(math.atan2(cy - my, mx - cx)) / 45) * 45 % 360    # y grows downwards
+        edges.append((EDGES[deg], a, b))
+    out: dict[str, list[tuple]] = {}
+    for name, q in ports.items():
+        edge = min(edges, key=lambda e: point_seg((q["x"], q["y"]), e[1], e[2]))[0]
+        key = (q["y"], q["x"]) if edge in ("left", "right") else (q["x"], q["y"])
+        out.setdefault(edge, []).append((key, name))
+    return {e: [n for _, n in sorted(v)] for e, v in sorted(out.items())}
 
 
 def _uuid(node: list) -> str | None:
@@ -458,13 +512,17 @@ class StampMixin:
     def stamp(self, block_pcb: Path | str, instance: str | dict, at: tuple[float, float] | None = None,
               rot: float = 0.0, lock: bool = True, source_instance: str | None = None,
               make_room: bool = False, side: str | None = None, layer_map: str | dict | None = None,
-              allow_asymmetric: bool = False) -> dict:
+              allow_asymmetric: bool = False, anchor: str | None = None) -> dict:
         """Copy a checked block layout (a block board, or a block name from the library)
         onto one instance of the block: parts placed as on
         the block board, tracks, vias, zones, keep-outs, graphics and board-only parts
         copied with the instance's nets. ``at``: where the block board's origin (top-left
-        of its outline) goes, mm; ``rot``: 0/90/180/270 degrees. Several instances at
-        once: ``instance={"/CH_A": (x, y), "/CH_B": ((x, y), 180)}`` (or
+        of its outline) goes, mm; the block turns about that point by ``rot`` (0/90/180/270
+        degrees, counter-clockwise), so at 90 it lies above ``at``. ``anchor="top-left"``:
+        ``at`` is the top-left corner of the turned outline's bounding box instead (None: as
+        recorded for the instance, else ``"origin"``). The result gives the turned bounds as
+        ``outline`` (x0, y0, x1, y1 mm) and the point the origin went to as ``origin``;
+        ``stamp_preview`` tells the same without stamping. Several instances at once: ``instance={"/CH_A": (x, y), "/CH_B": ((x, y), 180)}`` (or
         ``((x, y), rot, side)``). Copied copper is
         locked (``lock=False`` leaves it free), so routing keeps it. Stamping again
         replaces the earlier copy. Parts of the design outside block instances that would
@@ -484,7 +542,7 @@ class StampMixin:
         explicit ``"F.Cu=B.Cu,In1.Cu=In2.Cu"``. ``side``/``layer_map`` None: as recorded
         for the instance by an earlier stamp, else top / auto. The design's layer rules
         (``layer_rule``) are checked on the copied copper. Returns pairs, renamed nets,
-        side, layer map and counts."""
+        side, layer map, origin, outline and counts."""
         if isinstance(instance, dict):
             out = []
             for name, where in instance.items():
@@ -492,59 +550,24 @@ class StampMixin:
                 if isinstance(where[0], (tuple, list)):
                     pos, r, sd = (*where, side)[:3] if len(where) == 2 else where
                 out.append(self.stamp(block_pcb, name, pos, r, lock, source_instance, make_room,
-                                      sd, layer_map, allow_asymmetric))
+                                      sd, layer_map, allow_asymmetric, anchor))
             return {"instances": out}
-        from .. import blocks as lib
         from . import cells, coupling
-        from .board import Board
-        if at is None:
-            raise env.KatError("stamp needs at=(x, y)")
-        if rot % 90:
-            raise env.KatError("stamp turns blocks by multiples of 90 degrees only")
-        block_pcb, lib_instance = lib.board_of(block_pcb, near=self.path)
-        source_instance = source_instance or lib_instance
         instance = _norm(instance)
-        earlier = self._stamp_record(instance)
-        side = side or earlier.get("side", "top")
-        if side not in ("top", "bottom"):
-            raise env.KatError(f"side {side!r}: top or bottom")
-        bottom = side == "bottom"
-        if layer_map is None:
-            layer_map = earlier.get("layer_spec") if earlier.get("side") == side else None
-        warnings = []
-        if block_info(block_pcb).get("type") and (why := lib.stale(block_pcb.parent)):
-            warnings.append(f"block {block_pcb.stem}: {why}")
-        src = Board(block_pcb)
-        block = block_pcb.stem
-        info = block_info(block_pcb)
+        plan = self._stamp_plan(block_pcb, instance, at, rot, side, layer_map, allow_asymmetric,
+                                source_instance, anchor)
+        block_pcb, side, bottom, layer_map, warnings = (plan.block_pcb, plan.side, plan.bottom,
+                                                        plan.layer_map, plan.warnings)
+        src, block, info, pairs, environment, mode = (plan.src, plan.block, plan.info, plan.pairs,
+                                                      plan.environment, plan.mode)
+        cmap, order, f = plan.cmap, plan.order, plan.f
         env_zones = set(info.get("environment", []))
-        pairs, environment, mode = self._pairs(src, instance, source_instance)
-
-        # layers: the block may only use copper the design has, through the layer map
-        cmap = lay.copper_map(layer_map, bottom, self, src, self.path, block_pcb, allow_asymmetric)
-        if bottom and info.get("type") and (why := lib.bottom_state(block_pcb.parent, cmap)):
-            warnings.append(f"block {block}: {why}")
-        used = set()
-        for n in src.tree:
-            if head(n) in ("segment", "arc", "zone", "via"):
-                used |= _item_layers(n)
-        for sf in src.footprints():
-            if sf.uuid in pairs or sf.board_only:
-                used |= {l for p in find_all(sf.node, "pad") for l in _item_layers(p)}
-        missing = sorted(l for l in used if l not in cmap)
-        if missing:
-            raise env.KatError(f"the block uses copper layers the design lacks: {', '.join(missing)}")
-        order = self.copper_layers()
-        lfn = lay.layer_fn(cmap, bottom)
-
-        box = src.outline_box() or _parts_box(src, pairs)
-        f = _Place(box, at, rot, bottom, lfn)
         _refuse_locked(src, pairs, instance, f)
         moved = self._room_for(src, pairs, instance, f, make_room)
         self._unstamp(instance)
 
         # parts
-        netmap: dict[str, str] = {}
+        netmap = _netmap(src, pairs, instance)
         env_pads = [p for ef in environment for p in ef.pads()]
         env_nets = {p.net for p in env_pads if p.net}
         members: dict[str, str] = {}          # source uuid -> target uuid (for groups)
@@ -556,18 +579,11 @@ class StampMixin:
             if tf.lib_id != sf.lib_id:
                 raise env.KatError(f"{sf.ref} -> {tf.ref}: footprint {sf.lib_id} vs {tf.lib_id}")
             if tf.side != f.side(sf.side):          # top again after a bottom stamp: F/B swap
-                tf.flip(lfn if bottom else None)
+                tf.flip(f.layer if bottom else None)
             x, y = f(sf.x, sf.y)
             tf.place(x, y, f.fp_angle(sf.rot))
             placed[sf.ref] = tf.ref
             members[sf.uuid] = tf.uuid
-            for sp in sf.pads():
-                if not sp.net:
-                    continue
-                tp = tf.pad(sp.number)
-                if netmap.setdefault(sp.net, tp.net) != tp.net:
-                    raise env.KatError(f"net {sp.net} maps to {netmap[sp.net]} and {tp.net}: "
-                                       f"{instance} is wired differently from the block")
         # net classes: the block was checked with its own. More clearance here would make
         # its copper DRC errors; another width only changes what the router lays next
         stricter, other = [], []
@@ -684,21 +700,99 @@ class StampMixin:
             self._insert(c)
 
         groups = self._copy_groups(src, instance, block + (", bottom" if bottom else ""), members)
-        ports = {}
-        for q in info.get("port_points", []):
-            x, y = f(q["x"], q["y"])
-            ports[q["port"]] = {"x": x, "y": y, "net": netmap.get(q["net"], q["net"]),
-                                **({"layer": f.layer(q["layer"])} if q.get("layer") else {})}
+        ports = _placed_ports(info, f, netmap)
         spec = layer_map if isinstance(layer_map, str) or layer_map is None else dict(layer_map)
         self._stamps[instance] = {"block": str(block_pcb), "at": list(at), "rot": rot, "side": side,
+                                  "anchor": plan.anchor, "origin": list(plan.origin), "outline": plan.outline,
                                   "layer_spec": spec, "layer_map": cmap, "ports": ports}
         shown = {k: v for k, v in cmap.items() if k != v}
         return {"instance": instance, "block": block, "mode": mode, "at": list(at), "rot": rot,
-                "side": side, **({"layer_map": shown} if shown else {}),
+                "side": side, "anchor": plan.anchor, "origin": list(plan.origin), "outline": plan.outline,
+                **({"layer_map": shown} if shown else {}),
                 **({"ports": ports} if ports else {}),
                 **({"made_room": moved} if moved else {}),
                 "pairs": placed, "nets": {k: v for k, v in netmap.items() if k != v},
                 "groups": groups, **counts, **({"warnings": warnings} if warnings else {})}
+
+    def _stamp_plan(self, block_pcb, instance: str | None, at, rot: float, side: str | None, layer_map,
+                    allow_asymmetric: bool, source_instance: str | None, anchor: str | None) -> SimpleNamespace:
+        """Where a stamp would go, without changing anything: the block board, the instance's
+        pairs (none for ``instance`` None), the layer map and the placement."""
+        from .. import blocks as lib
+        from .board import Board
+        if at is None:
+            raise env.KatError("stamp needs at=(x, y)")
+        if rot % 90:
+            raise env.KatError("stamp turns blocks by multiples of 90 degrees only")
+        block_pcb, lib_instance = lib.board_of(block_pcb, near=self.path)
+        source_instance = source_instance or lib_instance
+        earlier = self._stamp_record(instance) if instance else {}
+        side = side or earlier.get("side", "top")
+        if side not in ("top", "bottom"):
+            raise env.KatError(f"side {side!r}: top or bottom")
+        bottom = side == "bottom"
+        anchor = anchor or earlier.get("anchor", "origin")
+        if anchor not in ("origin", "top-left"):
+            raise env.KatError(f"anchor {anchor!r}: origin or top-left")
+        if layer_map is None:
+            layer_map = earlier.get("layer_spec") if earlier.get("side") == side else None
+        warnings = []
+        info = block_info(block_pcb)
+        if info.get("type") and (why := lib.stale(block_pcb.parent)):
+            warnings.append(f"block {block_pcb.stem}: {why}")
+        src = Board(block_pcb)
+        block = block_pcb.stem
+        pairs, environment, mode = self._pairs(src, instance, source_instance) if instance else ({}, [], None)
+
+        # layers: the block may only use copper the design has, through the layer map
+        cmap = lay.copper_map(layer_map, bottom, self, src, self.path, block_pcb, allow_asymmetric)
+        if bottom and info.get("type") and (why := lib.bottom_state(block_pcb.parent, cmap)):
+            warnings.append(f"block {block}: {why}")
+        used = set()
+        for n in src.tree:
+            if head(n) in ("segment", "arc", "zone", "via"):
+                used |= _item_layers(n)
+        for sf in src.footprints():
+            if sf.uuid in pairs or sf.board_only:
+                used |= {l for p in find_all(sf.node, "pad") for l in _item_layers(p)}
+        missing = sorted(l for l in used if l not in cmap)
+        if missing:
+            raise env.KatError(f"the block uses copper layers the design lacks: {', '.join(missing)}")
+        lfn = lay.layer_fn(cmap, bottom)
+
+        box = src.outline_box() or _parts_box(src, pairs or {f.uuid: f for f in src.footprints()})
+        origin = (float(at[0]), float(at[1]))
+        if anchor == "top-left":
+            b = _Place(box, origin, rot, bottom, lfn).box_of(box)
+            origin = (round(2 * origin[0] - b[0], 6), round(2 * origin[1] - b[1], 6))
+        f = _Place(box, origin, rot, bottom, lfn)
+        return SimpleNamespace(block_pcb=block_pcb, side=side, bottom=bottom, layer_map=layer_map,
+                               warnings=warnings, src=src, block=block, info=info, pairs=pairs,
+                               environment=environment, mode=mode, cmap=cmap, order=self.copper_layers(),
+                               box=box, f=f, anchor=anchor, origin=origin,
+                               outline=[round(v, 6) for v in f.box_of(box)])
+
+    def stamp_preview(self, block_pcb: Path | str, at: tuple[float, float], rot: float = 0.0,
+                      instance: str | None = None, side: str | None = None,
+                      layer_map: str | dict | None = None, allow_asymmetric: bool = False,
+                      source_instance: str | None = None, anchor: str | None = None) -> dict:
+        """Where a stamp would put the block, as seen on this board, without changing it (same
+        arguments and refusals of the placement as ``stamp``; collisions are not checked).
+        Without ``instance`` the ports carry the block's own net names, so pins can be assigned
+        before the design has the instance. Returns instance, block, at, rot, side, anchor,
+        ``origin``, ``outline`` (bounds x0, y0, x1, y1 mm), ``ports`` ({port: {x, y, net[,
+        layer]}}), ``order`` (ports per edge, ``port_order``), ``layer_map`` and ``warnings``."""
+        name = _norm(instance) if instance else None
+        plan = self._stamp_plan(block_pcb, name, at, rot, side, layer_map, allow_asymmetric,
+                                source_instance, anchor)
+        netmap = _netmap(plan.src, plan.pairs, name) if name else {}
+        ports = _placed_ports(plan.info, plan.f, netmap)
+        shown = {k: v for k, v in plan.cmap.items() if k != v}
+        return {"instance": name, "block": plan.block, "at": list(at), "rot": rot, "side": plan.side,
+                "anchor": plan.anchor, "origin": list(plan.origin), "outline": plan.outline,
+                "ports": ports, "order": port_order(plan.box, plan.f, ports),
+                **({"layer_map": shown} if shown else {}),
+                **({"warnings": plan.warnings} if plan.warnings else {})}
 
     def stamp_collisions(self, instances: list[str] | None = None) -> list[dict]:
         """Collisions between stamped instances, pairwise per layer (``cells``): copper

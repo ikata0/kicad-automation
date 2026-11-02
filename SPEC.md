@@ -590,8 +590,19 @@ with kat.pcb.edit("top/top.kicad_pcb") as b:
   `lock=False`), zones and keep-outs (named `/CH_A/RC1: out node`), graphics not on
   Edge.Cuts, board-only parts (new references). The block board's own groups become
   sub-groups of the instance group `"/CH_A (NAME)"`.
-- **Transform:** the block origin (top-left of its outline) goes to `at`, turned by 0, 90,
-  180 or 270 degrees, on the same side as on the block board.
+- **Transform:** the block origin (top-left of its outline) goes to `at` and the block turns
+  about that point by 0, 90, 180 or 270 degrees, counter-clockwise, on the same side as on
+  the block board. So a block `w` x `h` covers, from `at`: at 0 `+w, +h`; at 90 `+h, -w`
+  (above `at`); at 180 `-w, -h`; at 270 `-h, +w`. `anchor="top-left"` / `--anchor top-left`
+  makes `at` the top-left corner of the turned outline's bounding box instead; existing
+  stamps keep what they recorded, and the default stays `origin`. The result gives where
+  the origin went (`origin`) and the turned bounds (`outline`, x0, y0, x1, y1 mm).
+- **Preview:** `b.stamp_preview(block, at, rot, instance, side, ...)` /
+  `kat pcb stamp PCB BLOCK [INSTANCE...] --at X,Y --preview` answers the same without
+  changing the board, with `ports` in the design frame and `order`, the ports per outline
+  edge (each list left to right, on `left` / `right` top to bottom), for mirror-aware pin
+  assignment. Without an instance the ports keep the block's net names, so pins can be
+  assigned before the design has the instance. Collisions are not checked.
 - **Bottom side** (`side="bottom"`, `--side bottom`): the block is mirrored about its
   outline's vertical axis (KiCad's left/right flip), *then* turned by `rot` as seen from
   the top. `at` is the top-left corner of the *flipped* outline as seen from the top (the
@@ -805,7 +816,8 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `pcb fab PCB` / `pcb ready PCB [--accept KIND=REASON] [--overhang REF]` | fabrication set / release gate (§4.11) |
 | `pcb route PCB [--passes] [--net NAME] [--install]` | Freerouting through kat's DSN/SES, then the board check (§4.10) |
 | `pcb check PCB` / `pcb snapshot PCB` / `pcb view PCB ...` | board DRC + findings, history step with pictures, zoomed view (§4.12) |
-| `pcb stamp PCB BLOCK_PCB INSTANCE... --at X,Y [--step DX,DY] [--rot R] [--no-lock] [--make-room] [--side bottom] [--layer-map auto/roles/MAP] [--allow-asymmetric]` | copy a checked block layout onto instances (`all`), flipped on the bottom side, then the board check (§4.18) |
+| `pcb stamp PCB BLOCK_PCB INSTANCE... --at X,Y [--step DX,DY] [--rot R] [--anchor origin/top-left] [--no-lock] [--make-room] [--side bottom] [--layer-map auto/roles/MAP] [--allow-asymmetric]` | copy a checked block layout onto instances (`all`), flipped on the bottom side, then the board check (§4.18) |
+| `pcb stamp PCB BLOCK_PCB [INSTANCE...] --at X,Y --preview [...]` | origin, turned bounds and ports of a proposed stamp, board unchanged (§4.18) |
 | `pcb collisions PCB [INSTANCE...]` | per-layer collisions between stamped instances (§4.18) |
 | `pcb cell BLOCK_PCB [--pitch DX,DY / --clear] [--min-pitch x/y/arc [--center CX,CY] [--side top/bottom/alternate] [--layer-map MAP] [--allow-asymmetric] [--shared GLOB] [--save]]` | a block's stamping pitch and per-layer footprint; smallest collision-free pitch (§4.18) |
 | `pcb netrule PCB coupling A B [--distance D] [--estimate plate/2d] [--harness]` / `layers NETS LAYER...` / `plane NETS [--net N] [--except-zone NAME] [--except-zone-glob GLOB] [--except-area X0,Y0,X1,Y1]` / `list` / `clear` | kat's net rules, checked by `pcb check` (§4.12) |
@@ -961,6 +973,7 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
 | `netrule coupling` reported the harness connector's neighbouring IN/OUT pins, `plane` the intended pour cut-out under Rf/Cf | harness pads are left out (`--harness`); `--except-zone` / `--except-area` |
 | Side-by-side copper (the main case in a guarded layout) has no parallel-plate overlap, so `coupling` gave no pF | `--estimate 2d`: 2D field solution of the cross-section |
 | `pcb sync` on a block board needed `--force`: the harness connector has no MPN | harness parts are exempt from the required fields |
+| A turned stamp's outline is not where people expect: `at` places the block origin and the block turns about it, so at 90 degrees it lies above `at` | the result gives `origin` and the bounds as `outline`; `--preview` tells before stamping; `--anchor top-left` places the turned outline's corner instead (§4.18) |
 | Stamping on the other side of a connector's guide holes was refused: its through-hole pads counted as one box spanning all of them | one box per pad or hole, slots included; DRC agrees (`pth_inside_courtyard` looks at the holes) |
 | A part locked in KiCad was still moved by `Board.move` and `stamp`; only `make_room` honoured the flag | `Footprint.lock()` / `unlock()` / `locked`; moves refuse unless `force=True`, `stamp` refuses unless unlocked |
 | `pcb view --layers In9.Cu` on a board without that layer: kicad-cli exits 0 and writes nothing, kat failed with a raw file error | layer names are checked against the board first |

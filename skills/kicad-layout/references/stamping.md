@@ -8,7 +8,12 @@ checked source layout. Instances are paths such as /CH_A/RC1. Hierarchical
 instances pair by symbol path; flat instances pair by relative SKiDL tag.
 Use `b.instances(block)` to inspect the matches.
 
-The block outline's top-left goes to at; rotations are 0/90/180/270 degrees.
+The block outline's top-left goes to at and the block turns about that point,
+counter-clockwise, by 0/90/180/270 degrees: at 90 it lies above at. --anchor
+top-left makes at the turned outline's top-left corner instead. The result gives
+origin and the turned bounds (outline). --preview reports those and the ports
+(positions, order per edge) without changing the board; it works without an
+instance, for mirror-aware pin assignment before the design has one.
 Parts keep their side unless `--side bottom`: then the block is mirrored about
 its vertical axis, then turned (rot as seen from the top), and at is the
 top-left corner of the flipped outline, so both sides share one grid. Its
