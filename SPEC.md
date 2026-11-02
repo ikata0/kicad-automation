@@ -280,6 +280,7 @@ the GND pour into islands. So the agent lays the structure first and locks it:
 | `lock(net)`, `remove_tracks(net, layer)` | locked copper stays for the router and for rip-up |
 | `at_point(at, layer, kind, net)`, `remove(uuid)`, `remove_at(at, ...)` (`kat pcb remove`) | single tracks and vias by uuid or position, locked ones too (naming them is the decision) |
 | `net_rules(net)` | width, clearance, via size of the net's class |
+| `hole_conflicts(at, drill, layers, kind)` | what a new via's hole would come too close to, by the board's hole-to-hole minimum, the same net too, as DRC counts it (not between two µvias, nor spans that do not meet). `via`, `fanout`, `via_to_plane` and `stitch` keep it |
 | `clearance(a, b, layer)`, `kat.pcb.clearance` | the clearance DRC applies between two nets or pads: the larger of their classes and the board minimum, or the last matching custom rule, which replaces them and can lower them. Conditions on net names and classes are evaluated; a rule depending on more (`A.Type`) is listed as `unresolved` and counted by `worst_case`. Local checks (`track`, `via`, `stamp`) keep `worst_case`. Also the hole limits |
 | `Pad.geometry()`, `Pad.polygons(max_error)`, `kat.pcb.pad_geometry` | a pad's exact shape, as numbers (corner radius, chamfers, trapezoid delta, drill offset, custom primitives, per-layer shapes) or as polygons at most `max_error` outside it. `Pad.outline` stays one simple polygon, never smaller than the pad |
 | `kat.pcb.refill(PCB)` | fill the pours and save them (KiCad's filler) |
@@ -323,6 +324,9 @@ runs `kat pcb check`. No pcbnew involved.
 - Tracks the router narrowed at fine-pitch pads are widened to the net-class width where
   the clearance allows (`widened`; the rest in `narrow`), checked against all the router's
   new copper.
+- **Hole to hole:** the minimum reaches the router as via clearance where it asks more than the
+  copper does. The router does not keep vias of one net apart, so `apply_session` lists any new
+  via still too close in `hole_to_hole`; DRC judges them.
 - **Vias:** every via has its own span in the DSN, so a locked blind via no longer looks like a
   through via to the router. `b.route_vias([("F.Cu", "In1.Cu"), ("F.Cu", "In1.Cu", "micro")],
   through=False)` lets the router lay other vias; it prefers those listed. Freerouting 2.4.1
@@ -999,6 +1003,7 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
 | Side-by-side copper (the main case in a guarded layout) has no parallel-plate overlap, so `coupling` gave no pF | `--estimate 2d`: 2D field solution of the cross-section |
 | `pcb sync` on a block board needed `--force`: the harness connector has no MPN | harness parts are exempt from the required fields |
 | kat's docs said DRC ignores a custom rule below the board minimum; on KiCad 10.0.6 a matching rule replaces it, and local checks only took the larger class clearance | `Board.clearance` resolves it as DRC does and is checked against it; the warning from `rules` says so |
+| A hole-to-hole minimum was only found by DRC afterwards: local checks skip same-net copper, and the router was not told | `via`, `fanout` and `stitch` keep it, the DSN carries it as via clearance, and `route` lists what still breaks it (§4.9, §4.10) |
 | Freerouting 2.4.1 lays no vias when only blind or buried ones are offered, and with a through via offered too it may use that instead | the DSN offers the allowed ones first and a through via last; with `through=False` the session is checked and such a net is left unconnected, reported (§4.10) |
 | Blind vias counted on every layer: local checks refused copper they do not touch, and the router saw them as through vias, joining layers they do not reach | each via has its own span in `_Copper` and the DSN |
 | An exception to a zone's thermal relief needed direct node edits, and a changed connection mode counted as an unchanged zone | `zone(pads=...)`, `pad_connection(pads, mode)`; stamps carry a block's overrides |

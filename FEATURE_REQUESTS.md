@@ -97,14 +97,6 @@ source and regenerate/sync the netlist and schematic. Preserve the rule that
 connectivity is owned by the design, not edited only on the PCB, and verify
 netlist parity after the change.
 
-### FR-023: Enforce drill-to-drill spacing during routing
-
-**Partial.** Apply hole-to-hole minimums when generating/selecting vias, including
-same-net vias, and expose that constraint to routing clients.
-`b.constraints(hole_to_hole=...)` already writes the DRC minimum, but local
-copper checks skip same-net copper and the DSN exporter does not translate
-`min_hole_to_hole` into a routing constraint. KiCad DRC remains the final judge.
-
 ### FR-025: Derive layer-scoped keepouts from copper
 
 **Partial.** Generate keepouts around selected copper with a scope such as
@@ -234,3 +226,11 @@ used a through via stays unconnected and reported; and it does not stack blind a
 --via-span MODE --pads`. `strict` stays the default. `ends` counts only the two layers a via
 joins, `ignore` skips vias, and `pads` adds pads, which were never checked before. `stamp`
 follows the same settings.
+
+### FR-023: Enforce drill-to-drill spacing during routing
+
+`Board.hole_conflicts` answers for a proposed via, same net included, as KiCad's DRC counts it:
+not between two µvias, nor between spans that do not meet. `via`, `fanout`, `via_to_plane` and
+`stitch` keep the minimum, and `clearance` reports it. The DSN carries it as via clearance
+between nets. The router does not keep vias of one net apart, so `route` lists any that still
+break it in `hole_to_hole`; DRC stays the final judge.

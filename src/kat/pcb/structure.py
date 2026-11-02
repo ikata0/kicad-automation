@@ -22,6 +22,7 @@ EDGE_CLEARANCE = 0.5   # copper to board edge, mm
 VIA = (0.6, 0.3)       # default size and drill, as KiCad's Default class
 MICROVIA = (0.3, 0.1)  # the same for a µvia
 VIA_KINDS = ("through", "blind", "buried", "micro")
+HOLE_TO_HOLE = 0.25    # KiCad's default minimum, mm
 
 
 def via_kind(a: str, b: str, copper: list[str], kind: str | None = None) -> tuple[str, tuple[str, str]]:
@@ -58,24 +59,60 @@ class _Copper:
 
     def __init__(self, board):
         self.index = Index(cell=2.0)
+        self.holes = Index(cell=2.0)
+        self.copper = board.copper_layers()
+        self.hole_to_hole = board.board_minimums().get("min_hole_to_hole", HOLE_TO_HOLE)
         for pad in board.pads():
-            layers = {l for l in board.copper_layers() if pad.on(l)}
+            layers = {l for l in self.copper if pad.on(l)}
             self.index.add(pad.box, {"kind": "pad", "net": pad.net, "layers": layers,
                                      "poly": pad.outline, "ref": f"{pad.ref}.{pad.number}"})
+            if pad.hole_box:
+                r, (dx, dy) = pad._hole()
+                self._add_hole(pad.hole_box, {"kind": "pad", "net": pad.net, "a": (pad.x - dx, pad.y - dy),
+                                              "b": (pad.x + dx, pad.y + dy), "r": r, "span": set(self.copper),
+                                              "micro": False, "what": f"{pad.ref}.{pad.number}"})
         for t in board.tracks():
             self.add_track(t["start"], t["end"], t["width"], t["layer"], t["net"])
         for v in board.vias():
-            self.add_via(v["at"], v["size"], v["net"], set(v["span"]))
+            self.add_via(v["at"], v["size"], v["net"], set(v["span"]), v["drill"], v["kind"])
 
     def add_track(self, a, b, width, layer, net):
         h = width / 2
         box = (min(a[0], b[0]) - h, min(a[1], b[1]) - h, max(a[0], b[0]) + h, max(a[1], b[1]) + h)
         self.index.add(box, {"kind": "track", "net": net, "layers": {layer}, "seg": (a, b), "half": h})
 
-    def add_via(self, at, size, net, layers):
+    def add_via(self, at, size, net, layers, drill=None, kind="through"):
         r = size / 2
         self.index.add((at[0] - r, at[1] - r, at[0] + r, at[1] + r),
                        {"kind": "via", "net": net, "layers": layers, "at": at, "r": r})
+        if drill:
+            d = drill / 2
+            self._add_hole((at[0] - d, at[1] - d, at[0] + d, at[1] + d),
+                           {"kind": "via", "net": net, "a": at, "b": at, "r": d, "span": set(layers),
+                            "micro": kind == "micro", "what": f"via at {at[0]:g},{at[1]:g}"})
+
+    def _add_hole(self, box, item):
+        self.holes.add(box, item)
+
+    def hole_conflicts(self, at, drill, layers=None, kind="through", same_spot_net=None) -> list[dict]:
+        """Holes closer than the board's hole-to-hole minimum to a new via's hole, same net
+        included, as KiCad's DRC counts them: not between two µvias, nor between holes whose
+        layer spans do not meet. ``same_spot_net``: an existing via of this net at exactly
+        ``at`` is no conflict (it gets shared). Rows: kind, what, net, gap (mm), need (mm)."""
+        layers = set(layers or self.copper)
+        r = drill / 2
+        need = self.hole_to_hole
+        out = []
+        for h in self.holes.query((at[0] - r, at[1] - r, at[0] + r, at[1] + r), margin=need + 0.01):
+            if (kind == "micro" and h["micro"]) or not (h["span"] & layers):
+                continue
+            if same_spot_net and h["net"] == same_spot_net and h["kind"] == "via" and math.dist(h["a"], at) < 1e-3:
+                continue
+            gap = point_seg(at, h["a"], h["b"]) - h["r"] - r
+            if gap < need - 1e-6:
+                out.append({"kind": h["kind"], "what": h["what"], "net": h["net"], "gap": round(max(gap, 0.0), 3),
+                            "need": need})
+        return out
 
     def conflicts(self, net: str, layers: set, clearance, seg=None, circle=None, poly=None,
                   skip: str | None = None) -> list[dict]:
@@ -277,15 +314,33 @@ class StructureMixin:
         drill = drill or rules["microvia_drill" if micro else "via_drill"]
         if check:
             on = copper[copper.index(span[0]):copper.index(span[1]) + 1]
-            hits = _Copper(self).conflicts(net, set(on), self._clearance_fn(), circle=(xy, size / 2))
+            cu = _Copper(self)
+            hits = cu.conflicts(net, set(on), self._clearance_fn(), circle=(xy, size / 2))
             if hits:
                 raise env.KatError(f"via at {xy} too close to {hits[:3]}")
+            holes = cu.hole_conflicts(xy, drill, on, kind)
+            if holes:
+                raise env.KatError(f"via at {xy}: its hole is too close to {holes[:3]} (hole to hole, "
+                                   "the same net too)")
         node = self._via(xy, net, size, drill, lock, span, kind)
         return {"net": net, "at": list(xy), "kind": kind, "layers": list(span), "uuid": str(find(node, "uuid")[1])}
 
-    def _free_via_spot(self, cu, pad, net, size, width, layer, max_reach: float = 3.0):
+    def hole_conflicts(self, at, drill: float | None = None, layers: tuple[str, str] | None = None,
+                       kind: str = "through") -> list[dict]:
+        """What a new via's hole at (x, y) would come too close to, by the board's hole-to-hole
+        minimum, the same net included: for code choosing via spots. ``drill`` mm (default: the
+        Default class's), ``layers`` its two ends (default both outer ones), ``kind``. Rows:
+        kind, what, net, gap (mm), need (mm); empty if the spot is free."""
+        copper = self.copper_layers()
+        kind, span = via_kind(*(layers or (copper[0], copper[-1])), copper, kind)
+        rules = self.net_rules("")
+        drill = drill or rules["microvia_drill" if kind == "micro" else "via_drill"]
+        return _Copper(self).hole_conflicts(tuple(at), drill, copper[copper.index(span[0]):copper.index(span[1]) + 1], kind)
+
+    def _free_via_spot(self, cu, pad, net, size, width, layer, max_reach: float = 3.0, drill: float | None = None):
         """First spot for a via next to ``pad``: along the pad's outward direction first,
-        then sideways, then inward; stub and via both clear of other-net copper."""
+        then sideways, then inward; stub and via both clear of other-net copper, its hole clear
+        of other holes (a via of its own net at exactly that spot gets shared)."""
         f = self.footprint(pad.ref)
         fb = f.box()
         cx, cy = (fb[0] + fb[2]) / 2, (fb[1] + fb[3]) / 2
@@ -319,6 +374,8 @@ class StructureMixin:
                     continue
                 if cu.conflicts(net, {layer}, cl, seg=(((pad.x, pad.y), (x, y)), width / 2)):
                     continue
+                if drill and cu.hole_conflicts((round(x, 4), round(y, 4)), drill, same_spot_net=net):
+                    continue
                 return round(x, 4), round(y, 4)
         return None
 
@@ -335,7 +392,7 @@ class StructureMixin:
         layer = next(l for l in self.copper_layers() if p.on(l))
         rules = self.net_rules(p.net)
         cu = _cu or _Copper(self)
-        spot = self._free_via_spot(cu, p, p.net, rules["via"], rules["track"], layer)
+        spot = self._free_via_spot(cu, p, p.net, rules["via"], rules["track"], layer, drill=rules["via_drill"])
         if spot is None:
             raise env.KatError(f"no free spot for a via next to {pad}")
         self._segment((p.x, p.y), spot, rules["track"], layer, p.net, lock)
@@ -344,7 +401,7 @@ class StructureMixin:
                      for v in self.vias())
         if not shared:        # a pad on the other side at the same place already made it
             self._via(spot, p.net, rules["via"], rules["via_drill"], lock)
-            cu.add_via(spot, rules["via"], p.net, set(self.copper_layers()))
+            cu.add_via(spot, rules["via"], p.net, set(self.copper_layers()), rules["via_drill"])
         return {"pad": pad, "net": p.net, "via": list(spot), **({"shared": True} if shared else {})}
 
     def fanout(self, refs: str | list[str], nets: list[str] | None = None,
@@ -390,8 +447,10 @@ class StructureMixin:
                     continue
                 if cu.conflicts(net, set(self.copper_layers()), cl, circle=((x, y), r)):
                     continue
+                if cu.hole_conflicts((x, y), rules["via_drill"]):
+                    continue
                 self._via((x, y), net, rules["via"], rules["via_drill"], lock)
-                cu.add_via((x, y), rules["via"], net, set(self.copper_layers()))
+                cu.add_via((x, y), rules["via"], net, set(self.copper_layers()), rules["via_drill"])
                 placed.append([round(x, 3), round(y, 3)])
         return {"net": net, "vias": len(placed)}
 

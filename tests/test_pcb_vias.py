@@ -176,3 +176,103 @@ def test_a_net_using_a_refused_via_gets_none_of_its_new_copper(tmp_path):
     b2 = Board(pcb)                        # with through vias allowed, the default, nothing is refused
     assert "disallowed_vias" not in apply_session(b2, session)
     assert {v["kind"] for v in b2.vias()} == {"through", "blind"}
+
+
+def holes(tmp_path, minimum=0.5):
+    pcb = tmp_path / "h.kicad_pcb"
+    for s in (".kicad_pcb", ".kicad_pro", ".kicad_dru"):
+        pcb.with_suffix(s).unlink(missing_ok=True)
+    b = Board.create(pcb)
+    b.set_copper_layers(4)
+    b.outline(rect=(0, 0, 40, 30))
+    b.constraints(hole_to_hole=minimum, hole_clearance=0.0, min_clearance=0.0)
+    b.netclass("Default", 0.1, 0.05)
+    return pcb, b
+
+
+def drc_types(pcb) -> set:
+    return set(kat.pcb.drc(pcb, parity=False)["by_type"])
+
+
+@pytest.mark.parametrize("first,second,kinds,flagged", [
+    (("F.Cu", "B.Cu"), ("F.Cu", "B.Cu"), (None, None), True),                  # one net: still a hole
+    (("F.Cu", "In1.Cu"), ("F.Cu", "In1.Cu"), (None, None), True),
+    (("F.Cu", "In1.Cu"), ("In2.Cu", "B.Cu"), (None, None), False),             # spans do not meet
+    (("F.Cu", "In1.Cu"), ("F.Cu", "In1.Cu"), ("micro", "micro"), False),       # two µvias
+    (("F.Cu", "B.Cu"), ("F.Cu", "In1.Cu"), (None, "micro"), True),
+])
+def test_hole_conflicts_count_what_drc_counts(tmp_path, first, second, kinds, flagged):
+    """FR-023: for each pair, both ways of asking and KiCad's DRC give the same answer."""
+    pcb, b = holes(tmp_path)
+    b.via((10, 10), "X", layers=first, kind=kinds[0], check=False, size=0.5, drill=0.3)
+    x = 10.6                                                                  # 0.3 mm of edge gap at drill 0.3
+    drill = 0.1 if kinds[1] == "micro" else 0.3
+    if kinds[1] == "micro":
+        x = 10.5
+    found = b.hole_conflicts((x, 10), drill, second, kinds[1])
+    assert bool(found) == flagged, found
+    if found:
+        assert found[0]["need"] == 0.5 and found[0]["net"] == "X"
+        with pytest.raises(kat.KatError, match="hole"):
+            b.via((x, 10), "X", layers=second, kind=kinds[1], size=0.5, drill=drill)
+    b.via((x, 10), "X", layers=second, kind=kinds[1], size=0.5, drill=drill, check=False)
+    b.save()
+    assert ("hole_to_hole" in drc_types(pcb)) == flagged
+
+
+def test_a_via_keeps_the_minimum_from_a_pads_hole_at_the_limit(tmp_path):
+    """FR-023: just outside the minimum is free and DRC is quiet; just inside is neither."""
+    for gap, free in ((0.51, True), (0.49, False)):
+        pcb, b = holes(tmp_path)
+        f = b.add_footprint("Connector_PinHeader_2.54mm:PinHeader_1x01_P2.54mm_Vertical", "J1", 10, 10)
+        pad = f.pad("1")
+        at = (10 + pad.drill / 2 + 0.15 + gap, 10)
+        found = b.hole_conflicts(at, 0.3)
+        assert (not found) == free, found
+        if not free:
+            assert found[0]["what"] == "J1.1"
+        b.via(at, "X", size=0.5, drill=0.3, check=False)
+        b.save()
+        assert ("hole_to_hole" not in drc_types(pcb)) == free
+
+
+def test_stitching_and_fanout_keep_the_holes_apart(tmp_path):
+    """FR-023: a minimum wider than the stitching pitch; DRC finds nothing, where it would."""
+    pcb, b = holes(tmp_path, minimum=6.0)
+    b.stitch("GND", pitch=5.0, margin=2.0)
+    assert 1 < len(b.vias()) < 25
+    b.save()
+    assert "hole_to_hole" not in drc_types(pcb)
+    pcb, b = holes(tmp_path, minimum=1.2)
+    for ref, x in (("R1", 10), ("R2", 12.5)):
+        f = b.add_footprint(R0603, ref, x, 10, 90)
+        node = f.pad("1").node
+        node.insert(node.index(find(node, "layers")) + 1, [Sym("net"), "GND"])
+    res = b.fanout(["R1", "R2"], nets=["GND"])
+    assert len(res["vias"]) + len(res["failed"]) == 2
+    b.save()
+    assert "hole_to_hole" not in drc_types(pcb)
+
+
+def test_dsn_carries_the_minimum_and_route_reports_what_breaks_it(tmp_path):
+    """FR-023: as via clearance when the holes ask more than the copper, and a session's vias of
+    one net, which the router does not keep apart, are reported; DRC agrees."""
+    from kat.pcb.router import apply_session
+    pcb, b = holes(tmp_path, minimum=0.8)
+    f = b.add_footprint(R0603, "R1", 20, 20)
+    node = f.pad("1").node
+    node.insert(node.index(find(node, "layers")) + 1, [Sym("net"), "A"])
+    dsn = tmp_path / "h.dsn"
+    specctra.write_dsn(b, dsn)
+    want = 0.8 + 0.3 - 0.6                                              # the Default class's via
+    assert f"(clearance {want * 1000:g} (type via_via))" in dsn.read_text()
+    res = apply_session(b, {"wires": [], "vias": [{"net": "A", "at": (5, 5), "size": 0.6, "drill": 0.3, "span": (0, 3)},
+                                                  {"net": "A", "at": (5.8, 5), "size": 0.6, "drill": 0.3, "span": (0, 3)},
+                                                  {"net": "A", "at": (15, 5), "size": 0.6, "drill": 0.3, "span": (0, 3)}]})
+    assert [(r["at"], r["near_net"], r["gap"], r["need"]) for r in res["hole_to_hole"]] == [([5.8, 5], "A", 0.5, 0.8)]
+    b.save()
+    assert "hole_to_hole" in drc_types(pcb)
+    default = holes(tmp_path, minimum=0.25)[1]
+    specctra.write_dsn(default, dsn)
+    assert "via_via" not in dsn.read_text()                             # nothing asked beyond the copper
+

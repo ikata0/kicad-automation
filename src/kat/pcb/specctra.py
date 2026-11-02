@@ -169,8 +169,16 @@ def write_dsn(b: Board, path: Path, nets: list[str] | None = None, skip_pins: se
     mins = b.board_minimums()
     hole = mins.get("min_hole_clearance", 0.25)
     via_cl = max(default["clearance"], hole - (default["via"] - default["via_drill"]) / 2)
-    extra = "".join(f" (clearance {_um(via_cl)} (type {ty}))" for ty in ("via_smd", "via_pin", "via_wire", "via_via")) \
-        if via_cl > default["clearance"] + 1e-9 else ""
+    # the hole-to-hole minimum as copper clearance too: the same reason (other nets only: the
+    # router does not keep its own net's vias apart, apply_session reports those)
+    h2h = mins.get("min_hole_to_hole", 0.25)
+    offered = list(allowed.values())
+    via_via = max([via_cl] + [h2h + (p["drill"] + q["drill"] - p["size"] - q["size"]) / 2
+                              for p in offered for q in offered])
+    via_pin = max([via_cl] + [h2h + (v["drill"] + pad.drill - v["size"] - min(pad.w, pad.h)) / 2 for v in offered
+                              for pad in b.pads() if pad.kind == "thru_hole" and pad.drill])
+    values = {"via_smd": via_cl, "via_pin": via_pin, "via_wire": via_cl, "via_via": via_via}
+    extra = "".join(f" (clearance {_um(v)} (type {ty}))" for ty, v in values.items() if v > default["clearance"] + 1e-9)
     lines.append(f"    (rule (width {_um(default['track'])}) (clearance {_um(default['clearance'])})"
                  f" (clearance 50 (type smd_smd)){extra})")
     lines.append("  )")

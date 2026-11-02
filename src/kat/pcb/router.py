@@ -140,7 +140,9 @@ def apply_session(b: Board, result: dict) -> dict:
     narrows tracks at fine-pitch pads ("neck-down") below the net class width; those are
     widened where the clearance allows, checked against everything the router added. With
     ``route_vias(through=False)`` a net whose new copper uses another via gets none of it: it
-    stays unconnected, listed in ``disallowed_vias``. Returns ``added_tracks``, ``added_vias``,
+    stays unconnected, listed in ``disallowed_vias``. New vias closer to another hole than the
+    board's hole-to-hole minimum (same-net ones too, which the router does not keep apart) are
+    listed in ``hole_to_hole``; DRC judges them. Returns ``added_tracks``, ``added_vias``,
     ``widened`` and the ``narrow`` ones left."""
     have = {_key(t["start"], t["end"], t["layer"]) for t in b.tracks()}
     copper = b.copper_layers()
@@ -158,6 +160,7 @@ def apply_session(b: Board, result: dict) -> dict:
                    if span_of(v) not in kinds and (round(v["at"][0], 3), round(v["at"][1], 3), *span_of(v)) not in have_vias]
     refused_nets = {r["net"] for r in refused}
     added_t = added_v = 0
+    close: list[dict] = []
     # everything the router added goes in first, then the widening
     from .structure import _Copper, via_kind
     cu, cl = _Copper(b), b._clearance_fn()
@@ -179,8 +182,11 @@ def apply_session(b: Board, result: dict) -> dict:
             continue
         have_vias.add(k)
         kind, _ = via_kind(*span, copper, kinds.get(span))
+        close += [{"net": v["net"], "at": list(v["at"]), "near": h["what"], "near_net": h["net"], "gap": h["gap"],
+                   "need": h["need"]}
+                  for h in cu.hole_conflicts(v["at"], v["drill"], copper[top:bottom + 1], kind)]
         b._via(v["at"], v["net"], v["size"], v["drill"], False, span, kind)
-        cu.add_via(v["at"], v["size"], v["net"], set(copper[top:bottom + 1]))
+        cu.add_via(v["at"], v["size"], v["net"], set(copper[top:bottom + 1]), v["drill"], kind)
         added_v += 1
     widened, narrow = 0, []
     for w, node in new_wires:
@@ -195,7 +201,7 @@ def apply_session(b: Board, result: dict) -> dict:
             narrow.append({"net": w["net"], "layer": w["layer"], "width": w["width"],
                            "start": list(w["start"]), "end": list(w["end"])})
     return {"added_tracks": added_t, "added_vias": added_v, "widened": widened, "narrow": narrow,
-            **({"disallowed_vias": refused} if refused else {})}
+            **({"disallowed_vias": refused} if refused else {}), **({"hole_to_hole": close} if close else {})}
 
 
 def fine_pitch(b: Board, nets: list[str] | None = None) -> list[dict]:
