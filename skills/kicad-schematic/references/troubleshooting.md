@@ -24,6 +24,13 @@
   close-ups. Overlap heuristics do not see every pin number or wire/text crossing.
 - SKiDL no-connect import fails: NC is a SKiDL builtin; do not import it.
   Run kat.skidl_blocks.write after generating the netlist to record NC pins.
+- A pin name with `+`, `-` or brackets (`IN+`, `V+`, `A(0)`): write it literally,
+  `u["IN+"]`. SKiDL matches names exactly by default, so do not escape them:
+  `u[r"IN\+"]` finds nothing ("No pins found"). Escaping only applies after
+  `u.match_pin_regex = True`, where the name is a pattern (`u["IN.*"]`) and
+  `u[r"IN\+"]` is the safe spelling. A name with a space (`"A B"`) is not found
+  in either mode: use the pin number, `u[5]`. A name can select several pins:
+  on a dual op-amp, `u["+"]` returns the `+` pin of both units.
 
 Use `kat check --full` for uncapped netlist findings. Review gate warnings
 individually; an extra thermal/shield pad can be intentional, while an actual

@@ -955,6 +955,7 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
 | `netrule coupling` reported the harness connector's neighbouring IN/OUT pins, `plane` the intended pour cut-out under Rf/Cf | harness pads are left out (`--harness`); `--except-zone` / `--except-area` |
 | Side-by-side copper (the main case in a guarded layout) has no parallel-plate overlap, so `coupling` gave no pF | `--estimate 2d`: 2D field solution of the cross-section |
 | `pcb sync` on a block board needed `--force`: the harness connector has no MPN | harness parts are exempt from the required fields |
+| Escaping a SKiDL pin name with `+` or brackets (`u[r"IN\+"]`) finds no pin: names match exactly unless `match_pin_regex` is set | write the name literally, `u["IN+"]`; a name with a space takes the pin number (`tests/test_skidl_blocks.py` pins this down) |
 
 ## 8. Open points
 

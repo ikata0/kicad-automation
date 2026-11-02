@@ -222,13 +222,6 @@ identity mechanism, during hierarchical sync. Preserve sheet UUIDs, placement,
 and wiring rather than removing/recreating renamed sheets. `_boxes` in
 `src\kat\syncer_hier.py` currently matches by sheet name.
 
-### FR-027: Document literal SKiDL pin-name selection
-
-**Open.** Add troubleshooting guidance for pin names containing regex
-metacharacters, such as `+`: explain escaping/exact selection supported by SKiDL
-and show pin-number selection as a fallback. Verify examples with the supported
-SKiDL version before publishing them.
-
 ## Rendering reports requiring reproduction
 
 ### FR-028: Verify explicit inner-layer rendering isolation
@@ -239,3 +232,12 @@ view containing other layers, with a subsequent render working. Current
 layer list, so this is not yet a confirmed missing feature or identified bug.
 Reproduce with a minimal generic multilayer board, checking exported SVG contents
 as well as cache reuse, before deciding on a fix.
+
+## Resolved
+
+### FR-027: Document literal SKiDL pin-name selection
+
+Documented in `skills/kicad-schematic/references/troubleshooting.md` and SPEC.md
+section 7. On SKiDL 2.3 names match exactly by default, so the requested escaping
+is only right with `match_pin_regex=True`. `tests/test_skidl_blocks.py` checks each
+statement against the installed SKiDL.

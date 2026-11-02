@@ -102,3 +102,42 @@ def test_board_blocks_are_nested_and_replicate_pairs_by_instance(designs, projec
         for a, bb in res["pairs"]["CH_B"].items():
             assert tag[a].replace("CH_A/", "CH_B/", 1) == tag[bb]
         assert b.block_box("CH_B")[:2] == pytest.approx((150, 150))
+
+
+PIN_NAMES = '''
+import json
+from skidl import KICAD10, Pin, SKIDL, TEMPLATE, Part, set_default_tool
+set_default_tool(KICAD10)
+u = Part(name="X", tool=SKIDL, dest=TEMPLATE, ref_prefix="U",
+         pins=[Pin(num=1, name="IN+"), Pin(num=2, name="IN-"), Pin(num=3, name="IN"),
+               Pin(num=4, name="A(0)"), Pin(num=5, name="A B"),
+               Pin(num=6, name="+"), Pin(num=7, name="+")])()
+
+
+def names(key):
+    r = u[key]
+    return [] if r is None else sorted(str(p.num) for p in (r if isinstance(r, list) else r.pins if hasattr(r, "pins") else [r]))
+
+
+out = {"exact": {k: names(k) for k in ("IN+", "IN\\\\+", "IN.*", "A(0)", "A\\\\(0\\\\)", "A B", "+", 5)}}
+u.match_pin_regex = True
+out["regex"] = {k: names(k) for k in ("IN+", "IN\\\\+", "IN.*", "A\\\\(0\\\\)", "A B")}
+print(json.dumps(out))
+'''
+
+
+def test_literal_pin_names_as_the_troubleshooting_guide_says(tmp_path):
+    """FR-027: what skills/kicad-schematic/references/troubleshooting.md tells people about
+    pin names with regex characters, on the installed SKiDL."""
+    script = tmp_path / "pins.py"
+    script.write_text(PIN_NAMES)
+    run = subprocess.run([sys.executable, str(script)], check=True, capture_output=True, text=True,
+                         cwd=tmp_path)
+    got = json.loads(run.stdout.strip().splitlines()[-1])
+    exact, regex = got["exact"], got["regex"]
+    assert exact["IN+"] == ["1"] and exact["A(0)"] == ["4"]         # literally, by default
+    assert exact["IN\\+"] == [] and exact["A\\(0\\)"] == [] and exact["IN.*"] == []   # no patterns
+    assert exact["A B"] == [] and exact["5"] == ["5"]               # a space: the pin number
+    assert exact["+"] == ["6", "7"]                                 # one name, several pins
+    assert regex["IN\\+"] == ["1"] and regex["A\\(0\\)"] == ["4"]   # escaping needs regex mode
+    assert regex["IN.*"] == ["1", "2", "3"] and regex["A B"] == []
