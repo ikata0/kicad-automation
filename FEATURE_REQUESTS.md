@@ -97,14 +97,6 @@ source and regenerate/sync the netlist and schematic. Preserve the rule that
 connectivity is owned by the design, not edited only on the PCB, and verify
 netlist parity after the change.
 
-### FR-025: Derive layer-scoped keepouts from copper
-
-**Partial.** Generate keepouts around selected copper with a scope such as
-same-layer or a specified sub-laminate. `b.keepout(layers=...)` already supports
-explicit layer lists, and the DSN exporter honours them; the missing capability
-is deriving geometry and layer scope from selected copper without hand-building
-each area.
-
 ## Schematic sync and documentation
 
 ### FR-026: Preserve arrangement when sheet instances are renamed
@@ -234,3 +226,11 @@ not between two µvias, nor between spans that do not meet. `via`, `fanout`, `vi
 `stitch` keep the minimum, and `clearance` reports it. The DSN carries it as via clearance
 between nets. The router does not keep vias of one net apart, so `route` lists any that still
 break it in `hole_to_hole`; DRC stays the final judge.
+
+### FR-025: Derive layer-scoped keepouts from copper
+
+`b.keepout_around(nets, uuids, refs, margin, scope, forbid, name)` builds an area per selected
+item, on the `same` layer, `adjacent` layers, the selection's `span` or a list of layers.
+It forbids pours by default, because KiCad's DRC reports copper inside its own track keep-out
+as `items_not_allowed`; forbidding more is allowed and gives a warning. Judged by KiCad's fill
+and DRC (`tests/test_pcb_zones.py`).

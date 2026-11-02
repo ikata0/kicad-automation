@@ -312,6 +312,97 @@ class SetupMixin:
         status = self._put_zone(node, name)
         return {"keepout": name, "layers": layers, "status": status}
 
+    def keepout_around(self, nets: list[str] | None = None, uuids: list[str] | None = None,
+                       refs: list[str] | None = None, margin: float = 0.2, scope: str | list[str] = "same",
+                       forbid: tuple[str, ...] = ("pour",), name: str = "") -> dict:
+        """Keep-outs derived from copper: one rule area per selected item, ``margin`` mm around
+        it (straight runs of a track count as one). Selected: tracks and vias of ``nets``, or
+        by ``uuids``, and pads in ``refs`` (``U1`` or ``U1.8``). ``scope``: the layers each goes
+        on, ``"same"`` (the item's own), ``"adjacent"`` (the copper layers next to it), ``"span"``
+        (all from the selection's top layer to its bottom layer) or a list of layers (a
+        sub-laminate). ``forbid``: what may not be inside, of tracks, vias, pads, pour,
+        footprints. Forbidding copper on a layer holding the selection makes that copper itself
+        a DRC error (``items_not_allowed``): ``warnings`` says so. ``name``: a prefix, areas are
+        ``NAME:1``, ...; running it again replaces those of that name. Returns ``keepouts``
+        (names), ``layers``, ``removed`` (old ones replaced), ``warnings``."""
+        from .coupling import _arc_points, _pt
+        from .geometry import capsule_points, circle_points, hull
+        bad = set(forbid) - {"tracks", "vias", "pads", "pour", "footprints"}
+        if bad:
+            raise env.KatError(f"forbid {', '.join(sorted(bad))}: of tracks, vias, pads, pour, footprints")
+        if margin < 0:
+            raise env.KatError("margin must be >= 0 mm")
+        copper = self.copper_layers()
+        ids, want = set(uuids or ()), set(nets or ())
+        err = 0.02
+        items: list[tuple[str, list]] = []             # (source layer, polygon)
+        runs: list[dict] = []
+        used = {"tracks": set(), "vias": set(), "pads": set()}
+        for t in self.tracks():
+            if t["net"] not in want and t["uuid"] not in ids:
+                continue
+            used["tracks"].add(t["layer"])
+            r = t["width"] / 2 + margin
+            pts = (_arc_points(t["start"], _pt(find(t["node"], "mid")), t["end"]) if t["kind"] == "arc"
+                   else [t["start"], t["end"]])
+            runs += [{"layer": t["layer"], "r": r, "a": a, "b": b} for a, b in zip(pts, pts[1:])]
+        for run in _straight_runs(runs):
+            items.append((run["layer"], capsule_points(run["a"], run["b"], run["r"], err)))
+        for v in self.vias():
+            if v["net"] in want or v["uuid"] in ids:
+                used["vias"].update(v["span"])
+                poly = circle_points(*v["at"], v["size"] / 2 + margin, err)
+                items += [(l, poly) for l in v["span"]]
+        for r in refs or ():
+            ref, _, number = r.partition(".")
+            pads = [p for p in self.footprint(ref).pads() if not number or p.number == number]
+            if not pads:
+                raise env.KatError(f"{ref} has no pad {number!r}")
+            for p in pads:
+                on = [l for l in copper if p.on(l)]
+                used["pads"].update(on)
+                for poly in p.polygons(err):
+                    grown = hull(q for c in poly for q in circle_points(*c, margin, err)) if margin else poly
+                    items += [(l, grown) for l in on]
+        if not items:
+            raise env.KatError("keepout_around: nothing selected (no such nets, uuids or pads)")
+        if isinstance(scope, str):
+            if scope not in ("same", "adjacent", "span"):
+                raise env.KatError(f"scope {scope!r}: same, adjacent, span or a list of layers")
+            top = min(copper.index(l) for l, _ in items)
+            bottom = max(copper.index(l) for l, _ in items)
+
+            def targets(layer):
+                i = copper.index(layer)
+                return {"same": [layer], "adjacent": copper[max(i - 1, 0):i] + copper[i + 1:i + 2],
+                        "span": copper[top:bottom + 1]}[scope]
+        else:
+            if missing := [l for l in scope if l not in copper]:
+                raise env.KatError(f"no copper layer {', '.join(missing)} on this board")
+            targets = lambda layer: list(scope)                             # noqa: E731
+        areas: dict[tuple, set] = {}
+        for layer, poly in items:
+            areas.setdefault(tuple(poly), set()).update(targets(layer))
+        name = name or "around " + "+".join(sorted(want) or sorted(refs or ()) or ["selection"])
+        old = [z for z in self.zones() if (n := find(z, "name")) is not None and str(n[1]).startswith(f"{name}:")]
+        for z in old:
+            self.tree.remove(z)
+        made, layers = [], set()
+        for k, (poly, on) in enumerate(sorted(areas.items(), key=lambda e: e[0]), 1):
+            if not on:
+                continue
+            order = sorted(on, key=copper.index)
+            self.keepout(order, polygon=list(poly), tracks="tracks" not in forbid, vias="vias" not in forbid,
+                         pads="pads" not in forbid, pour="pour" not in forbid,
+                         footprints="footprints" not in forbid, name=f"{name}:{k}")
+            made.append(f"{name}:{k}")
+            layers |= on
+        clash = [f"{kind} of the selection on {', '.join(sorted(used[kind] & layers, key=copper.index))}"
+                 for kind in used if kind in forbid and used[kind] & layers]
+        return {"keepouts": made, "layers": sorted(layers, key=copper.index), "removed": len(old),
+                **({"warnings": [f"these areas forbid what they surround, so DRC will report it "
+                                 f"(items_not_allowed): {'; '.join(clash)}"]} if clash else {})}
+
     # --- net classes and rules (project files, written on save) ---------------------------
 
     def netclass(self, name: str, track: float, clearance: float, via: float = 0.6,
@@ -488,6 +579,29 @@ class SetupMixin:
                                                            encoding="utf-8")
             self._rules_text = None
             self._gen_rules = {}
+
+
+def _joined(run: dict, s: dict) -> bool:
+    """Extend ``run`` by segment ``s`` if it goes straight on from one of its ends."""
+    for pa, pb in ((run["a"], run["b"]), (run["b"], run["a"])):
+        for sa, sb in ((s["a"], s["b"]), (s["b"], s["a"])):
+            if math.dist(pb, sa) > 1e-6:
+                continue
+            ux, uy, vx, vy = pb[0] - pa[0], pb[1] - pa[1], sb[0] - sa[0], sb[1] - sa[1]
+            if abs(ux * vy - uy * vx) <= 1e-6 * math.hypot(ux, uy) * math.hypot(vx, vy) and ux * vx + uy * vy > 0:
+                run["a"], run["b"] = pa, sb
+                return True
+    return False
+
+
+def _straight_runs(segments: list[dict]) -> list[dict]:
+    """Segments (layer, half width r, ends a, b) with collinear neighbours of one layer and width
+    joined, so a long track makes one area."""
+    out: list[dict] = []
+    for s in sorted(segments, key=lambda e: (e["layer"], e["r"], min(e["a"], e["b"]))):
+        if not any(run["layer"] == s["layer"] and abs(run["r"] - s["r"]) < 1e-9 and _joined(run, s) for run in out):
+            out.append(dict(s))
+    return out
 
 
 def _split_rules(text: str) -> tuple[list[str], dict[str, str]]:

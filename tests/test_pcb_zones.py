@@ -3,6 +3,7 @@
 import pytest
 
 import kat
+import kat.pcb.geometry
 from kat.pcb import Board
 from kat.pcb.coupling import _filled, _pts
 from kat.sexpr import Sym, find, find_all
@@ -91,3 +92,97 @@ def test_refusals_and_a_changed_mode_replaces_the_zone(tmp_path):
             b.pad_connection("R1.1", "x")
         with pytest.raises(kat.KatError, match="no pad '9'"):
             b.pad_connection("R1.9", "solid")
+
+
+def guarded(tmp_path):
+    """IN on F.Cu above a GND plane on In1 of a 4-layer board: a straight run in two segments,
+    a corner, and a via down to In2."""
+    pcb = tmp_path / "g.kicad_pcb"
+    for s in (".kicad_pcb", ".kicad_pro", ".kicad_dru"):
+        pcb.with_suffix(s).unlink(missing_ok=True)
+    b = Board.create(pcb)
+    b.set_copper_layers(4)
+    b.outline(rect=(0, 0, 40, 30))
+    b.zone("GND", "In1.Cu", name="plane")
+    b.add_track((5, 10), (15, 10), 0.2, "F.Cu", "IN")
+    b.add_track((15, 10), (25, 10), 0.2, "F.Cu", "IN")
+    b.add_track((25, 10), (25, 20), 0.2, "F.Cu", "IN")
+    return pcb, b
+
+
+def poured(pcb, x, y, layer="In1.Cu") -> bool:
+    from kat.pcb.geometry import inside
+    for z in find_all(_filled(pcb).tree, "zone"):
+        for fp in find_all(z, "filled_polygon"):
+            if str(find(fp, "layer")[1]) == layer and inside(_pts(fp), (x, y)):
+                return True
+    return False
+
+
+def test_keepout_around_clears_the_plane_next_to_a_track(tmp_path):
+    """FR-025: under the track and its margin no copper is poured, beside that it is; DRC has no
+    objection, since only pours are forbidden."""
+    pcb, b = guarded(tmp_path)
+    b.save()
+    assert poured(pcb, 15, 10)
+    with kat.pcb.edit(pcb) as e:
+        res = e.keepout_around(nets=["IN"], margin=0.5, scope="adjacent", name="IN guard")
+    assert res["layers"] == ["In1.Cu"] and "warnings" not in res
+    assert res["keepouts"] == ["IN guard:1", "IN guard:2"]            # the straight run counts as one
+    assert not poured(pcb, 15, 10) and not poured(pcb, 25, 15)
+    assert poured(pcb, 15, 12) and poured(pcb, 30, 25)
+    d = kat.pcb.drc(pcb, parity=False, refill=True)
+    assert not d["errors"] and "items_not_allowed" not in d["by_type"], d["by_type"]
+
+
+def test_keepout_around_scopes_selection_and_running_it_again(tmp_path):
+    pcb, b = guarded(tmp_path)
+    via = b.via((5, 10), "IN", layers=("F.Cu", "In2.Cu"))
+    on = lambda res: res["layers"]                                       # noqa: E731
+    assert on(b.keepout_around(nets=["IN"], scope="same", name="a")) == ["F.Cu", "In1.Cu", "In2.Cu"]   # the via too
+    assert on(b.keepout_around(uuids=[via["uuid"]], scope="adjacent", name="b")) == ["F.Cu", "In1.Cu", "In2.Cu", "B.Cu"]
+    assert on(b.keepout_around(uuids=[via["uuid"]], scope=["In2.Cu", "B.Cu"], name="c")) == ["In2.Cu", "B.Cu"]
+    assert on(b.keepout_around(uuids=[b.tracks()[0]["uuid"]], scope="span", name="d")) == ["F.Cu"]
+    assert on(b.keepout_around(uuids=[via["uuid"]], scope="span", name="e")) == ["F.Cu", "In1.Cu", "In2.Cu"]
+    f = b.add_footprint(SMD, "R1", 30, 5)
+    pad = b.keepout_around(refs=["R1.1"], margin=0.1, scope=["In1.Cu"], name="f")
+    assert len(pad["keepouts"]) == 1
+    box = kat.pcb.geometry.box_of(_pts(find(next(z for z in b.zones() if str(find(z, "name")[1]) == "f:1"), "polygon")))
+    p = f.pad("1").box
+    assert box[0] == pytest.approx(p[0] - 0.1, abs=0.03) and box[3] == pytest.approx(p[3] + 0.1, abs=0.03)
+    # again with fewer: the old ones of that name go, others stay
+    count = len(b.zones())
+    again = b.keepout_around(uuids=[b.tracks()[2]["uuid"]], scope="same", name="a")
+    assert again["removed"] > 1 and again["keepouts"] == ["a:1"] and len(b.zones()) < count
+    assert any(str(find(z, "name")[1]) == "b:1" for z in b.zones())
+    for bad, why in ((dict(nets=["NOPE"]), "nothing selected"), (dict(nets=["IN"], scope="wide"), "scope 'wide'"),
+                     (dict(nets=["IN"], scope=["In9.Cu"]), "no copper layer In9.Cu"),
+                     (dict(nets=["IN"], forbid=("copper",)), "forbid copper"),
+                     (dict(nets=["IN"], margin=-1), "margin"), (dict(refs=["R1.9"]), "no pad '9'")):
+        with pytest.raises(kat.KatError, match=why):
+            b.keepout_around(**bad)
+
+
+def test_keepout_around_warns_when_its_copper_would_break_it(tmp_path):
+    """FR-025: KiCad reports copper inside its own keep-out, on the layer that holds it; the
+    warning names that case, and on another layer the router simply stays out."""
+    from kat.pcb import specctra
+    pcb, b = guarded(tmp_path)
+    res = b.keepout_around(nets=["IN"], scope="same", forbid=("tracks",), name="own")
+    assert "items_not_allowed" in res["warnings"][0] and "F.Cu" in res["warnings"][0]
+    b.save()
+    assert "items_not_allowed" in kat.pcb.drc(pcb, parity=False)["by_type"]
+    pcb, b = guarded(tmp_path)
+    res = b.keepout_around(nets=["IN"], scope="adjacent", forbid=("tracks", "vias"), name="below")
+    assert "warnings" not in res
+    f = b.add_footprint(SMD, "R1", 30, 5)
+    node = f.pad("1").node
+    node.insert(node.index(find(node, "layers")) + 1, [Sym("net"), "A"])
+    dsn = tmp_path / "k.dsn"
+    specctra.write_dsn(b, dsn)
+    text = dsn.read_text()
+    assert text.count('(wire_keepout "" (polygon In1.Cu') == 2 == text.count('(via_keepout "" (polygon In1.Cu')
+    assert '(wire_keepout "" (polygon F.Cu' not in text and '(wire_keepout "" (polygon In2.Cu' not in text
+    b.save()
+    assert "items_not_allowed" not in kat.pcb.drc(pcb, parity=False)["by_type"]
+

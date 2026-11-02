@@ -189,6 +189,8 @@ with kat.pcb.edit(PCB) as b:
 - Stitching vias last: `b.stitch("GND", pitch=5)`.
 - Finishing: `b.place_refs()`, `b.board_text("NAME rev A", (x, y))`,
   `b.title_from_schematic()`, `b.fiducials(3)`, then `kat pcb refill PCB`.
+- Clear a plane near sensitive copper: `b.keepout_around(nets=["/IN"], margin=0.3, scope="adjacent")`
+  (or `scope="span"`, or a list of layers). It forbids pours only unless told otherwise.
 - A wrong via or track, locked or not: `b.remove_at((x, y), kind="via")` or
   `kat pcb remove PCB --at X,Y` - no board rebuild needed.
 - The route result's `fine_pitch` names classes too wide to leave a fine-pitch pin; give
