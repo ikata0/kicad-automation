@@ -220,8 +220,8 @@ routing; `kat pcb check` reports them in `net_rules` and is not `clean` while an
 - `kat pcb netrule PCB layers 'IN*' in_signal_top in_signal_bottom`: layers by name, `L1`
   or role (`kat pcb roles PCB L1=in_signal_top ...`); `stamp` refuses blocks breaking it.
 - `kat pcb netrule PCB plane 'IN*' --net GND`: a GND pour on an adjacent layer under them;
-  an intended cut-out (under Rf/Cf) is exempt with `--except-zone NAME` or
-  `--except-area X0,Y0,X1,Y1`.
+  an intended cut-out (under Rf/Cf) is exempt with `--except-zone NAME`, a family of them
+  with `--except-zone-glob '/*: cut*'`, or an area with `--except-area X0,Y0,X1,Y1`.
 
 ## Design change during layout
 

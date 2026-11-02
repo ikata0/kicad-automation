@@ -299,14 +299,21 @@ def layer_rule(pcb: Path | str, nets: str, layers: list[str]) -> dict:
 
 
 def plane_rule(pcb: Path | str, nets: str, net: str | None = None, except_zones: list[str] | None = None,
-               except_areas: list[tuple[float, float, float, float]] | None = None) -> dict:
+               except_areas: list[tuple[float, float, float, float]] | None = None,
+               except_globs: list[str] | None = None) -> dict:
     """Tracks of ``nets`` need a pour of ``net`` (None: any other net) on an adjacent layer
     under their whole length; ``kat pcb check`` reports the uncovered length. Track inside
-    a zone/rule area named in ``except_zones`` or a rectangle of ``except_areas`` (x0, y0,
-    x1, y1 mm) is exempt (an intended cut-out). Returns the net rules."""
+    a zone/rule area named in ``except_zones``, one whose name matches a glob of
+    ``except_globs`` (``/*: cut*``, decided at check time) or a rectangle of ``except_areas``
+    (x0, y0, x1, y1 mm) is exempt (an intended cut-out). Returns the net rules; ``warnings``
+    names globs matching nothing yet."""
     from . import coupling
     report.touch(pcb)
-    return {"board": str(pcb), "net_rules": coupling.plane_rule(pcb, nets, net, except_zones, except_areas)}
+    rules = coupling.plane_rule(pcb, nets, net, except_zones, except_areas, except_globs)
+    none = coupling.unmatched_globs(pcb, except_globs or [])
+    return {"board": str(pcb), "net_rules": rules,
+            **({"warnings": [f"--except-zone-glob {g!r} matches no zone or rule area yet" for g in none]}
+               if none else {})}
 
 
 def net_rules(pcb: Path | str, clear: bool = False) -> dict:

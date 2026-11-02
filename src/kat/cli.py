@@ -194,7 +194,8 @@ def cmd_pcb(a):
             if len(a.args) != 1:
                 raise env.KatError("plane needs one net selector (and --net for the plane's net)")
             return kat.pcb.plane_rule(a.pcb, a.args[0], a.net, a.except_zone,
-                                      [tuple(float(v) for v in x.split(",")) for x in a.except_area or []])
+                                      [tuple(float(v) for v in x.split(",")) for x in a.except_area or []],
+                                      a.except_zone_glob)
         if a.args:
             raise env.KatError(f"{a.kind} takes no further arguments")
         return kat.pcb.net_rules(a.pcb, a.kind == "clear")
@@ -902,7 +903,8 @@ def build_parser() -> argparse.ArgumentParser:
                                      "  layers NETS LAYER...         NETS only on these layers (names, L1, roles);\n"
                                      "                               stamp refuses blocks that break it\n"
                                      "  plane NETS [--net GND]       a pour on an adjacent layer under every track,\n"
-                                     "                               except in --except-zone NAME / --except-area\n"
+                                     "                               except in --except-zone NAME / --except-zone-glob\n"
+                                     "                               GLOB / --except-area\n"
                                      "  list | clear                 show or remove the rules\n"
                                      "Stored in <board>.kat.json.")
     s16.add_argument("pcb", metavar="PCB")
@@ -915,6 +917,8 @@ def build_parser() -> argparse.ArgumentParser:
     s16.add_argument("--net", help="plane: the plane's net (default: any other net)")
     s16.add_argument("--except-zone", action="append", metavar="NAME",
                      help="plane: no pour needed inside this named zone / rule area (repeatable)")
+    s16.add_argument("--except-zone-glob", action="append", metavar="GLOB",
+                     help="plane: the same for every zone / rule area whose name matches (repeatable)")
     s16.add_argument("--except-area", action="append", metavar="X0,Y0,X1,Y1",
                      help="plane: no pour needed inside this rectangle, mm (repeatable)")
     s10 = psp.add_parser("instances", formatter_class=_Fmt, help="instances of a block in a design")

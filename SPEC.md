@@ -373,7 +373,9 @@ shows them) and make the board not `clean`:
 - `plane NETS [--net GND]`: a pour (of GND, or of any other net) on an adjacent layer under
   every track of NETS; the finding gives the uncovered length. Intentional cut-outs (the
   pour opened under a feedback network) are exempt with `--except-zone NAME` (a named
-  zone's outline, e.g. a rule area) or `--except-area X0,Y0,X1,Y1` (both repeatable).
+  zone's outline, e.g. a rule area), `--except-zone-glob GLOB` (every zone or rule area
+  whose name matches, such as a stamped family `/*: cut*`; decided at check time, so areas
+  added later count) or `--except-area X0,Y0,X1,Y1` (all repeatable).
 
 Coupling and plane rules see the pours filled (KiCad's filler on a scratch copy).
 `kat pcb stack PCB` shows the stack-up kat uses (KiCad's default build-up when the board
@@ -804,7 +806,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `pcb stamp PCB BLOCK_PCB INSTANCE... --at X,Y [--step DX,DY] [--rot R] [--no-lock] [--make-room] [--side bottom] [--layer-map auto/roles/MAP] [--allow-asymmetric]` | copy a checked block layout onto instances (`all`), flipped on the bottom side, then the board check (§4.18) |
 | `pcb collisions PCB [INSTANCE...]` | per-layer collisions between stamped instances (§4.18) |
 | `pcb cell BLOCK_PCB [--pitch DX,DY / --clear] [--min-pitch x/y/arc [--center CX,CY] [--side top/bottom/alternate] [--layer-map MAP] [--allow-asymmetric] [--shared GLOB] [--save]]` | a block's stamping pitch and per-layer footprint; smallest collision-free pitch (§4.18) |
-| `pcb netrule PCB coupling A B [--distance D] [--estimate plate/2d] [--harness]` / `layers NETS LAYER...` / `plane NETS [--net N] [--except-zone NAME] [--except-area X0,Y0,X1,Y1]` / `list` / `clear` | kat's net rules, checked by `pcb check` (§4.12) |
+| `pcb netrule PCB coupling A B [--distance D] [--estimate plate/2d] [--harness]` / `layers NETS LAYER...` / `plane NETS [--net N] [--except-zone NAME] [--except-zone-glob GLOB] [--except-area X0,Y0,X1,Y1]` / `list` / `clear` | kat's net rules, checked by `pcb check` (§4.12) |
 | `pcb roles PCB [LAYER=ROLE ...]` / `pcb stack PCB` | layer roles; stack-up, roles and symmetry (§4.12, §4.18) |
 | `pcb instances PCB BLOCK_PCB` / `pcb environment BLOCK_PCB ZONE...` / `pcb port BLOCK_PCB PORT --at X,Y` | a block's instances in a design / its test-environment zones and keep-outs / where a port leaves it |
 | `pcb remove PCB --uuid U / --at X,Y [--layer] [--kind] [--net]` | remove single tracks and vias, locked ones too (§4.9) |

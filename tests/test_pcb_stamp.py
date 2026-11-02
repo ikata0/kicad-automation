@@ -463,6 +463,37 @@ def test_coupling_rule_estimates_the_crosstalk_capacitance(tmp_path, monkeypatch
     assert "net_rules" not in check(pcb)
 
 
+def test_plane_rule_exempts_a_family_of_named_cutouts(tmp_path, monkeypatch, capsys):
+    """FR-008: a glob over names exempts each matching area at check time, later ones too;
+    exact names stay exact, and names that only look alike do not count."""
+    import json
+    monkeypatch.setenv("KAT_REPORT", "0")
+    pcb = tmp_path / "g.kicad_pcb"
+    b = Board.create(pcb)
+    b.set_copper_layers(4)
+    b.outline(rect=(0, 0, 30, 10))
+    b.add_track((2, 2), (6, 2), 0.25, "F.Cu", "IN1")
+    b.add_track((12, 2), (16, 2), 0.25, "F.Cu", "IN2")
+    b.add_track((22, 2), (26, 2), 0.25, "F.Cu", "IN3")
+    b.keepout("In1.Cu", rect=(1, 1, 6, 2), name="/CH_A: cut")
+    b.keepout("In1.Cu", rect=(21, 1, 6, 2), name="/CH_A: keep")
+    b.save()
+
+    def uncovered() -> set[str]:
+        return {x["net"] for x in check(pcb)["net_rules"]["findings"] if x["kind"] == "plane"}
+
+    assert cli.main(["pcb", "netrule", str(pcb), "plane", "IN*", "--except-zone-glob", "/*: cut*"]) == 0
+    assert "warnings" not in json.loads(capsys.readouterr().out)
+    assert uncovered() == {"IN2", "IN3"}
+    with kat.pcb.edit(pcb) as e:
+        e.keepout("In1.Cu", rect=(11, 1, 6, 2), name="/CH_B: cut 2")
+    assert uncovered() == {"IN3"}                                       # added later: counts
+    assert kat.pcb.plane_rule(pcb, "IN*", except_globs=["/CH_C:*"])["warnings"]   # nothing yet
+    assert uncovered() == {"IN1", "IN2", "IN3"}
+    with pytest.raises(kat.KatError, match="no zone named /CH_A: cu"):  # exact names stay exact
+        kat.pcb.plane_rule(pcb, "IN*", except_zones=["/CH_A: cu"])
+
+
 def test_coupling_2d_estimate_side_by_side(tmp_path, monkeypatch):
     """#16: OUT1 and IN2 side by side on F.Cu for 4 mm (0.2 mm gap, plane 0.1 mm below):
     no overlap, so the plate estimate has nothing; the 2D cross-section gives pF/mm x length."""

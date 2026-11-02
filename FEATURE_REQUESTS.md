@@ -69,13 +69,6 @@ that a blind/buried via merely passes through. Suggested modes are
 available. `layer_findings` in `src\kat\pcb\coupling.py` currently checks the full
 via span.
 
-### FR-008: Match plane-rule exemptions by keepout-name pattern
-
-**Partial.** Plane rules already support exact named-zone/rule-area exemptions
-and explicit rectangles. Add pattern-based selection of named keepouts so a
-family of intentional cut-outs can be exempted without enumerating every name.
-`plane_rule` and `_plane` in `src\kat\pcb\coupling.py` currently use exact names.
-
 ## Block building and placement
 
 ### FR-010: Clarify rotated stamp placement and return bounds
@@ -237,3 +230,9 @@ raw `FileNotFoundError`, because kicad-cli exits 0 and writes nothing. It is now
 `kat.blocks.build` checks the locks of the root and block sheets, the flat sheet and the
 board before running the harness, so nothing generated changes. No deferred-root mode was
 needed. The board is included because a lock there also left the block half-built.
+
+### FR-008: Match plane-rule exemptions by keepout-name pattern
+
+`kat.pcb.plane_rule(except_globs=[...])` and `kat pcb netrule plane --except-zone-glob GLOB`.
+Globs are evaluated at check time, so areas added or stamped later count, and a glob
+matching nothing yet gives a warning. `--except-zone` stays exact.

@@ -20,6 +20,7 @@ The rules are stored in the board's ``<board>.kat.json``.
 
 from __future__ import annotations
 
+import fnmatch
 import math
 import re
 import shutil
@@ -76,12 +77,15 @@ def layer_rule(pcb: Path | str, nets: str, layers: list[str]) -> list[dict]:
 
 
 def plane_rule(pcb: Path | str, nets: str, net: str | None = None, except_zones: list[str] | None = None,
-               except_areas: list[tuple[float, float, float, float]] | None = None) -> list[dict]:
+               except_areas: list[tuple[float, float, float, float]] | None = None,
+               except_globs: list[str] | None = None) -> list[dict]:
     """Tracks of ``nets`` need a pour on an adjacent copper layer under their whole length:
     of ``net`` (e.g. GND), or of any other net if None. Track inside the outline of a zone
     or rule area named in ``except_zones`` (any layer), or inside a rectangle of
-    ``except_areas`` (x0, y0, x1, y1 mm), is exempt: an intended cut-out. Checked by
-    ``kat pcb check`` with the pours filled. Returns all net rules."""
+    ``except_areas`` (x0, y0, x1, y1 mm), is exempt: an intended cut-out. ``except_globs``:
+    the same for every zone or rule area whose name matches a glob (``/*: cut*`` for a
+    stamped family of cut-outs), decided at check time, so areas added later count.
+    Checked by ``kat pcb check`` with the pours filled. Returns all net rules."""
     if except_zones:
         from .board import Board
         names = {str(n[1]) for z in Board(pcb).zones() if (n := find(z, "name")) is not None}
@@ -93,8 +97,16 @@ def plane_rule(pcb: Path | str, nets: str, net: str | None = None, except_zones:
         raise env.KatError("an exempt area is x0,y0,x1,y1 with x0 < x1 and y0 < y1 (mm)")
     rule = {"kind": "plane", "nets": nets, "net": net,
             **({"except_zones": list(except_zones)} if except_zones else {}),
+            **({"except_globs": list(except_globs)} if except_globs else {}),
             **({"except_areas": areas} if areas else {})}
     return _store(pcb, rule, ("kind", "nets"))
+
+
+def unmatched_globs(pcb: Path | str, globs: list[str]) -> list[str]:
+    """The name ``globs`` that match no zone or rule area on the board now."""
+    from .board import Board
+    names = {str(n[1]) for z in Board(pcb).zones() if (n := find(z, "name")) is not None}
+    return [g for g in globs if not any(fnmatch.fnmatchcase(n, g) for n in names)]
 
 
 def net_rules(pcb: Path | str, clear: bool = False) -> list[dict]:
@@ -459,8 +471,11 @@ def layer_findings(board, nodes: list | None = None) -> list[dict]:
 def _plane(board, filled, rule: dict) -> list[dict]:
     sel = _selector(board, rule["nets"])
     copper = board.copper_layers()
+    globs = rule.get("except_globs", ())
     exempt = [(box_of(p), p) for z in board.zones() if (n := find(z, "name")) is not None
-              and str(n[1]) in rule.get("except_zones", ()) for p in [_pts(find(z, "polygon"))] if p]
+              and (str(n[1]) in rule.get("except_zones", ())
+                   or any(fnmatch.fnmatchcase(str(n[1]), g) for g in globs))
+              for p in [_pts(find(z, "polygon"))] if p]
     exempt += [((a[0], a[1], a[2], a[3]), [(a[0], a[1]), (a[2], a[1]), (a[2], a[3]), (a[0], a[3])])
                for a in rule.get("except_areas", ())]
     pours: dict[str, list] = {}
