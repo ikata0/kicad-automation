@@ -14,6 +14,7 @@ from ..sexpr import Sym, find, find_all, head, num
 HOLES = {"M2": "MountingHole:MountingHole_2.2mm_M2", "M2.5": "MountingHole:MountingHole_2.7mm_M2.5",
          "M3": "MountingHole:MountingHole_3.2mm_M3", "M4": "MountingHole:MountingHole_4.3mm_M4"}
 EDGE_WIDTH = 0.05
+PAD_CONNECT = {"thermal": None, "solid": "yes", "none": "no", "thru_hole_only": "thru_hole_only"}
 # KiCad 10's own Default net class (as it writes it into a .kicad_pro, net_settings v5)
 DEFAULT_CLASS = {"bus_width": 12, "clearance": 0.2, "diff_pair_gap": 0.25, "diff_pair_via_gap": 0.25,
                  "diff_pair_width": 0.2, "line_style": 0, "microvia_diameter": 0.3,
@@ -50,7 +51,7 @@ def _zone_spec(node: list) -> tuple:
     ko = find(node, "keepout")
     pts = find(find(node, "polygon"), "pts")
     return (val(node, "net"), tuple(str(t) for t in lay[1:]), val(node, "priority"),
-            val(node, "connect_pads", "clearance"), val(node, "min_thickness"),
+            val(node, "connect_pads"), val(node, "connect_pads", "clearance"), val(node, "min_thickness"),
             val(node, "fill", "thermal_gap"), val(node, "fill", "thermal_bridge_width"),
             tuple((str(k[0]), str(k[1])) for k in ko[1:]) if ko is not None else None,
             tuple((_norm(p[1]), _norm(p[2])) for p in pts[1:]))
@@ -234,15 +235,20 @@ class SetupMixin:
 
     def zone(self, net: str, layers: str | list[str], polygon: list[Point] | None = None,
              clearance: float = 0.3, min_width: float = 0.25, thermal_gap: float = 0.5,
-             spoke: float = 0.5, priority: int = 0, name: str = "") -> dict:
+             spoke: float = 0.5, priority: int = 0, name: str = "", pads: str = "thermal") -> dict:
         """A copper pour of ``net`` on ``layers``; ``polygon`` (mm) defaults to the outline
         shrunk by 0.5 mm. ``clearance``, ``min_width``, ``thermal_gap`` and ``spoke`` (thermal
-        spoke width) in mm; a higher ``priority`` pours first where zones overlap. Filled by
+        spoke width) in mm; a higher ``priority`` pours first where zones overlap. ``pads``: how
+        it joins its net's pads, ``thermal``, ``solid``, ``none`` or ``thru_hole_only`` (thermal
+        for through-hole pads, solid for the others); ``pad_connection`` overrides it per pad.
+        Filled by
         KiCad (``refill``/``kat pcb check``). Safe to run again: a zone of the same ``name``
         (default ``"{net} {layers}"``) is replaced, or kept when unchanged. Several pours of one
         net on one layer need distinct names. Returns ``zone`` (name), ``net``, ``layers``,
         ``status``."""
         layers = [layers] if isinstance(layers, str) else list(layers)
+        if pads not in PAD_CONNECT:
+            raise env.KatError(f"pads {pads!r}: {', '.join(PAD_CONNECT)}")
         name = name or f"{net} {'+'.join(layers)}"
         if polygon is None:
             b = self.outline_box()
@@ -253,13 +259,30 @@ class SetupMixin:
         node[1:1] = [[Sym("net"), net]]
         if priority:
             node.append([Sym("priority"), Sym(str(priority))])
-        node += [[Sym("connect_pads"), [Sym("clearance"), num(clearance)]],
+        mode = [Sym(PAD_CONNECT[pads])] if PAD_CONNECT[pads] else []
+        node += [[Sym("connect_pads"), *mode, [Sym("clearance"), num(clearance)]],
                  [Sym("min_thickness"), num(min_width)],
                  [Sym("fill"), Sym("yes"), [Sym("thermal_gap"), num(thermal_gap)],
                   [Sym("thermal_bridge_width"), num(spoke)], [Sym("island_removal_mode"), Sym("0")]],
                  [Sym("polygon"), _pts(polygon)]]
         status = self._put_zone(node, name)
         return {"zone": name, "net": net, "layers": layers, "status": status}
+
+    def pad_connection(self, pads: str | list[str], mode: str | None) -> dict:
+        """How pads join a zone of their net, whatever the zone says: ``pads`` ``"U1.8"`` (all
+        pads of that number) or a list, ``mode`` ``thermal``, ``solid``, ``none``,
+        ``thru_hole_only``, or None to follow the zone again. Stamps carry a block's overrides.
+        Returns ``pads`` (those set) and ``mode``."""
+        done = []
+        for name in [pads] if isinstance(pads, str) else pads:
+            ref, _, number = name.partition(".")
+            hit = [p for p in self.footprint(ref).pads() if p.number == number]
+            if not hit:
+                raise env.KatError(f"{ref} has no pad {number!r}")
+            for p in hit:
+                p.set_zone_connection(mode)
+            done.append(name)
+        return {"pads": done, "mode": mode}
 
     def keepout(self, layers: str | list[str], polygon: list[Point] | None = None,
                 rect: tuple[float, float, float, float] | None = None, tracks: bool = False,

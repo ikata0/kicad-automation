@@ -22,6 +22,7 @@ from .stamping import StampMixin
 from .structure import StructureMixin
 
 FORMAT = "20260206"
+ZONE_CONNECT = {"0": "none", "1": "thermal", "2": "solid", "3": "thru_hole_only"}
 
 
 def _f(node, key, i=1, default=0.0) -> float:
@@ -55,6 +56,29 @@ class Pad:
     layers: tuple[str, ...]
     drill: float | None
     node: list = field(repr=False, compare=False)
+
+    @property
+    def zone_connection(self) -> str | None:
+        """This pad's own way of joining a zone of its net: ``thermal``, ``solid``, ``none`` or
+        ``thru_hole_only``; None if it follows the zone."""
+        n = find(self.node, "zone_connect")
+        return ZONE_CONNECT.get(str(n[1])) if n is not None else None
+
+    def set_zone_connection(self, mode: str | None) -> None:
+        """Set ``zone_connection``; None follows the zone again."""
+        code = {v: k for k, v in ZONE_CONNECT.items()}
+        if mode is not None and mode not in code:
+            raise env.KatError(f"zone connection {mode!r}: {', '.join(code)} or None")
+        n = find(self.node, "zone_connect")
+        if mode is None:
+            if n is not None:
+                self.node.remove(n)
+        elif n is not None:
+            n[1] = Sym(code[mode])
+        else:
+            uuid = find(self.node, "uuid")
+            at = self.node.index(uuid) if uuid is not None else len(self.node)
+            self.node.insert(at, [Sym("zone_connect"), Sym(code[mode])])
 
     def _value(self, key: str, default: float = 0.0) -> float:
         n = find(self.node, key)
@@ -170,8 +194,8 @@ class Pad:
         ``chamfer_size``, ``chamfer_ratio``, ``chamfer`` (corner names); trapezoid:
         ``rect_delta``; custom: ``anchor`` and ``primitives`` (kind, width, filled and points in
         the pad's own frame, which turn by ``angle`` and start at ``center``); KiCad 9+
-        per-layer shapes: ``padstack`` ({mode, layers}). ``polygons`` gives the same as
-        polygons."""
+        per-layer shapes: ``padstack`` ({mode, layers}); ``zone_connection`` if it has its own.
+        ``polygons`` gives the same as polygons."""
         out: dict = {"ref": self.ref, "number": self.number, "net": self.net, "kind": self.kind,
                      "layers": list(self.layers), "x": self.x, "y": self.y, "angle": self.angle,
                      "shape": self.shape, "w": self.w, "h": self.h, "center": list(self.center),
@@ -203,6 +227,8 @@ class Pad:
                                           if find(lay, "roundrect_rratio") is not None else {})}
             mode = find(stack, "mode")
             out["padstack"] = {"mode": str(mode[1]) if mode is not None else "normal", "layers": layers}
+        if self.zone_connection:
+            out["zone_connection"] = self.zone_connection
         return out
 
     @property

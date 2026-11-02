@@ -225,7 +225,7 @@ Methods of `kat.pcb.Board`, used inside `with kat.pcb.edit(PCB) as b:` (saved on
 | `set_copper_layers(n)` | 2, 4, 6 … copper layers (inner ones refused for removal while used) |
 | `plane(net, "In1.Cu")`, `set_layer_type(layer, "power")` | a whole-board plane on its own layer; layer type power = the router lays no tracks there |
 | `mounting_hole(at, "M3")`, `add_board_part(lib_id, ref, at)` | footprints without a symbol, marked board-only: sync and parity leave them alone |
-| `zone(net, layers, polygon=None)` | copper pour (default: outline minus 0.5 mm); filled by KiCad on check |
+| `zone(net, layers, polygon=None)` | copper pour (default: outline minus 0.5 mm); filled by KiCad on check; `pads` thermal, solid, none or thru_hole_only, and `pad_connection("U1.8", mode)` per pad |
 | `keepout(layers, rect/polygon, tracks=False, vias=True, ...)` | rule area; `False` forbids that item kind |
 | `netclass(name, track, clearance, via, via_drill, nets=[patterns], layers=[...])` | `.kicad_pro` net class + pattern assignment; `layers`: the copper the router may use for it (`<board>.kat.json`; DRC does not check it) |
 | `class_clearance(a, b, mm)` | two classes kept apart: a generated DRC rule `kat class A B` and the router's class-to-class rule |
@@ -989,6 +989,7 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
 | Side-by-side copper (the main case in a guarded layout) has no parallel-plate overlap, so `coupling` gave no pF | `--estimate 2d`: 2D field solution of the cross-section |
 | `pcb sync` on a block board needed `--force`: the harness connector has no MPN | harness parts are exempt from the required fields |
 | kat's docs said DRC ignores a custom rule below the board minimum; on KiCad 10.0.6 a matching rule replaces it, and local checks only took the larger class clearance | `Board.clearance` resolves it as DRC does and is checked against it; the warning from `rules` says so |
+| An exception to a zone's thermal relief needed direct node edits, and a changed connection mode counted as an unchanged zone | `zone(pads=...)`, `pad_connection(pads, mode)`; stamps carry a block's overrides |
 | `Pad.outline` used a custom pad's anchor only and ignored trapezoid tapers and drill offsets, so clearance checks could pass copper that DRC refuses; flipping also left tapers and chamfered corners unmirrored | outlines now cover them; `Pad.polygons` is exact and checked against the distances DRC reports |
 | A stamp accepted at its tightest spacing can still fail DRC with `starved_thermal`: the collision check does not fill pours, and a neighbour's copper can take a thermal spoke's room | `pcb stamp` ends with the board check; judge by that and step out a little |
 | Interlocked stamps with pours of different nets overlapping at one priority passed the collision check, then failed DRC (`zones_intersect`) | such pours now collide (`pour` rows), at any angle |

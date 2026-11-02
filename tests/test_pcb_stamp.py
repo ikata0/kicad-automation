@@ -735,6 +735,24 @@ def test_hole_box_covers_a_turned_slot(tmp_path, monkeypatch):
     assert stamp_mod.box_of(taken[2][1]) == pytest.approx((48.5, 49.5, 51.5, 50.5), abs=0.011)
 
 
+def test_stamp_carries_pad_connections(hier, tmp_path):
+    """FR-024: a block's per-pad override reaches each copy, and goes when the block drops it."""
+    c = copy_of(hier, tmp_path)
+    rc, b1 = c["rc"], c["b1"]
+    with kat.pcb.edit(rc) as e:
+        e.pad_connection("R1.2", "solid")
+    with kat.pcb.edit(b1) as e:
+        r = e.stamp(rc, "/RC1", at=(100.5, 100.5))
+    target = r["pairs"]["R1"]
+    assert Board(b1).footprint(target).pad("2").zone_connection == "solid"
+    assert Board(b1).footprint(target).pad("1").zone_connection is None
+    with kat.pcb.edit(rc) as e:
+        e.pad_connection("R1.2", None)
+    with kat.pcb.edit(b1) as e:
+        e.stamp(rc, "/RC1", at=(100.5, 100.5))
+    assert Board(b1).footprint(target).pad("2").zone_connection is None
+
+
 def test_stamp_refuses_to_move_a_locked_part(hier, tmp_path):
     """FR-012: a locked part of the instance stops a stamp that would move it, with nothing
     changed; in place it stamps again, and unlocked it moves."""

@@ -665,6 +665,9 @@ class StampMixin:
                 tf.flip(f.layer if bottom else None)
             x, y = f(sf.x, sf.y)
             tf.place(x, y, f.fp_angle(sf.rot))
+            for sp, tp in zip(sf.pads(), tf.pads()):        # the block's own pad connections
+                if sp.number == tp.number:
+                    tp.set_zone_connection(sp.zone_connection)
             placed[sf.ref] = tf.ref
             members[sf.uuid] = tf.uuid
         # net classes: the block was checked with its own. More clearance here would make

@@ -121,12 +121,6 @@ same-net vias, and expose that constraint to routing clients.
 copper checks skip same-net copper and the DSN exporter does not translate
 `min_hole_to_hole` into a routing constraint. KiCad DRC remains the final judge.
 
-### FR-024: Configure zone-to-pad connection modes
-
-**Open.** Add solid/thermal/none selection to `b.zone(...)`, plus per-pad
-overrides. `zone` in `src\kat\pcb\setup.py` currently exposes thermal dimensions
-but not a pad-connection mode, requiring direct node edits for exceptions.
-
 ### FR-025: Derive layer-scoped keepouts from copper
 
 **Partial.** Generate keepouts around selected copper with a scope such as
@@ -234,3 +228,9 @@ board minimum and custom rules as DRC does, and are checked against it on both s
 limit for 17 sets of rules (`tests/test_pcb_rules.py`). Conditions that depend on more than
 the nets, such as `A.Type`, are listed as `unresolved` and counted by `worst_case`, which
 local checks keep. Also corrected the docs: a matching rule can lower the board minimum.
+
+### FR-024: Configure zone-to-pad connection modes
+
+`b.zone(pads="thermal"|"solid"|"none"|"thru_hole_only")`, per pad `b.pad_connection("U1.8",
+mode)` and `Pad.zone_connection`. Stamps carry a block's per-pad overrides. A changed mode now
+counts as a changed zone. Judged by KiCad's filled copper and DRC (`tests/test_pcb_zones.py`).
