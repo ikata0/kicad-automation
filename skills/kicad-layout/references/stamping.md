@@ -37,8 +37,9 @@ Design net classes asking stricter clearance than the block's are refused;
 route/check the source with the intended clearance first. A track-width
 difference is a warning, not permission to ignore current/fabrication needs.
 
-Overlapping foreign courtyards (same side) and through-hole pads (either side)
-of top-level design parts are refused. --make-room shifts unlocked design
+Overlapping foreign courtyards (same side) and individual through-hole pads or
+holes (either side) of top-level design parts are refused; the space between
+distant holes is free. --make-room shifts unlocked design
 parts aside; review the changed placement. Run kat pcb check, route remaining
 top-level connections, snapshot, and inspect each affected area.
 

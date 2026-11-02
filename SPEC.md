@@ -554,8 +554,8 @@ with kat.pcb.edit("top/top.kicad_pcb") as b:
   or route the block with the design's. Another track width is a warning only: DRC checks
   a class's clearance, its width is what the router lays.
 - **Room:** top-level design parts (outside any block instance) where the block's parts go
-  (courtyards on the same side; the through-hole pads and holes of either side's parts
-  collide on both sides) are refused; `make_room=True` / `--make-room` pushes unlocked
+  (courtyards on the same side; each through-hole pad and hole of either side's parts, on
+  its own, on both sides, so the space between distant guide holes stays free) are refused; `make_room=True` / `--make-room` pushes unlocked
   ones aside. Parts of block instances not stamped yet are no obstacle. A locked part of the
   instance itself is refused where the stamp would move it: unlock it first.
 - **Interlocking cells:** a block is not a rectangle that must keep off its neighbours.
@@ -961,6 +961,7 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
 | `netrule coupling` reported the harness connector's neighbouring IN/OUT pins, `plane` the intended pour cut-out under Rf/Cf | harness pads are left out (`--harness`); `--except-zone` / `--except-area` |
 | Side-by-side copper (the main case in a guarded layout) has no parallel-plate overlap, so `coupling` gave no pF | `--estimate 2d`: 2D field solution of the cross-section |
 | `pcb sync` on a block board needed `--force`: the harness connector has no MPN | harness parts are exempt from the required fields |
+| Stamping on the other side of a connector's guide holes was refused: its through-hole pads counted as one box spanning all of them | one box per pad or hole, slots included; DRC agrees (`pth_inside_courtyard` looks at the holes) |
 | A part locked in KiCad was still moved by `Board.move` and `stamp`; only `make_room` honoured the flag | `Footprint.lock()` / `unlock()` / `locked`; moves refuse unless `force=True`, `stamp` refuses unless unlocked |
 | `pcb view --layers In9.Cu` on a board without that layer: kicad-cli exits 0 and writes nothing, kat failed with a raw file error | layer names are checked against the board first |
 | Escaping a SKiDL pin name with `+` or brackets (`u[r"IN\+"]`) finds no pin: names match exactly unless `match_pin_regex` is set | write the name literally, `u["IN+"]`; a name with a space takes the pin number (`tests/test_skidl_blocks.py` pins this down) |

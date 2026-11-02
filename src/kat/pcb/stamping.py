@@ -214,13 +214,18 @@ def _map_layers(node: list, f) -> None:
 
 
 def _taken(fp) -> list[tuple[str, tuple]]:
-    """(side, box) a part takes: its courtyard on its side, and its through-hole pads and
-    holes on the other side too."""
-    out = [(fp.side, b)] if (b := fp.box()) else []
-    tht = union(p.box for p in fp.pads() if p.kind in ("thru_hole", "np_thru_hole"))
-    if tht:
-        out.append(("B" if fp.side == "F" else "F", tht))
-    return out
+    """(side, box) a part takes: its courtyard on its side, and each through-hole pad and
+    hole on the other side too, one box each, so the space between distant holes stays free.
+    Without a courtyard: the pads' extent, or for holes only (guide holes) each hole."""
+    other = "B" if fp.side == "F" else "F"
+    pads = fp.pads()
+    thru = [p for p in pads if p.kind in ("thru_hole", "np_thru_hole")]
+    holes = [union((p.box, p.hole_box)) for p in thru]
+    if fp.courtyard() is None and thru and all(p.kind == "np_thru_hole" for p in pads):
+        own = holes
+    else:
+        own = [b] if (b := fp.box()) else []
+    return [(fp.side, b) for b in own] + [(other, b) for b in holes]
 
 
 def _refuse_locked(src, pairs: dict, instance: str, f: "_Place") -> None:

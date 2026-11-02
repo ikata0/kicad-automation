@@ -56,6 +56,16 @@ class Pad:
         """Bounding box (x0, y0, x1, y1) of the pad's copper in board mm."""
         return box_of(self.outline)
 
+    @property
+    def hole_box(self) -> Box | None:
+        """Bounding box of the drilled hole in board mm, a slot's length and angle included;
+        None for a pad without a hole."""
+        d = find(self.node, "drill")
+        nums = [float(t) for t in (d or [])[1:] if not isinstance(t, list) and str(t) != "oval"]
+        if not nums:
+            return None
+        return box_of(pad_outline("oval", self.x, self.y, nums[0], nums[-1], self.angle))
+
     def on(self, layer: str) -> bool:
         """True if the pad has copper on ``layer`` (wildcards such as *.Cu resolved)."""
         return any(l == layer or (l.startswith("*.") and layer.endswith(l[1:]))

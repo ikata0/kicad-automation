@@ -80,14 +80,6 @@ Alternatively, introduce an explicitly selected rotated-top-left convention
 without silently changing existing placements.
 See `StampMixin.stamp` in `src\kat\pcb\stamping.py` and SPEC.md section 4.18.
 
-### FR-011: Check individual through holes on the opposite side
-
-**Partial.** Stamping already distinguishes same-side courtyards from opposite-side
-through-hole geometry. However, `_taken` in `src\kat\pcb\stamping.py` combines
-all through-hole pad/hole bounds into one box. Check each hole/pad with appropriate
-clearance instead, so empty space between distant guide holes is not treated as
-an obstacle.
-
 ### FR-013: Check floorplan port accessibility
 
 **Open.** Given candidate cells, port positions, allowed layers, and a source
@@ -236,3 +228,12 @@ matching nothing yet gives a warning. `--except-zone` stays exact.
 checked moves (`move`, `move_many`, `flip`, `align`, `distribute`, `place_near`,
 `move_block`, `replicate`) now refuse a locked part that would change, unless `force=True`,
 and `stamp` refuses to move one, because they used to ignore the flag.
+
+### FR-011: Check individual through holes on the opposite side
+
+`_taken` in `src/kat/pcb/stamping.py` returns one box per through-hole pad or hole, slots
+included (`Pad.hole_box`), so empty space between distant guide holes stays free. No margin
+was added: KiCad's DRC reports a hole overlapping a courtyard, and the pad-and-hole box is
+already at least as large. Footprints with only holes and no courtyard are treated hole by
+hole on their own side too. `kat pcb cell` and `min_pitch` use the same boxes, so their
+results can shrink for blocks with distant holes.

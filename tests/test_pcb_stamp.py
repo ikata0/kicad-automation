@@ -357,6 +357,62 @@ def test_bottom_overlap_counts_through_hole_pads_on_both_sides(hier, tmp_path):
         Board(pcb).stamp(b1, "/CH_B", at=(112, 112), side="bottom")
 
 
+def guide_holes(b, ref, at, spacing, drill=1.0):
+    """A board-only part of two distant holes and no courtyard (a connector's guide pegs)."""
+    from copy import deepcopy
+    from kat.sexpr import num
+    f = b.add_board_part("MountingHole:MountingHole_3.2mm_M3", ref, at)
+    f.node[:] = [c for c in f.node if head(c) != "fp_circle"]
+    pad = find(f.node, "pad")
+    for key, vals in (("size", (drill, drill)), ("drill", (drill,))):
+        find(pad, key)[1:] = [num(v) for v in vals]
+    second = deepcopy(pad)
+    find(second, "at")[1:] = [num(0), num(spacing)]
+    f.node.insert(f.node.index(pad) + 1, second)
+    return f
+
+
+def test_opposite_side_holes_are_checked_one_by_one(hier, tmp_path):
+    """FR-011: a flipped block part between two distant guide holes on top is free (and DRC
+    agrees), while a hole right under the part is still refused."""
+    c = copy_of(hier, tmp_path)
+    pcb, b1 = c["top"], c["b1"]
+    with kat.pcb.edit(pcb) as b:
+        r = b.stamp(b1, "/CH_B", at=(112, 112), side="bottom")
+    part = Board(pcb).footprint(r["pairs"]["R101"])
+    assert part.side == "B"
+    with kat.pcb.edit(pcb) as b:
+        guide_holes(b, "H9", (part.x, part.y - 4), 8)
+    board = Board(pcb)
+    assert len([t for t in stamp_mod._taken(board.footprint("H9")) if t[0] == "B"]) == 2
+    with kat.pcb.edit(pcb) as b:
+        b.stamp(b1, "/CH_B", at=(112, 112), side="bottom")      # between the holes: free
+    res = check(pcb)
+    assert res["drc_errors"] == 0 and not {"pth_inside_courtyard", "npth_inside_courtyard"} & set(res["by_type"]), res["by_type"]
+    with kat.pcb.edit(pcb) as b:
+        b.footprint("H9").place(part.x, part.y)                 # now one hole is under the part
+    with pytest.raises(kat.KatError, match="overlap H9"):
+        Board(pcb).stamp(b1, "/CH_B", at=(112, 112), side="bottom")
+    assert {"npth_inside_courtyard"} & set(check(pcb)["by_type"])   # and DRC calls that an error
+
+
+def test_hole_box_covers_a_turned_slot(tmp_path, monkeypatch):
+    """A slot reaches past a small pad: its length counts, turned with the part."""
+    from kat.sexpr import Sym, num
+    monkeypatch.setenv("KAT_REPORT", "0")
+    b = Board.create(tmp_path / "s.kicad_pcb")
+    f = guide_holes(b, "H1", (50, 50), 10)
+    d = find(f.pads()[0].node, "drill")
+    d[1:] = [Sym("oval"), num(1), num(3)]
+    assert f.pads()[0].hole_box == pytest.approx((49.5, 48.5, 50.5, 51.5))
+    assert f.pads()[1].hole_box == pytest.approx((49.5, 59.5, 50.5, 60.5))
+    f.place(rot=90)
+    assert f.pads()[0].hole_box == pytest.approx((48.5, 49.5, 51.5, 50.5))
+    taken = stamp_mod._taken(f)
+    assert [s for s, _ in taken] == ["F", "F", "B", "B"]
+    assert taken[2][1] == pytest.approx((48.5, 49.5, 51.5, 50.5))       # the slot, not the pad
+
+
 def test_stamp_refuses_to_move_a_locked_part(hier, tmp_path):
     """FR-012: a locked part of the instance stops a stamp that would move it, with nothing
     changed; in place it stamps again, and unlocked it moves."""
