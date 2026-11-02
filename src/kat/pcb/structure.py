@@ -120,14 +120,50 @@ class StructureMixin:
         return {"netclass": name, "track": c.get("track_width", 0.2), "clearance": c.get("clearance", 0.2),
                 "via": c.get("via_diameter", VIA[0]), "via_drill": c.get("via_drill", VIA[1])}
 
+    def clearance(self, a: str, b: str, layer: str | None = None) -> dict:
+        """The effective clearance between two nets (or pads ``"U1.8"``), resolved as KiCad's
+        DRC does (``rules``): the larger of their classes and the board minimum, or the last
+        matching custom rule. Returns ``nets``, ``classes``, ``clearance`` (mm), ``source``,
+        ``class_clearance``, ``board_minimum``, ``same_net`` (no clearance applies then),
+        ``unresolved`` (rules that depend on more than the nets), ``worst_case`` (mm, counting
+        those) and the hole limits ``hole_clearance`` and ``hole_to_hole`` (mm)."""
+        from . import rules as dru
+        na, nb = self._net_of(a), self._net_of(b)
+        ra, rb = self.net_rules(na), self.net_rules(nb)
+        mins = self.board_minimums()
+        value = max(ra["clearance"], rb["clearance"])
+        minimum = mins.get("min_clearance", 0.0) or 0.0
+        res = dru.resolve(dru.parse(self._dru_text()), na, nb, ra["netclass"], rb["netclass"], value, minimum, layer)
+        return {"nets": [na, nb], "classes": [ra["netclass"], rb["netclass"]], **res,
+                "class_clearance": value, "board_minimum": minimum, "same_net": bool(na) and na == nb,
+                "hole_clearance": mins.get("min_hole_clearance", 0.25),
+                "hole_to_hole": mins.get("min_hole_to_hole", 0.25)}
+
+    def _net_of(self, item: str) -> str:
+        """A net name, or the net of a pad ``"U1.8"``."""
+        ref, dot, number = item.partition(".")
+        if dot and any(f.ref == ref for f in self.footprints()):
+            return self.footprint(ref).pad(number).net
+        return item
+
     def _clearance_fn(self):
-        cache = {}
+        """net, net -> the clearance local checks keep (``clearance``'s ``worst_case``, no layer)."""
+        from . import rules as dru
+        rules = dru.parse(self._dru_text())
+        minimum = self.board_minimums().get("min_clearance", 0.0) or 0.0
+        nets, pairs = {}, {}
 
         def cl(a, b):
-            for n in (a, b):
-                if n not in cache:
-                    cache[n] = self.net_rules(n)["clearance"] if n else 0.2
-            return max(cache[a], cache[b])
+            key = (a, b) if a <= b else (b, a)
+            if key not in pairs:
+                for n in key:
+                    if n not in nets:
+                        nets[n] = self.net_rules(n)
+                ra, rb = nets[a], nets[b]
+                value = max(ra["clearance"], rb["clearance"])
+                pairs[key] = (dru.resolve(rules, a, b, ra["netclass"], rb["netclass"], value, minimum)["worst_case"]
+                              if rules else max(value, minimum))
+            return pairs[key]
         return cl
 
     # --- copper items --------------------------------------------------------------------------

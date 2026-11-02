@@ -17,7 +17,7 @@ from ..env import KatError, tidy
 from . import checks, syncer, views
 from .board import Board, Footprint, Pad
 
-__all__ = ["Board", "Footprint", "Pad", "block_environment", "block_port", "remove", "check", "coupling_2d", "coupling_rule",
+__all__ = ["Board", "Footprint", "Pad", "block_environment", "block_port", "remove", "check", "clearance", "coupling_2d", "coupling_rule",
            "drc", "edit", "fab", "instances", "layer_roles", "layer_rule", "load", "net_rules", "plane_rule",
            "pad_geometry", "ready", "refill", "route", "snapshot", "stack", "stamp", "stamp_preview", "sync", "view"]
 
@@ -160,6 +160,14 @@ def stamp_preview(pcb: Path | str, block_pcb: Path | str, instances: str | list[
     return tidy({"board": str(pcb), "instances": [
         b.stamp_preview(block_pcb, (at[0] + k * step[0], at[1] + k * step[1]), rot, name, side, layer_map,
                         allow_asymmetric, anchor=anchor) for k, name in enumerate(names)]})
+
+
+def clearance(pcb: Path | str, a: str, b: str, layer: str | None = None) -> dict:
+    """The effective clearance between two nets or pads (``U1.8``), resolved as KiCad's DRC
+    does (``Board.clearance``): class, board minimum or the last matching custom rule. Returns
+    clearance (mm), source, unresolved rules, worst_case (mm) and the hole limits (mm)."""
+    report.touch(pcb)
+    return tidy({"board": str(pcb), **Board(pcb).clearance(a, b, layer)})
 
 
 def pad_geometry(pcb: Path | str, refs: list[str] | None = None) -> dict:

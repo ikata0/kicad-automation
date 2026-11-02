@@ -230,7 +230,7 @@ Methods of `kat.pcb.Board`, used inside `with kat.pcb.edit(PCB) as b:` (saved on
 | `netclass(name, track, clearance, via, via_drill, nets=[patterns], layers=[...])` | `.kicad_pro` net class + pattern assignment; `layers`: the copper the router may use for it (`<board>.kat.json`; DRC does not check it) |
 | `class_clearance(a, b, mm)` | two classes kept apart: a generated DRC rule `kat class A B` and the router's class-to-class rule |
 | `constraints(min_track, min_clearance, min_via, min_via_drill, min_annular, hole_clearance, hole_to_hole, edge_clearance, edge_exempt=[refs])` | the board's minimums (Board Setup › Constraints), what the fab can make; `edge_exempt`: edge-mount parts - minimum 0 plus a generated rule `kat edge` for everything else; `board_minimums()` reads them back |
-| `rules(text)` | `.kicad_dru` custom rules (KiCad rule language); replaces the earlier custom rules, kat's generated `kat ...` rules stay; `warnings` for a rule asking less than a board minimum (DRC uses the minimum) |
+| `rules(text)` | `.kicad_dru` custom rules (KiCad rule language); replaces the earlier custom rules, kat's generated `kat ...` rules stay; `warnings` for a rule asking less than a board minimum (a matching rule replaces it in DRC, so it is accepted) |
 
 A setup pass is safe to run again, so it is edited and re-run when the specification
 changes: the outline, layers, net classes and rules are replaced; a zone or keep-out
@@ -280,6 +280,7 @@ the GND pour into islands. So the agent lays the structure first and locks it:
 | `lock(net)`, `remove_tracks(net, layer)` | locked copper stays for the router and for rip-up |
 | `at_point(at, layer, kind, net)`, `remove(uuid)`, `remove_at(at, ...)` (`kat pcb remove`) | single tracks and vias by uuid or position, locked ones too (naming them is the decision) |
 | `net_rules(net)` | width, clearance, via size of the net's class |
+| `clearance(a, b, layer)`, `kat.pcb.clearance` | the clearance DRC applies between two nets or pads: the larger of their classes and the board minimum, or the last matching custom rule, which replaces them and can lower them. Conditions on net names and classes are evaluated; a rule depending on more (`A.Type`) is listed as `unresolved` and counted by `worst_case`. Local checks (`track`, `via`, `stamp`) keep `worst_case`. Also the hole limits |
 | `Pad.geometry()`, `Pad.polygons(max_error)`, `kat.pcb.pad_geometry` | a pad's exact shape, as numbers (corner radius, chamfers, trapezoid delta, drill offset, custom primitives, per-layer shapes) or as polygons at most `max_error` outside it. `Pad.outline` stays one simple polygon, never smaller than the pad |
 | `kat.pcb.refill(PCB)` | fill the pours and save them (KiCad's filler) |
 
@@ -830,6 +831,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `pcb check PCB` / `pcb snapshot PCB` / `pcb view PCB ...` | board DRC + findings, history step with pictures, zoomed view (§4.12) |
 | `pcb stamp PCB BLOCK_PCB INSTANCE... --at X,Y [--step DX,DY] [--rot R] [--anchor origin/top-left] [--no-lock] [--make-room] [--side bottom] [--layer-map auto/roles/MAP] [--allow-asymmetric]` | copy a checked block layout onto instances (`all`), flipped on the bottom side, then the board check (§4.18) |
 | `pcb stamp PCB BLOCK_PCB [INSTANCE...] --at X,Y --preview [...]` | origin, turned bounds and ports of a proposed stamp, board unchanged (§4.18) |
+| `pcb clearance PCB A B [--layer L]` | effective clearance between two nets or pads, as DRC resolves it (§4.9) |
 | `pcb pads PCB [REF...]` | exact pad shapes (radius, chamfers, trapezoid, offset, primitives), for code outside kat (§4.9) |
 | `pcb collisions PCB [INSTANCE...]` | per-layer collisions between stamped instances (§4.18) |
 | `pcb cell BLOCK_PCB [--pitch DX,DY / --clear] [--min-pitch x/y/arc [--center CX,CY] [--side top/bottom/alternate] [--layer-map MAP] [--allow-asymmetric] [--shared GLOB] [--save]]` | a block's stamping pitch and per-layer footprint; smallest collision-free pitch (§4.18) |
@@ -986,6 +988,7 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
 | `netrule coupling` reported the harness connector's neighbouring IN/OUT pins, `plane` the intended pour cut-out under Rf/Cf | harness pads are left out (`--harness`); `--except-zone` / `--except-area` |
 | Side-by-side copper (the main case in a guarded layout) has no parallel-plate overlap, so `coupling` gave no pF | `--estimate 2d`: 2D field solution of the cross-section |
 | `pcb sync` on a block board needed `--force`: the harness connector has no MPN | harness parts are exempt from the required fields |
+| kat's docs said DRC ignores a custom rule below the board minimum; on KiCad 10.0.6 a matching rule replaces it, and local checks only took the larger class clearance | `Board.clearance` resolves it as DRC does and is checked against it; the warning from `rules` says so |
 | `Pad.outline` used a custom pad's anchor only and ignored trapezoid tapers and drill offsets, so clearance checks could pass copper that DRC refuses; flipping also left tapers and chamfered corners unmirrored | outlines now cover them; `Pad.polygons` is exact and checked against the distances DRC reports |
 | A stamp accepted at its tightest spacing can still fail DRC with `starved_thermal`: the collision check does not fill pours, and a neighbour's copper can take a thermal spoke's room | `pcb stamp` ends with the board check; judge by that and step out a little |
 | Interlocked stamps with pours of different nets overlapping at one priority passed the collision check, then failed DRC (`zones_intersect`) | such pours now collide (`pour` rows), at any angle |

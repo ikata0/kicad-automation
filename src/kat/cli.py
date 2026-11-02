@@ -204,6 +204,8 @@ def cmd_pcb(a):
         if a.args:
             raise env.KatError(f"{a.kind} takes no further arguments")
         return kat.pcb.net_rules(a.pcb, a.kind == "clear")
+    if a.pcb_cmd == "clearance":
+        return kat.pcb.clearance(a.pcb, a.a, a.b, a.layer)
     if a.pcb_cmd == "pads":
         return kat.pcb.pad_geometry(a.pcb, a.ref or None)
     if a.pcb_cmd == "instances":
@@ -942,6 +944,15 @@ def build_parser() -> argparse.ArgumentParser:
                      help="plane: the same for every zone / rule area whose name matches (repeatable)")
     s16.add_argument("--except-area", action="append", metavar="X0,Y0,X1,Y1",
                      help="plane: no pour needed inside this rectangle, mm (repeatable)")
+    s20 = psp.add_parser("clearance", formatter_class=_Fmt, help="effective clearance between two nets or pads",
+                         description="Resolved as KiCad's DRC does: the larger of the two classes and the board\n"
+                                     "minimum, or the last matching custom rule, which may also lower them. Rules\n"
+                                     "depending on more than the nets are listed as unresolved, and counted by\n"
+                                     "worst_case. Also gives the hole limits.")
+    s20.add_argument("pcb", metavar="PCB")
+    s20.add_argument("a", metavar="A", help="a net or pad (U1.8)")
+    s20.add_argument("b", metavar="B", help="a net or pad")
+    s20.add_argument("--layer", help="for rules limited to a layer")
     s19 = psp.add_parser("pads", formatter_class=_Fmt, help="exact pad shapes, for code outside kat",
                          description="Position, size, corner radius, chamfers, trapezoid delta, drill and offset,\n"
                                      "custom primitives and per-layer shapes of pads, mm and degrees.")

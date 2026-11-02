@@ -340,8 +340,9 @@ class SetupMixin:
         """Custom DRC rules (KiCad's rule language) for the .kicad_dru, replacing the earlier
         custom rules (kat's generated ones, named ``kat ...``, stay):
         ``(rule "hv" (condition "A.NetClass == 'HV'") (constraint clearance (min 2mm)))``.
-        ``warnings``: rules asking less than the board minimum (``constraints``), which
-        DRC ignores."""
+        A matching clearance rule replaces the classes and the board minimum in DRC, so it can
+        lower them too (``clearance`` tells the outcome). ``warnings``: rules asking less than
+        the board minimum (``constraints``), which DRC then accepts."""
         self._rules_text = text.strip()
         return {"rules": text.count("(rule "), **({"warnings": w} if (w := self._below_minimum(text)) else {})}
 
@@ -384,8 +385,8 @@ class SetupMixin:
         for name, kind, value in re.findall(r'\(rule\s+"?([^"\s)]+)"?.*?\(constraint\s+(\w+)\s+\(min\s+([\d.]+)mm', text, re.S):
             m = mins.get(which.get(kind, ""))
             if m is not None and float(value) < m - 1e-9:
-                out.append(f"rule {name}: {kind} {value} mm is below the board minimum {m:g} mm "
-                           f"(DRC uses the minimum; lower it with constraints)")
+                out.append(f"rule {name}: {kind} {value} mm is below the board minimum {m:g} mm: DRC "
+                           f"follows the rule, so check it is what the fab can make")
         return out
 
     def _project_data(self) -> dict:
@@ -419,6 +420,17 @@ class SetupMixin:
         ns["meta"] = {"version": 5}
         return data
 
+    def _dru_text(self) -> str:
+        """The rules as they will be saved: the .kicad_dru plus the pending changes, the
+        user's rules first."""
+        dru = self.path.with_suffix(".kicad_dru")
+        old = dru.read_text(encoding="utf-8") if dru.exists() else ""
+        own, gen = _split_rules(old)
+        if self._rules_text is not None:
+            own = [self._rules_text] if self._rules_text else []
+        gen = {**gen, **self._gen_rules}
+        return "\n".join(own + [gen[k] for k in sorted(gen)])
+
     def _write_project_files(self) -> None:
         self._write_route_settings()
         pro = self.path.with_suffix(".kicad_pro")
@@ -426,14 +438,9 @@ class SetupMixin:
             pro.write_text(json.dumps(self._project_data(), indent=2) + "\n", encoding="utf-8")
             self._pro_edits = []
         if self._rules_text is not None or self._gen_rules:
-            dru = self.path.with_suffix(".kicad_dru")
-            old = dru.read_text(encoding="utf-8") if dru.exists() else ""
-            own, gen = _split_rules(old)
-            if self._rules_text is not None:
-                own = [self._rules_text] if self._rules_text else []
-            gen.update(self._gen_rules)
-            body = "\n".join(own + [gen[k] for k in sorted(gen)])
-            dru.write_text(f"(version 1)\n{body}\n" if body else "(version 1)\n", encoding="utf-8")
+            body = self._dru_text()
+            self.path.with_suffix(".kicad_dru").write_text(f"(version 1)\n{body}\n" if body else "(version 1)\n",
+                                                           encoding="utf-8")
             self._rules_text = None
             self._gen_rules = {}
 

@@ -106,15 +106,6 @@ both the assignment and tracks. Suggested entry points are `kat pcb escape` or
 `kat pcb flow-route`; the current router wraps Freerouting with fixed net
 assignments.
 
-### FR-021: Query effective item-to-item clearance
-
-**Partial.** Expose a public query for effective clearance between two items/nets
-that accounts for applicable net classes, class-pair rules, board minimums, and
-supported custom rules. `b.net_rules(net)` exposes one net's class and
-`b.class_clearance(...)` writes class-pair rules, but the internal
-`_clearance_fn` in `src\kat\pcb\structure.py` only takes the larger class
-clearance. External routers should not have to duplicate rule resolution.
-
 ### FR-022: Back-annotate connector pin assignments
 
 **Open.** Apply a computed connector pin-to-net assignment back to the circuit
@@ -235,3 +226,11 @@ per-layer shapes. The polygons match the distances KiCad's DRC reports for 11 sh
 and flipped (`tests/test_pcb_pads.py`). This also fixed `Pad.outline`, which understated
 circles, ovals, custom pads, trapezoids and offset pads, and footprint flips, which left
 trapezoid tapers and chamfer corners unmirrored.
+
+### FR-021: Query effective item-to-item clearance
+
+`Board.clearance`, `kat.pcb.clearance` and `kat pcb clearance PCB A B` resolve the classes,
+board minimum and custom rules as DRC does, and are checked against it on both sides of the
+limit for 17 sets of rules (`tests/test_pcb_rules.py`). Conditions that depend on more than
+the nets, such as `A.Type`, are listed as `unresolved` and counted by `worst_case`, which
+local checks keep. Also corrected the docs: a matching rule can lower the board minimum.
