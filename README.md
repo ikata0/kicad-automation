@@ -13,6 +13,7 @@ command line, without MCP and with the KiCad GUI closed.
   section into a design directory; no automation checkout required
 - `skills/kicad-design/` (phases and gates), `skills/kicad-schematic/`, `skills/kicad-layout/` — the canonical agent skill sources
 - [`SPEC.md`](SPEC.md) — workflow, sync semantics, checks, and the pitfalls found so far
+- [`FEATURE_REQUESTS.md`](FEATURE_REQUESTS.md) — outstanding feature requests and follow-up reports
 
 ## In one picture
 
