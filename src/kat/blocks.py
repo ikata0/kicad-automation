@@ -151,10 +151,15 @@ def new(name: str, lib: Path | str | None = None) -> dict:
 def build(name: str, lib: Path | str | None = None, force: bool = False) -> dict:
     """Run the block's harness (``NAME.py`` -> ``NAME.net`` + block record), sync the
     schematic and the board, and store type, ports and parameters in the block file.
-    ``force`` passes the board sync gate (e.g. parts without MPN while developing)."""
+    ``force`` passes the board sync gate (e.g. parts without MPN while developing).
+    Refused before anything runs or is written while the block's schematics or board are
+    open in KiCad, so a locked file cannot leave the block half-built."""
     import kat
+    from .gui import guard
     d = find(name, lib)
     f = _files(d)
+    for key in ("sch", "block", "flat", "pcb"):
+        guard(f[key])
     proc = subprocess.run([sys.executable, str(f["py"]), str(f["net"])], cwd=d,
                           capture_output=True, text=True, stdin=subprocess.DEVNULL)
     if proc.returncode != 0 or not f["net"].exists():

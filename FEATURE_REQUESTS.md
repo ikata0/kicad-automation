@@ -78,14 +78,6 @@ family of intentional cut-outs can be exempted without enumerating every name.
 
 ## Block building and placement
 
-### FR-009: Check schematic locks before block-build writes
-
-**Open.** Preflight the root schematic's lock before running the build script or
-rewriting generated metadata, netlists, or child sheets. Alternatively, provide
-an explicit deferred-root mode with clearly defined outputs. A locked root must
-not leave the block half-built. `build` in `src\kat\blocks.py` currently starts
-generation before schematic sync performs its lock check.
-
 ### FR-010: Clarify rotated stamp placement and return bounds
 
 **Partial.** The library/SPEC document that `at` places the block origin before
@@ -239,3 +231,9 @@ in `tests/test_pcb_views.py`. Reopen with a failing board if it recurs. Vias and
 through-hole pads do appear on inner layers, because they have copper there.
 Checking this found a separate bug, now fixed: a layer the board lacks (`In9.Cu`) raised a
 raw `FileNotFoundError`, because kicad-cli exits 0 and writes nothing. It is now a `KatError`.
+
+### FR-009: Check schematic locks before block-build writes
+
+`kat.blocks.build` checks the locks of the root and block sheets, the flat sheet and the
+board before running the harness, so nothing generated changes. No deferred-root mode was
+needed. The board is included because a lock there also left the block half-built.

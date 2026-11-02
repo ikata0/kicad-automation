@@ -953,7 +953,8 @@ def build_parser() -> argparse.ArgumentParser:
             ["kat block new RC", "kat block build RC", "kat block check RC", "kat block list"], sch=False)
     bsp = q.add_subparsers(dest="block_cmd", required=True, metavar="ACTION")
     for action, summary in (("new", "create a block: project, SKiDL template with harness"),
-                            ("build", "run the harness, sync schematic and board, record ports/params"),
+                            ("build", "run the harness, sync schematic and board, record ports/params;\n"
+                                      "refused before anything is written while a block file is open in KiCad"),
                             ("check", "schematic, gate (harness parts exempt), board and port points; stored for stamp"),
                             ("list", "the library's blocks and their check state")):
         b = bsp.add_parser(action, formatter_class=_Fmt, help=summary, description=summary)

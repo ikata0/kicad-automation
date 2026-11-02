@@ -413,3 +413,22 @@ def test_bottom_side_needs_its_own_check_and_mirrors_the_ports(lib, tmp_path, ca
     assert again["side"] == "bottom" and "warnings" not in again, again
     c = check(pcb)
     assert c["drc_errors"] == 0 and c["parity"] == 0, c
+
+
+@pytest.mark.requires("kicad", "symbols", "footprints", "skidl")
+@pytest.mark.parametrize("locked", ["RC.kicad_sch", "RC_block.kicad_sch", "RC.kicad_pcb"])
+def test_build_refuses_a_locked_file_before_writing_anything(lib, capsys, locked):
+    """FR-009: the harness does not run and nothing generated changes while a file of the
+    block is open in KiCad (another host's lock always counts); afterwards it builds."""
+    d = lib / "RC"
+    (d / f"~{locked}.lck").write_text(json.dumps({"hostname": "other-machine", "username": "someone"}))
+    (d / "RC.net").unlink()
+    files = [p for p in d.iterdir() if p.is_file() and not p.name.startswith("~")]
+    before = {p: p.read_bytes() for p in files}
+    assert cli.main(["block", "build", "RC", "--force"]) == 2
+    assert "open in KiCad" in json.loads(capsys.readouterr().out)["error"]
+    assert not (d / "RC.net").exists()                                  # the harness did not run
+    assert {p: p.read_bytes() for p in files} == before
+    assert sorted(p for p in d.iterdir() if p.is_file() and not p.name.startswith("~")) == sorted(files)
+    (d / f"~{locked}.lck").unlink()
+    assert run(capsys, "block", "build", "RC", "--force")["type"] == "rc" and (d / "RC.net").exists()

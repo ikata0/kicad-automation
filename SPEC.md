@@ -642,7 +642,9 @@ Each block is a project of its own in `blocks/NAME/` (`KAT_BLOCKS`, else the nea
 
 - `kat block new NAME` creates it from a template; `kat block build NAME` runs the harness,
   syncs the harness and the block sheet (§4.21: the block instance is written into
-  `NAME_block.kicad_sch`) and the board, and records type, ports and parameters.
+  `NAME_block.kicad_sch`) and the board, and records type, ports and parameters. It is
+  refused before the harness runs while the block's sheets or board are open in KiCad, so a
+  locked file cannot leave the block half-built.
 - **Ports** are the block call's net arguments (power nets such as GND stay global and get
   no port). A harness net with a name from KiCad's power library (`+5V`, `-5V`) makes
   that argument a power port too: `build` warns, since every design then gets that net
