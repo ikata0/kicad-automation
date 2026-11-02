@@ -88,13 +88,6 @@ all through-hole pad/hole bounds into one box. Check each hole/pad with appropri
 clearance instead, so empty space between distant guide holes is not treated as
 an obstacle.
 
-### FR-012: Expose footprint locking
-
-**Partial.** Add a public footprint lock/unlock API, for example
-`b.footprint(ref).lock()`, and expose its state for inspection.
-`_room_for` in `src\kat\pcb\stamping.py` already refuses to move footprints whose
-KiCad lock flag is set; `Footprint` in `src\kat\pcb\board.py` lacks a public setter.
-
 ### FR-013: Check floorplan port accessibility
 
 **Open.** Given candidate cells, port positions, allowed layers, and a source
@@ -236,3 +229,10 @@ needed. The board is included because a lock there also left the block half-buil
 `kat.pcb.plane_rule(except_globs=[...])` and `kat pcb netrule plane --except-zone-glob GLOB`.
 Globs are evaluated at check time, so areas added or stamped later count, and a glob
 matching nothing yet gives a warning. `--except-zone` stays exact.
+
+### FR-012: Expose footprint locking
+
+`Footprint.lock()`, `unlock()` and `locked`, also in `info()`. Beyond the request, the
+checked moves (`move`, `move_many`, `flip`, `align`, `distribute`, `place_near`,
+`move_block`, `replicate`) now refuse a locked part that would change, unless `force=True`,
+and `stamp` refuses to move one, because they used to ignore the flag.

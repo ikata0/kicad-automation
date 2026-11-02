@@ -59,14 +59,34 @@ class PlacementMixin:
     # --- moves -----------------------------------------------------------------------------
 
     def move(self, ref: str, to: tuple[float, float] | None = None, rot: float | None = None,
-             side: str | None = None, allow_overlap: bool = False) -> dict:
+             side: str | None = None, allow_overlap: bool = False, force: bool = False) -> dict:
         """Move one footprint (position, rotation, side). Refused if its courtyard then
-        overlaps another one on the same side, unless ``allow_overlap``."""
-        return self.move_many({ref: {"to": to, "rot": rot, "side": side}}, allow_overlap)
+        overlaps another one on the same side, unless ``allow_overlap``, and if the part is
+        locked, unless ``force``."""
+        return self.move_many({ref: {"to": to, "rot": rot, "side": side}}, allow_overlap, force)
 
-    def move_many(self, moves: dict, allow_overlap: bool = False) -> dict:
+    def _refuse_locked(self, moves: dict, force: bool) -> None:
+        """KatError if a move would change a locked part (staying put is fine: a locked part
+        may be the reference of ``align``)."""
+        if force:
+            return
+        held = []
+        for ref, m in moves.items():
+            f = self.footprint(ref)
+            to, rot, side = m.get("to"), m.get("rot"), m.get("side")
+            if f.locked and ((to and (abs(to[0] - f.x) > 1e-6 or abs(to[1] - f.y) > 1e-6))
+                             or (rot is not None and abs((rot - f.rot + 180) % 360 - 180) > 1e-6)
+                             or (side and side != f.side)):
+                held.append(ref)
+        if held:
+            raise env.KatError(f"{', '.join(held)} locked: unlock first (b.footprint(ref).unlock()) "
+                               "or pass force=True")
+
+    def move_many(self, moves: dict, allow_overlap: bool = False, force: bool = False) -> dict:
         """Move several footprints at once ({ref: {to, rot, side}}); collisions are checked
-        on the final arrangement, so parts may swap places."""
+        on the final arrangement, so parts may swap places. Nothing moves if one of them is
+        locked, unless ``force``."""
+        self._refuse_locked(moves, force)
         undo = []
         for ref, m in moves.items():
             f = self.footprint(ref)
@@ -84,30 +104,37 @@ class PlacementMixin:
             raise env.KatError(f"courtyards would overlap: {hits[:8]} (allow_overlap to force)")
         return {"moved": [self.footprint(r).info() for r in moves], "overlaps": hits}
 
-    def flip(self, ref: str, allow_overlap: bool = False) -> dict:
+    def flip(self, ref: str, allow_overlap: bool = False, force: bool = False) -> dict:
         """Move ``ref`` to the other side at the same position; refused on a courtyard
-        overlap unless ``allow_overlap``. Returns like ``move``."""
+        overlap unless ``allow_overlap``, and if locked unless ``force``. Returns like
+        ``move``."""
         f = self.footprint(ref)
-        return self.move(ref, side="B" if f.side == "F" else "F", allow_overlap=allow_overlap)
+        return self.move(ref, side="B" if f.side == "F" else "F", allow_overlap=allow_overlap, force=force)
 
-    def align(self, refs: list[str], axis: str = "y", value: float | None = None) -> dict:
+    def align(self, refs: list[str], axis: str = "y", value: float | None = None, force: bool = False) -> dict:
         """Put the footprints' origins on one line: ``axis`` "y" = same y (a row), "x" = same
-        x (a column); ``value`` defaults to the first footprint's."""
+        x (a column); ``value`` defaults to the first footprint's. A locked part that would
+        move is refused unless ``force``."""
         fs = [self.footprint(r) for r in refs]
         v = value if value is not None else (fs[0].y if axis == "y" else fs[0].x)
-        return self.move_many({f.ref: {"to": (f.x, v) if axis == "y" else (v, f.y)} for f in fs})
+        return self.move_many({f.ref: {"to": (f.x, v) if axis == "y" else (v, f.y)} for f in fs}, force=force)
 
     def distribute(self, refs: list[str], start: tuple[float, float], pitch: tuple[float, float],
-                   rot: float | None = None) -> dict:
-        """Place footprints in the given order from ``start``, one ``pitch`` (dx, dy) apart."""
+                   rot: float | None = None, force: bool = False) -> dict:
+        """Place footprints in the given order from ``start``, one ``pitch`` (dx, dy) apart.
+        A locked part that would move is refused unless ``force``."""
         return self.move_many({r: {"to": (start[0] + i * pitch[0], start[1] + i * pitch[1]), "rot": rot}
-                               for i, r in enumerate(refs)})
+                               for i, r in enumerate(refs)}, force=force)
 
-    def place_near(self, ref: str, target: str, gap: float = 0.3, allow_overlap: bool = False) -> dict:
+    def place_near(self, ref: str, target: str, gap: float = 0.3, allow_overlap: bool = False,
+                   force: bool = False) -> dict:
         """Put a two-pad part (decoupling capacitor, pull-up) next to the pad ``target``
         ("U1.8"): outside the target part's courtyard on the side the pad faces, oriented
         along that direction, with its pad on the target's net nearest to the target pad.
-        Tries the spot and then sideways steps until no courtyard overlaps."""
+        Tries the spot and then sideways steps until no courtyard overlaps. A locked part is
+        refused unless ``force``."""
+        if self.footprint(ref).locked and not force:
+            raise env.KatError(f"{ref} locked: unlock first (b.footprint(ref).unlock()) or pass force=True")
         tref, _, num = target.partition(".")
         host = self.footprint(tref)
         pad = host.pad(num)
@@ -153,7 +180,7 @@ class PlacementMixin:
             x, y = (x0, y0 + k * step) if ux else (x0 + k * step, y0)
             try:
                 res = self.move(ref, to=(round(x, 3), round(y, 3)), rot=f.rot,
-                                side=host.side, allow_overlap=allow_overlap)
+                                side=host.side, allow_overlap=allow_overlap, force=force)
             except env.KatError:
                 continue
             # pads must also clear copper that is already laid (vias, tracks, other pads)
@@ -189,13 +216,15 @@ class PlacementMixin:
         return union(self.footprint(r).box() for r in refs)
 
     def move_block(self, name: str, to: tuple[float, float] | None = None,
-                   by: tuple[float, float] | None = None, allow_overlap: bool = False) -> dict:
-        """Move a block as a unit: its box's top-left corner ``to`` a point, or ``by`` (dx, dy)."""
+                   by: tuple[float, float] | None = None, allow_overlap: bool = False,
+                   force: bool = False) -> dict:
+        """Move a block as a unit: its box's top-left corner ``to`` a point, or ``by`` (dx, dy).
+        Refused if one of its parts is locked, unless ``force``."""
         box = self.block_box(name)
         dx, dy = by if by else (to[0] - box[0], to[1] - box[1])
         moves = {r: {"to": (self.footprint(r).x + dx, self.footprint(r).y + dy)}
                  for r in self.blocks()[name]}
-        return self.move_many(moves, allow_overlap)
+        return self.move_many(moves, allow_overlap, force)
 
     def _block_key(self, ref: str, block: str) -> str:
         """Identity of a part inside its block: its SKiDL tag with the block name taken
@@ -209,11 +238,12 @@ class PlacementMixin:
         return ""
 
     def replicate(self, template: str, targets: dict[str, tuple[float, float]] | list[str],
-                  allow_overlap: bool = False) -> dict:
+                  allow_overlap: bool = False, force: bool = False) -> dict:
         """Arrange each target block like ``template``: same relative positions, rotations
         and sides. ``targets``: {block: (x, y) of its top-left corner} or a list (keep each
         block's current corner). Parts pair up by SKiDL tag with the block name removed,
-        otherwise by footprint and reference order."""
+        otherwise by footprint and reference order. A locked target part that would move is
+        refused unless ``force``."""
         blocks = self.blocks()
         tmpl = blocks.get(template)
         if not tmpl:
@@ -232,7 +262,7 @@ class PlacementMixin:
                 t = self.footprint(tr)
                 moves[rr] = {"to": (corner[0] + t.x - tbox[0], corner[1] + t.y - tbox[1]),
                              "rot": t.rot, "side": t.side}
-        res = self.move_many(moves, allow_overlap)
+        res = self.move_many(moves, allow_overlap, force)
         res["pairs"] = pairs
         return res
 

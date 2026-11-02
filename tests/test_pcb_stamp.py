@@ -357,6 +357,26 @@ def test_bottom_overlap_counts_through_hole_pads_on_both_sides(hier, tmp_path):
         Board(pcb).stamp(b1, "/CH_B", at=(112, 112), side="bottom")
 
 
+def test_stamp_refuses_to_move_a_locked_part(hier, tmp_path):
+    """FR-012: a locked part of the instance stops a stamp that would move it, with nothing
+    changed; in place it stamps again, and unlocked it moves."""
+    c = copy_of(hier, tmp_path)
+    pcb, b1 = c["top"], c["b1"]
+    ref = hier["stamped"]["instances"][1]["pairs"]["R101"]
+    with kat.pcb.edit(pcb) as b:
+        b.footprint(ref).lock()
+    before = Board(pcb).footprint(ref)
+    with pytest.raises(kat.KatError, match=rf"/CH_B: {ref} locked"):
+        Board(pcb).stamp(b1, "/CH_B", at=(112, 113))
+    with kat.pcb.edit(pcb) as b:
+        b.stamp(b1, "/CH_B", at=(112, 112))                     # where it is: fine
+        assert b.footprint(ref).locked and b.footprint(ref).x == before.x
+    with kat.pcb.edit(pcb) as b:
+        b.footprint(ref).unlock()
+        b.stamp(b1, "/CH_B", at=(112, 113))
+    assert Board(pcb).footprint(ref).y == pytest.approx(before.y + 1)
+
+
 def test_layer_rules_refuse_a_flipped_block(hier, tmp_path):
     c = copy_of(hier, tmp_path)
     pcb, b1 = c["top"], c["b1"]

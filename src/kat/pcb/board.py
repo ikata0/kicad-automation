@@ -64,7 +64,8 @@ class Pad:
 
 class Footprint:
     """A footprint on the board. Position ``x``, ``y`` in mm, ``rot`` in degrees, ``side``
-    "F" or "B"; ``ref``, ``value``, ``lib_id``, ``path`` (link to the schematic symbol)."""
+    "F" or "B"; ``ref``, ``value``, ``lib_id``, ``path`` (link to the schematic symbol);
+    ``locked``, with ``lock()`` / ``unlock()``."""
 
     def __init__(self, node: list):
         self.node = node
@@ -84,6 +85,27 @@ class Footprint:
         """True for parts without a schematic symbol (holes, fiducials); sync ignores them."""
         attr = find(self.node, "attr")
         return attr is not None and any(str(t) == "board_only" for t in attr[1:])
+
+    @property
+    def locked(self) -> bool:
+        """True if KiCad's lock flag is set: ``Board.move`` and ``stamp`` refuse to move it."""
+        n = find(self.node, "locked")
+        return n is not None and (len(n) < 2 or str(n[1]) != "no")
+
+    def lock(self) -> None:
+        """Set KiCad's lock flag: the checked moves (``Board.move``, ``align``, ...) and
+        ``stamp`` then refuse to move the part."""
+        n = find(self.node, "locked")
+        if n is None:
+            self.node.insert(2, [Sym("locked"), Sym("yes")])
+        else:
+            n[1:] = [Sym("yes")]
+
+    def unlock(self) -> None:
+        """Clear KiCad's lock flag."""
+        n = find(self.node, "locked")
+        if n is not None:
+            self.node.remove(n)
 
     @property
     def path(self) -> str:
@@ -207,8 +229,8 @@ class Footprint:
         return self.courtyard() or union(p.box for p in self.pads())
 
     def place(self, x: float | None = None, y: float | None = None, rot: float | None = None) -> None:
-        """Set position (mm) and/or rotation (degrees) without any check; the checked way
-        is ``Board.move``."""
+        """Set position (mm) and/or rotation (degrees) without any check, the lock
+        included; the checked way is ``Board.move``."""
         at = find(self.node, "at")
         if x is not None:
             at[1] = num(x)
@@ -226,9 +248,9 @@ class Footprint:
         fps.set_rotation(self.node, rot)
 
     def info(self) -> dict:
-        """ref, value, footprint, x, y, rot, side, box as a dict."""
+        """ref, value, footprint, x, y, rot, side, locked, box as a dict."""
         return {"ref": self.ref, "value": self.value, "footprint": self.lib_id,
-                "x": self.x, "y": self.y, "rot": self.rot, "side": self.side,
+                "x": self.x, "y": self.y, "rot": self.rot, "side": self.side, "locked": self.locked,
                 "box": list(b) if (b := self.box()) else None}
 
 

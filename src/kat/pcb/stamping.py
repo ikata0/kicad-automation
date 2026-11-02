@@ -223,6 +223,23 @@ def _taken(fp) -> list[tuple[str, tuple]]:
     return out
 
 
+def _refuse_locked(src, pairs: dict, instance: str, f: "_Place") -> None:
+    """KatError if the stamp would move a locked part of the instance (one already where
+    the stamp puts it is fine, so stamping again in place still works)."""
+    held = []
+    for sf in src.footprints():
+        tf = pairs.get(sf.uuid)
+        if tf is None or not tf.locked:
+            continue
+        x, y = f(sf.x, sf.y)
+        if (abs(tf.x - x) > 1e-3 or abs(tf.y - y) > 1e-3 or tf.side != f.side(sf.side)
+                or abs((f.fp_angle(sf.rot) - tf.rot + 180) % 360 - 180) > 1e-3):
+            held.append(tf.ref)
+    if held:
+        raise env.KatError(f"{instance}: {', '.join(sorted(held))} locked where the stamp would move "
+                           "them: unlock them first (b.footprint(ref).unlock()), or stamp elsewhere")
+
+
 def _uuid(node: list) -> str | None:
     u = find(node, "uuid")
     return str(u[1]) if u is not None else None
@@ -451,7 +468,8 @@ class StampMixin:
         judged per layer (copper with clearance, same net allowed; courtyards per side;
         keep-outs), so neighbouring blocks may interlock; a collision is refused
         (``stamp_collisions``, ``kat.pcb.min_pitch``). Parts of block instances not stamped
-        yet are no obstacles. The design's net classes
+        yet are no obstacles. Locked parts of the instance are refused where the stamp would
+        move them. The design's net classes
         on the block's nets must not be stricter than the block's.
 
         ``side="bottom"``: the block flipped to the other side, mirrored about its
@@ -516,6 +534,7 @@ class StampMixin:
 
         box = src.outline_box() or _parts_box(src, pairs)
         f = _Place(box, at, rot, bottom, lfn)
+        _refuse_locked(src, pairs, instance, f)
         moved = self._room_for(src, pairs, instance, f, make_room)
         self._unstamp(instance)
 
@@ -732,7 +751,7 @@ class StampMixin:
                      and any(s1 == s2 and overlap(b1, b2, -1e-6) for s1, b1 in _taken(fp) for s2, b2 in after)]
         if not obstacles:
             return []
-        fixed = [fp.ref for fp in obstacles if fp.uuid in stamped or find(fp.node, "locked") is not None]
+        fixed = [fp.ref for fp in obstacles if fp.uuid in stamped or fp.locked]
         if not make_room or fixed:
             why = f" ({', '.join(fixed)} locked or stamped: move the stamp)" if fixed and make_room else ""
             raise env.KatError(f"{instance} would overlap {', '.join(sorted(fp.ref for fp in obstacles))}"

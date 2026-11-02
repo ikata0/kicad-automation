@@ -95,3 +95,43 @@ def test_blocks_move_and_replicate(pcb):
         assert (r2.rot, d2.rot) == (r1.rot, d1.rot)
         assert b.block_box("ch2")[:2] == pytest.approx((60, 30))
     assert kat.pcb.sync(pcb, force=True)["check"]["parity"] == 0
+
+
+def test_locked_parts_refuse_to_move(pcb):
+    """FR-012: the flag goes through KiCad's save, the checked moves respect it and leave
+    everything where it was, staying put is allowed, and force overrides."""
+    with kat.pcb.edit(pcb) as b:
+        b.footprint("J1").place(300, 300, 0)
+        b.footprint("R1").place(340, 300, 0)
+        b.footprint("D1").place(345, 300, 0)
+        assert b.footprint("J1").locked is False and b.footprint("J1").info()["locked"] is False
+        b.footprint("J1").lock()
+        b.footprint("J1").lock()                                  # twice: still one flag
+    b = kat.pcb.Board(pcb)
+    j = b.footprint("J1")
+    assert j.locked and j.info()["locked"] and len([c for c in j.node if str(c[0]) == "locked"]) == 1
+    for refuse in (lambda: b.move("J1", to=(330, 330)), lambda: b.move("J1", rot=90), lambda: b.flip("J1"),
+                   lambda: b.move_many({"R1": {"to": (60, 60)}, "J1": {"to": (30, 30)}}),
+                   lambda: b.distribute(["R1", "J1"], (70, 70), (5, 0)),
+                   lambda: b.align(["R1", "J1"], value=70),
+                   lambda: b.place_near("J1", "C1.1")):
+        with pytest.raises(kat.KatError, match="J1 locked"):
+            refuse()
+        assert (j.x, j.y, j.rot, j.side) == (300, 300, 0, "F")
+        assert (b.footprint("R1").x, b.footprint("R1").y) == (340, 300)     # all or nothing
+    b.move("J1", to=(300, 300), rot=360)                            # staying put is no move
+    b.align(["J1", "R1"])                                         # the locked part as the reference
+    assert (j.x, j.y) == (300, 300) and b.footprint("R1").y == 300
+    b.footprint("D1").lock()
+    with pytest.raises(kat.KatError, match="D1 locked"):
+        b.move_block("ch1", by=(1, 1))
+    with pytest.raises(kat.KatError, match="D1 locked"):
+        b.replicate("ch2", {"ch1": (70, 70)})
+    b.footprint("D1").unlock()
+    assert not b.footprint("D1").locked
+    assert b.move("J1", to=(330, 330), force=True)["moved"][0]["locked"] is True
+    assert (j.x, j.y) == (330, 330) and j.locked
+    j.unlock()
+    b.move("J1", to=(331, 331))
+    assert (j.x, j.y) == (331, 331) and not j.locked
+

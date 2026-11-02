@@ -152,6 +152,8 @@ with kat.pcb.edit(PCB) as b:
 - **Pours and keep-outs** are named; running setup again replaces them by name (several
   pours of one net on one layer need their own `name=`). A keep-out forbids what is set to
   `False`: `tracks` (default), `vias`, `pads`, `pour`, `footprints`.
+- Fixed parts: `b.footprint("J1").lock()` (KiCad's lock flag; `.unlock()`, `.locked`). The
+  moves and `stamp` then refuse to move it; `move(..., force=True)` overrides.
 - Order: fan out an IC's plane pads first, then `place_near` its decoupling (it keeps
   clear of copper already laid), then fan out the capacitors.
 - Functional blocks: SKiDL `@subcircuit` instances (`Block = CH_A/RC1`, nested levels

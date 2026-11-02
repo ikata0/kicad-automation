@@ -255,6 +255,7 @@ like arrangement passes:
 |---|---|
 | `move(ref, to, rot, side)` | refused when its courtyard would overlap another on the same side (`allow_overlap`). A part on B is flipped like KiCad's flip, mirrored top to bottom (local y): seen from the top, a two-pad part at rot 0 on B keeps pad 1 on the left and pad 2 on the right (rot 180: the other way round), but pins above and below its axis (SOT-23, a QFN's pin 1) change places, and angles turn the other way |
 | `move_many({ref: {to, rot, side}})` | simultaneous; checked on the final arrangement (parts may swap places) |
+| `footprint(ref).lock()`, `.unlock()`, `.locked` | KiCad's lock flag, also in `info()`. The moves on this list refuse a locked part that would change (`force=True` overrides; staying put is fine, so it may be the reference of `align`), and `stamp` refuses to move one. `Footprint.place` stays the unchecked primitive |
 | `flip(ref)`, `align(refs, axis)`, `distribute(refs, start, pitch)` | side, rows/columns, even spacing |
 | `place_near(ref, "U1.8")` | a two-pad part beside a pin: outside the host's courtyard, on the side the pin faces, its pad on the pin's net nearest; steps sideways until free |
 | `near(point, radius)`, `collisions(refs)` | what is around a point / courtyard overlaps |
@@ -555,7 +556,8 @@ with kat.pcb.edit("top/top.kicad_pcb") as b:
 - **Room:** top-level design parts (outside any block instance) where the block's parts go
   (courtyards on the same side; the through-hole pads and holes of either side's parts
   collide on both sides) are refused; `make_room=True` / `--make-room` pushes unlocked
-  ones aside. Parts of block instances not stamped yet are no obstacle.
+  ones aside. Parts of block instances not stamped yet are no obstacle. A locked part of the
+  instance itself is refused where the stamp would move it: unlock it first.
 - **Interlocking cells:** a block is not a rectangle that must keep off its neighbours.
   Stamped instances are checked against each other **per layer**, after the layer map
   (`kat.pcb.cells`): copper vs copper on the same copper layer below the larger
@@ -959,6 +961,7 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
 | `netrule coupling` reported the harness connector's neighbouring IN/OUT pins, `plane` the intended pour cut-out under Rf/Cf | harness pads are left out (`--harness`); `--except-zone` / `--except-area` |
 | Side-by-side copper (the main case in a guarded layout) has no parallel-plate overlap, so `coupling` gave no pF | `--estimate 2d`: 2D field solution of the cross-section |
 | `pcb sync` on a block board needed `--force`: the harness connector has no MPN | harness parts are exempt from the required fields |
+| A part locked in KiCad was still moved by `Board.move` and `stamp`; only `make_room` honoured the flag | `Footprint.lock()` / `unlock()` / `locked`; moves refuse unless `force=True`, `stamp` refuses unless unlocked |
 | `pcb view --layers In9.Cu` on a board without that layer: kicad-cli exits 0 and writes nothing, kat failed with a raw file error | layer names are checked against the board first |
 | Escaping a SKiDL pin name with `+` or brackets (`u[r"IN\+"]`) finds no pin: names match exactly unless `match_pin_regex` is set | write the name literally, `u["IN+"]`; a name with a space takes the pin number (`tests/test_skidl_blocks.py` pins this down) |
 
