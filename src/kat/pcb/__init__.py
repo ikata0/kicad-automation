@@ -343,12 +343,15 @@ def coupling_2d(width_a: float, width_b: float, gap: float, below: float, above:
     return {"pf_per_mm": round(field2d.side_by_side(width_a, width_b, gap, below, above, epsilon_r, copper), 6)}
 
 
-def layer_rule(pcb: Path | str, nets: str, layers: list[str]) -> dict:
+def layer_rule(pcb: Path | str, nets: str, layers: list[str], via_span: str = "strict",
+               pads: bool = False) -> dict:
     """Nets ``nets`` may only lie on ``layers`` (KiCad names, ``L1``..., layer roles).
+    ``via_span``: a via counts on every layer it spans (``strict``), only on the two it joins
+    (``ends``: it may pass through others) or not at all (``ignore``). ``pads``: pads count too.
     Checked by ``kat pcb check`` and by ``stamp`` on what it copies. Returns the net rules."""
     from . import coupling
     report.touch(pcb)
-    return {"board": str(pcb), "net_rules": coupling.layer_rule(pcb, nets, layers)}
+    return {"board": str(pcb), "net_rules": coupling.layer_rule(pcb, nets, layers, via_span, pads)}
 
 
 def plane_rule(pcb: Path | str, nets: str, net: str | None = None, except_zones: list[str] | None = None,

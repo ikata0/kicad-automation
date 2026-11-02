@@ -768,7 +768,8 @@ class StampMixin:
             copies.append((n, c))
 
         # the design's layer rules (IN* only on the component side's outer layer, ...)
-        bad = coupling.layer_findings(self, [c for _, c in copies if head(c) in COPPER])
+        bad = coupling.layer_findings(self, [c for _, c in copies if head(c) in COPPER or head(c) == "footprint"]
+                                      + [tf.node for tf in pairs.values()])
         if bad:
             raise env.KatError(f"{instance} on the {side} side breaks the design's layer rules: "
                                + "; ".join(x["message"] for x in bad[:6]))

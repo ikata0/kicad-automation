@@ -194,7 +194,7 @@ def cmd_pcb(a):
         if a.kind == "layers":
             if len(a.args) < 2:
                 raise env.KatError("layers needs NETS LAYER... (e.g. 'IN*' F.Cu B.Cu)")
-            return kat.pcb.layer_rule(a.pcb, a.args[0], a.args[1:])
+            return kat.pcb.layer_rule(a.pcb, a.args[0], a.args[1:], a.via_span, a.pads)
         if a.kind == "plane":
             if len(a.args) != 1:
                 raise env.KatError("plane needs one net selector (and --net for the plane's net)")
@@ -924,7 +924,9 @@ def build_parser() -> argparse.ArgumentParser:
                                      "                               side-by-side copper gets pF from a 2D\n"
                                      "                               cross-section solve (pip install kat[field])\n"
                                      "  layers NETS LAYER...         NETS only on these layers (names, L1, roles);\n"
-                                     "                               stamp refuses blocks that break it\n"
+                                     "                               stamp refuses blocks that break it; --via-span ends:\n"
+                                     "                               a via may pass through other layers, ignore: vias do\n"
+                                     "                               not count; --pads: pads count too\n"
                                      "  plane NETS [--net GND]       a pour on an adjacent layer under every track,\n"
                                      "                               except in --except-zone NAME / --except-zone-glob\n"
                                      "                               GLOB / --except-area\n"
@@ -937,6 +939,9 @@ def build_parser() -> argparse.ArgumentParser:
     s16.add_argument("--harness", action="store_true", help="coupling: include a block board's harness parts")
     s16.add_argument("--estimate", choices=("plate", "2d"), default="plate",
                      help="coupling: plate (overlap only, default) or 2d (also side by side; numpy/scipy)")
+    s16.add_argument("--via-span", choices=("strict", "ends", "ignore"), default="strict",
+                     help="layers: a via counts on all layers it spans (default), only the two it joins, or not")
+    s16.add_argument("--pads", action="store_true", help="layers: pads count too")
     s16.add_argument("--net", help="plane: the plane's net (default: any other net)")
     s16.add_argument("--except-zone", action="append", metavar="NAME",
                      help="plane: no pour needed inside this named zone / rule area (repeatable)")

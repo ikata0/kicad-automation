@@ -67,13 +67,24 @@ def coupling_rule(pcb: Path | str, a: str, b: str, distance: float = 0.3, harnes
     return _store(pcb, rule, ("kind", "a", "b"))
 
 
-def layer_rule(pcb: Path | str, nets: str, layers: list[str]) -> list[dict]:
+VIA_SPANS = ("strict", "ends", "ignore")
+
+
+def layer_rule(pcb: Path | str, nets: str, layers: list[str], via_span: str = "strict",
+               pads: bool = False) -> list[dict]:
     """Nets ``nets`` (glob or ``class:NAME``) may only lie on ``layers``: KiCad names,
-    ``L1``..., or layer roles of the board (``set_layer_roles``). Checked by ``kat pcb
-    check`` and by ``stamp`` on the copper it copies. Returns all net rules."""
+    ``L1``..., or layer roles of the board (``set_layer_roles``). ``via_span``: how a via
+    counts, ``strict`` on every layer it spans, ``ends`` only on the two layers it joins (it may
+    pass through others), ``ignore`` not at all. ``pads``: pads count too, on each layer they
+    have copper. Checked by ``kat pcb check`` and by ``stamp`` on the copper it copies. Returns
+    all net rules."""
     from .board import Board
     _layers(Board(pcb), layers)                       # refuse unknown names now
-    return _store(pcb, {"kind": "layers", "nets": nets, "layers": list(layers)}, ("kind", "nets"))
+    if via_span not in VIA_SPANS:
+        raise env.KatError(f"via_span {via_span!r}: {', '.join(VIA_SPANS)}")
+    rule = {"kind": "layers", "nets": nets, "layers": list(layers),
+            **({"via_span": via_span} if via_span != "strict" else {}), **({"pads": True} if pads else {})}
+    return _store(pcb, rule, ("kind", "nets"))
 
 
 def plane_rule(pcb: Path | str, nets: str, net: str | None = None, except_zones: list[str] | None = None,
@@ -441,23 +452,40 @@ def _where(node: list) -> tuple[float, float]:
     return pts[0] if pts else (0.0, 0.0)
 
 
+def _via_ends(node: list, copper: list[str]) -> list[str]:
+    """The copper layers a via joins (not those it only passes through)."""
+    ls = [str(t) for t in (find(node, "layers") or [None])[1:]]
+    if any(l in ("*.Cu", "F&B.Cu") for l in ls):
+        return [copper[0], copper[-1]]
+    return [l for l in ls if l in copper]
+
+
 def layer_findings(board, nodes: list | None = None) -> list[dict]:
-    """The board's layer rules on copper nodes (tracks, arcs, vias, zones; default: all
-    of the board's): one finding per node on a layer its net may not use."""
+    """The board's layer rules on copper nodes (tracks, arcs, vias, zones, and footprints for
+    rules with ``pads``; default: all of the board's): one finding per node (per pad) on a layer
+    its net may not use."""
     rules = [r for r in lay.meta(board.path).get("net_rules", []) if r["kind"] == "layers"]
     if not rules:
         return []
     copper = board.copper_layers()
     if nodes is None:
-        nodes = [n for n in board.tree if head(n) in ("segment", "arc", "via", "zone")]
+        nodes = [n for n in board.tree if head(n) in ("segment", "arc", "via", "zone", "footprint")]
     out = []
     for r in rules:
         sel, allowed = _selector(board, r["nets"]), _layers(board, r["layers"])
+        mode = r.get("via_span", "strict")
         for n in nodes:
+            if head(n) == "footprint":
+                if r.get("pads"):
+                    out += _pad_findings(n, r, sel, allowed, copper)
+                continue
             net = find(n, "net")
             if net is None or not str(net[1]) or sel(str(net[1])) is None:
                 continue
-            bad = [l for l in _node_layers(n, copper) if l not in allowed]
+            if head(n) == "via" and mode == "ignore":
+                continue
+            on = _via_ends(n, copper) if head(n) == "via" and mode == "ends" else _node_layers(n, copper)
+            bad = [l for l in on if l not in allowed]
             if bad:
                 x, y = _where(n)
                 kind = {"segment": "track", "arc": "track"}.get(head(n), head(n))
@@ -465,6 +493,21 @@ def layer_findings(board, nodes: list | None = None) -> list[dict]:
                             "net": str(net[1]), "layers": bad, "x": x, "y": y,
                             "message": f"{kind} of {net[1]} on {', '.join(bad)} at {x:g},{y:g} "
                                        f"(allowed: {', '.join(sorted(allowed, key=copper.index))})"})
+    return out
+
+
+def _pad_findings(node: list, rule: dict, sel, allowed: set[str], copper: list[str]) -> list[dict]:
+    from .board import Footprint
+    out = []
+    for p in Footprint(node).pads():
+        if not p.net or sel(p.net) is None:
+            continue
+        bad = [l for l in copper if p.on(l) and l not in allowed]
+        if bad:
+            out.append({"rule": f"layers {rule['nets']}: {', '.join(rule['layers'])}", "kind": "layers",
+                        "net": p.net, "layers": bad, "x": p.x, "y": p.y,
+                        "message": f"pad {p.ref}.{p.number} of {p.net} on {', '.join(bad)} at {p.x:g},{p.y:g} "
+                                   f"(allowed: {', '.join(sorted(allowed, key=copper.index))})"})
     return out
 
 

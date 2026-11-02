@@ -377,9 +377,12 @@ shows them) and make the board not `clean`:
   `kat[field]` (numpy, scipy); `kat.pcb.coupling_2d(...)` gives the per-mm value alone.
   On a block board the harness pads are left out (their connector pins sit side by side by
   design); `--harness` includes them.
-- `layers NETS LAYER...`: NETS only on these layers (KiCad names, `L1`…, layer roles).
-  `stamp` refuses a block whose copied copper breaks it (e.g. `IN*` mapped to an inner
-  layer by a flip).
+- `layers NETS LAYER... [--via-span strict/ends/ignore] [--pads]`: NETS only on these layers
+  (KiCad names, `L1`…, layer roles). `stamp` refuses a block whose copied copper breaks it
+  (e.g. `IN*` mapped to an inner layer by a flip). A via counts on every layer it spans
+  (`strict`, the default), only on the two it joins (`ends`, for a blind or buried via that
+  merely passes through a layer) or not at all (`ignore`). `--pads`: pads count too, on each
+  layer they have copper.
 - `plane NETS [--net GND]`: a pour (of GND, or of any other net) on an adjacent layer under
   every track of NETS; the finding gives the uncovered length. Intentional cut-outs (the
   pour opened under a feedback network) are exempt with `--except-zone NAME` (a named
@@ -842,7 +845,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `pcb pads PCB [REF...]` | exact pad shapes (radius, chamfers, trapezoid, offset, primitives), for code outside kat (§4.9) |
 | `pcb collisions PCB [INSTANCE...]` | per-layer collisions between stamped instances (§4.18) |
 | `pcb cell BLOCK_PCB [--pitch DX,DY / --clear] [--min-pitch x/y/arc [--center CX,CY] [--side top/bottom/alternate] [--layer-map MAP] [--allow-asymmetric] [--shared GLOB] [--save]]` | a block's stamping pitch and per-layer footprint; smallest collision-free pitch (§4.18) |
-| `pcb netrule PCB coupling A B [--distance D] [--estimate plate/2d] [--harness]` / `layers NETS LAYER...` / `plane NETS [--net N] [--except-zone NAME] [--except-zone-glob GLOB] [--except-area X0,Y0,X1,Y1]` / `list` / `clear` | kat's net rules, checked by `pcb check` (§4.12) |
+| `pcb netrule PCB coupling A B [--distance D] [--estimate plate/2d] [--harness]` / `layers NETS LAYER... [--via-span strict/ends/ignore] [--pads]` / `plane NETS [--net N] [--except-zone NAME] [--except-zone-glob GLOB] [--except-area X0,Y0,X1,Y1]` / `list` / `clear` | kat's net rules, checked by `pcb check` (§4.12) |
 | `pcb roles PCB [LAYER=ROLE ...]` / `pcb stack PCB` | layer roles; stack-up, roles and symmetry (§4.12, §4.18) |
 | `pcb instances PCB BLOCK_PCB` / `pcb environment BLOCK_PCB ZONE...` / `pcb port BLOCK_PCB PORT --at X,Y` | a block's instances in a design / its test-environment zones and keep-outs / where a port leaves it |
 | `pcb remove PCB --uuid U / --at X,Y [--layer] [--kind] [--net]` | remove single tracks and vias, locked ones too (§4.9) |

@@ -61,14 +61,6 @@ mutual capacitance per net pair. The existing parallel-plate and 2D cross-sectio
 estimates in `src\kat\pcb\coupling.py` and `src\kat\pcb\field2d.py` do not provide
 a tiled 3D field solution.
 
-### FR-007: Make layer rules configurable for via pass-through
-
-**Open.** Allow a layer rule to distinguish copper used for routing from layers
-that a blind/buried via merely passes through. Suggested modes are
-`via_span="allow"` or track/pad-only checking. Keep the current strict behaviour
-available. `layer_findings` in `src\kat\pcb\coupling.py` currently checks the full
-via span.
-
 ## Block building and placement
 
 ### FR-013: Check floorplan port accessibility
@@ -235,3 +227,10 @@ via's own span. `b.route_vias(spans, through=False)` sets what the router may la
 Freerouting 2.4.1 limits are worked around and documented in SPEC.md section 4.10: it lays no
 vias unless one spans every layer, so with `through=False` the session is checked and a net that
 used a through via stays unconnected and reported; and it does not stack blind and buried vias.
+
+### FR-007: Make layer rules configurable for via pass-through
+
+`layer_rule(via_span="strict"|"ends"|"ignore", pads=False)` and `kat pcb netrule layers
+--via-span MODE --pads`. `strict` stays the default. `ends` counts only the two layers a via
+joins, `ignore` skips vias, and `pads` adds pads, which were never checked before. `stamp`
+follows the same settings.

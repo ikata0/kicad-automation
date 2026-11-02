@@ -879,6 +879,58 @@ def test_coupling_rule_estimates_the_crosstalk_capacitance(tmp_path, monkeypatch
     assert "net_rules" not in check(pcb)
 
 
+def test_layer_rule_via_span_modes(tmp_path, monkeypatch, capsys):
+    """FR-007: copper used for routing against layers a via merely passes through; tracks count
+    in every mode, the strict default stays."""
+    from kat.sexpr import Sym
+    monkeypatch.setenv("KAT_REPORT", "0")
+    pcb = tmp_path / "l.kicad_pcb"
+    b = Board.create(pcb)
+    b.set_copper_layers(6)
+    b.outline(rect=(0, 0, 40, 20))
+    b.via((5, 5), "S1", layers=("F.Cu", "In2.Cu"))              # passes through In1
+    b.via((10, 5), "S2")                                        # through: ends on B.Cu
+    b.via((15, 5), "S3", layers=("F.Cu", "In3.Cu"))             # ends on In3
+    b.add_track((20, 5), (25, 5), 0.2, "In1.Cu", "S4")          # a track: never fine
+    f = b.add_footprint("Connector_PinHeader_2.54mm:PinHeader_1x01_P2.54mm_Vertical", "J1", 30, 5)
+    node = f.pad("1").node
+    node.insert(node.index(find(node, "layers")) + 1, [Sym("net"), "S5"])
+    b.save()
+
+    def found(*args, **kw):
+        kat.pcb.layer_rule(pcb, "S*", ["F.Cu", "In2.Cu"], *args, **kw)
+        return {x["net"]: x["layers"] for x in check(pcb)["net_rules"]["findings"]}
+
+    assert found() == {"S1": ["In1.Cu"], "S2": ["In1.Cu", "In3.Cu", "In4.Cu", "B.Cu"],
+                       "S3": ["In1.Cu", "In3.Cu"], "S4": ["In1.Cu"]}
+    assert found("ends") == {"S2": ["B.Cu"], "S3": ["In3.Cu"], "S4": ["In1.Cu"]}
+    assert found("ignore") == {"S4": ["In1.Cu"]}
+    pads = found("ignore", pads=True)
+    assert pads["S5"] == ["In1.Cu", "In3.Cu", "In4.Cu", "B.Cu"] and pads["S4"] == ["In1.Cu"]
+    assert cli.main(["pcb", "netrule", str(pcb), "layers", "S*", "F.Cu", "--via-span", "ends", "--pads"]) == 0
+    capsys.readouterr()
+    rule = next(r for r in kat.pcb.net_rules(pcb)["net_rules"] if r["kind"] == "layers")
+    assert rule["via_span"] == "ends" and rule["pads"] is True
+    with pytest.raises(kat.KatError, match="via_span 'x'"):
+        kat.pcb.layer_rule(pcb, "S*", ["F.Cu"], "x")
+
+
+def test_stamp_follows_the_layer_rules_via_span(hier, tmp_path):
+    """FR-007: the block's GND via passes through the inner layers: strict refuses the stamp,
+    ends takes it, and pads count on the copied parts when asked."""
+    c = copy_of(hier, tmp_path)
+    pcb, b1 = c["top"], c["b1"]
+    kat.pcb.layer_rule(pcb, "GND", ["F.Cu", "B.Cu"])
+    with pytest.raises(kat.KatError, match="via of GND on In1.Cu, In2.Cu"):
+        Board(pcb).stamp(b1, "/CH_B", at=(112, 112))
+    kat.pcb.layer_rule(pcb, "GND", ["F.Cu", "B.Cu"], "ends")
+    with kat.pcb.edit(pcb) as b:
+        b.stamp(b1, "/CH_B", at=(112, 112))
+    kat.pcb.layer_rule(pcb, "/IN_B", ["In1.Cu"], "ignore", pads=True)     # only a pad in the block
+    with pytest.raises(kat.KatError, match=r"layer rules: pad \w+\.\d+ of /IN_B on F\.Cu"):
+        Board(pcb).stamp(b1, "/CH_B", at=(112, 112))
+
+
 def test_plane_rule_exempts_a_family_of_named_cutouts(tmp_path, monkeypatch, capsys):
     """FR-008: a glob over names exempts each matching area at check time, later ones too;
     exact names stay exact, and names that only look alike do not count."""
