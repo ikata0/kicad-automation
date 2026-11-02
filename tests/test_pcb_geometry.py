@@ -117,3 +117,28 @@ def test_index_and_outlines():
     assert abs(tall[2] - tall[0] - 1.0) < 0.05 and abs(tall[3] - tall[1] - 3.0) < 0.05
     turned = box_of(pad_outline("rect", 0, 0, 1.0, 3.0, 90))
     assert abs(turned[2] - turned[0] - 3.0) < 1e-9
+
+
+def test_hull_and_turned_courtyards():
+    from kat.pcb.geometry import hull
+    assert sorted(hull([(0, 0), (2, 0), (2, 1), (0, 1), (1, 0.5), (1, 0)])) == [(0, 0), (0, 1), (2, 0), (2, 1)]
+    assert hull([(1, 1), (1, 1), (2, 2)]) == [(1, 1), (2, 2)]
+
+
+@pytest.mark.requires("kicad", "symbols", "footprints")
+def test_courtyard_outline_is_tighter_than_its_box_at_45_degrees(board, tmp_path):
+    """Same corners at the part's own angle as the box at 0; at 45 degrees the area is the
+    drawn courtyard's, while the bounding box grows."""
+    def area(poly):
+        return abs(sum(a[0] * b[1] - b[0] * a[1] for a, b in zip(poly, poly[1:] + poly[:1]))) / 2
+
+    b = Board.create(tmp_path / "c.kicad_pcb")
+    f = b.add_footprint("Resistor_SMD:R_0603_1608Metric", "R1", 50, 50, 0)
+    box = f.courtyard()
+    flat = f.courtyard_outline()
+    assert area(flat) == pytest.approx((box[2] - box[0]) * (box[3] - box[1]))
+    f.place(rot=45)
+    turned = f.courtyard_outline()
+    assert area(turned) == pytest.approx(area(flat), rel=1e-6)
+    box = f.courtyard()
+    assert (box[2] - box[0]) * (box[3] - box[1]) > 1.5 * area(turned)

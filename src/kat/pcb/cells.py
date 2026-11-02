@@ -11,10 +11,12 @@ under the neighbour, courtyards over the cell edge) as long as these do not coll
   the two classes'), unless both are the same net (a shared GND);
 - **courtyard** vs courtyard on the same side (overlapping; touching is fine);
 - **keepout** vs what it forbids of the other copy on its layer: tracks, vias, pads,
-  and on an outer layer the courtyards of that side (footprints).
+  and on an outer layer the courtyards of that side (footprints);
+- **pour** vs pour on the same layer with the same priority and different nets: DRC's
+  ``zones_intersect``, since neither knows which to fill.
 
-Through-hole pads and vias count on every copper layer they span. Pours are no obstacle:
-they keep their clearance to other nets when filled. A copy on the bottom side is
+Through-hole pads and vias count on every copper layer they span. Otherwise pours are no
+obstacle: they keep their clearance to other nets when filled. A copy on the bottom side is
 checked after its layer map.
 """
 
@@ -38,23 +40,21 @@ FORBIDS = {"track": "tracks", "via": "vias", "pad": "pads", "courtyard": "footpr
 
 @dataclass
 class Item:
-    """One thing a block takes: ``kind`` track, via, pad, courtyard or keepout; ``layer``
-    a copper layer (courtyards: ``F``/``B``); ``what`` names it in a report."""
+    """One thing a block takes: ``kind`` track, via, pad, courtyard, keepout or pour; ``layer``
+    a copper layer (courtyards: ``F``/``B``); ``what`` names it in a report; ``priority``:
+    a pour's."""
     kind: str
     layer: str
     net: str
     shape: _Shape
     what: str
     forbids: frozenset = frozenset()
-
-
-def _rect(b) -> list[tuple[float, float]]:
-    return [(b[0], b[1]), (b[2], b[1]), (b[2], b[3]), (b[0], b[3])]
+    priority: int = 0
 
 
 def items(nodes: list, copper: list[str]) -> list[Item]:
-    """The items of board nodes (tracks, arcs, vias, keep-out zones, footprints) on the
-    ``copper`` layers. Pours are left out (they yield to other nets)."""
+    """The items of board nodes (tracks, arcs, vias, zones, footprints) on the ``copper``
+    layers."""
     from .board import Footprint
     from .stamping import _taken
     out = []
@@ -76,6 +76,11 @@ def items(nodes: list, copper: list[str]) -> list[Item]:
         elif h == "zone":
             k = find(n, "keepout")
             if k is None:
+                name, pri = find(n, "name"), find(n, "priority")
+                poly = _pts(find(n, "polygon"))
+                out += [Item("pour", l, net, _Shape(poly=poly), f"pour {name[1]}" if name is not None else "pour",
+                             priority=int(str(pri[1])) if pri is not None else 0)
+                        for l in _node_layers(n, copper)]
                 continue
             forbids = frozenset(str(c[0]) for c in k[1:]
                                 if isinstance(c, list) and len(c) > 1 and str(c[1]) == "not_allowed")
@@ -88,8 +93,8 @@ def items(nodes: list, copper: list[str]) -> list[Item]:
             for p in fp.pads():
                 out += [Item("pad", l, p.net, _Shape(poly=p.outline), f"pad {fp.ref}.{p.number}")
                         for l in copper if p.on(l)]
-            out += [Item("courtyard", side, "", _Shape(poly=_rect(b)), f"courtyard {fp.ref}")
-                    for side, b in _taken(fp)]
+            out += [Item("courtyard", side, "", _Shape(poly=poly), f"courtyard {fp.ref}")
+                    for side, poly in _taken(fp)]
     return out
 
 
@@ -112,6 +117,14 @@ def _shrunk(poly, d: float):
     return out
 
 
+def polygons_overlap(a: list, b: list) -> bool:
+    """True if two polygons (mm) overlap; touching does not count."""
+    x, y = _Shape(poly=_shrunk(a, TOL)), _Shape(poly=_shrunk(b, TOL))
+    if x.box[0] > y.box[2] or y.box[0] > x.box[2] or x.box[1] > y.box[3] or y.box[1] > x.box[3]:
+        return False
+    return x.distance(y) <= 0
+
+
 def _clash(x: Item, y: Item, clearance, same_ok) -> tuple[str, float, float] | None:
     """(kind, gap, need) if ``x`` and ``y`` (of two different copies) collide."""
     if x.kind in COPPER_KINDS and y.kind in COPPER_KINDS:
@@ -120,11 +133,14 @@ def _clash(x: Item, y: Item, clearance, same_ok) -> tuple[str, float, float] | N
         need = clearance(x.net, y.net)
         gap = x.shape.distance(y.shape)
         return ("copper", gap, need) if gap < need - TOL else None
+    if x.kind == y.kind == "pour":
+        if x.layer != y.layer or x.priority != y.priority or (x.net == y.net and same_ok(x.net)):
+            return None
+        return ("pour", 0.0, 0.0) if polygons_overlap(x.shape.poly, y.shape.poly) else None
     if x.kind == y.kind == "courtyard":
         if x.layer != y.layer:
             return None
-        a, b = _Shape(poly=_shrunk(x.shape.poly, TOL)), _Shape(poly=_shrunk(y.shape.poly, TOL))
-        if a.distance(b) > 0:
+        if not polygons_overlap(x.shape.poly, y.shape.poly):
             return None
         bx, by = x.shape.box, y.shape.box
         depth = min(min(bx[2], by[2]) - max(bx[0], by[0]), min(bx[3], by[3]) - max(bx[1], by[1]))
@@ -177,6 +193,8 @@ def text(row: dict) -> str:
         why = f"{row['gap']:g} mm apart, need {row['need']:g} ({nets})"
     elif row["kind"] == "courtyard":
         why = f"overlap {-row['gap']:g} mm"
+    elif row["kind"] == "pour":
+        why = f"pours overlap with the same priority ({nets})"
     else:
         why = "inside the keep-out"
     who = f"{row['i']} {row['a']} / {row['j']} {row['b']}" if "i" in row else f"{row['a']} / {row['b']}"
@@ -289,7 +307,7 @@ def footprint(block_pcb: Path | str, source_instance: str | None = None) -> dict
             add(i.layer, "copper", (b[0] - c, b[1] - c, b[2] + c, b[3] + c))
         elif i.kind == "keepout":
             add(i.layer, "keepout", b)
-        else:
+        elif i.kind == "courtyard":
             add({"F": "F.CrtYd", "B": "B.CrtYd"}[i.layer], "courtyard", b)
     for e in out.values():
         for kind, b in list(e.items()):
@@ -456,7 +474,7 @@ def against(board, instance: str, its: list[Item], others: list[str] | None = No
 
 def collisions(board, instances: list[str] | None = None) -> list[dict]:
     """Collisions between stamped instances, pairwise per layer: rows ``i``, ``j``
-    (instances), ``layer``, ``kind`` (copper, courtyard, keepout), ``a``/``b`` (items),
+    (instances), ``layer``, ``kind`` (copper, courtyard, keepout, pour), ``a``/``b`` (items),
     ``nets``, ``gap``/``need`` (mm), ``x``, ``y``."""
     names = stamped_instances(board)
     want = names if instances is None else [n for n in names if n in {"/" + i.strip("/") for i in instances}]

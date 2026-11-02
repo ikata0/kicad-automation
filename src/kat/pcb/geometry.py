@@ -54,6 +54,24 @@ def box_of(points) -> Box:
     return min(xs), min(ys), max(xs), max(ys)
 
 
+def hull(points) -> list[tuple[float, float]]:
+    """Convex hull of points, as a polygon (mm); fewer than three distinct points stay as they
+    are."""
+    pts = sorted(set((float(x), float(y)) for x, y in points))
+    if len(pts) < 3:
+        return pts
+
+    def half(seq):
+        out = []
+        for p in seq:
+            while len(out) >= 2 and (out[-1][0] - out[-2][0]) * (p[1] - out[-2][1]) \
+                    - (out[-1][1] - out[-2][1]) * (p[0] - out[-2][0]) <= 0:
+                out.pop()
+            out.append(p)
+        return out[:-1]
+    return half(pts) + half(reversed(pts))
+
+
 def union(boxes) -> Box | None:
     boxes = [b for b in boxes if b]
     if not boxes:

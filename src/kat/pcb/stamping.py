@@ -38,7 +38,7 @@ from ..schematic import new_uuid
 from ..sexpr import Sym, find, find_all, head, num
 from . import footprints as fps
 from . import layers as lay
-from .geometry import box_of, inside, overlap, point_seg, rotate, union
+from .geometry import box_of, hull, inside, overlap, point_seg, rotate
 
 COPPER = ("segment", "arc", "via", "zone")
 GRAPHICS = ("gr_line", "gr_rect", "gr_arc", "gr_circle", "gr_poly", "gr_curve", "gr_text",
@@ -137,7 +137,7 @@ class _Place:
     def __call__(self, x: float, y: float) -> tuple[float, float]:
         lx = self.box[2] - x if self.bottom else x - self.box[0]
         dx, dy = rotate(lx, y - self.box[1], self.rot)
-        return round(self.at[0] + dx, 4), round(self.at[1] + dy, 4)
+        return round(self.at[0] + dx, 6), round(self.at[1] + dy, 6)
 
     def text_angle(self, a: float) -> float:
         """A board text's angle (KiCad flips text left/right to -angle)."""
@@ -156,6 +156,8 @@ class _Place:
     def item(self, c: list, order: list[str]) -> None:
         """Move a copied track, via, zone or graphic in place; ``order``: the design's
         copper layers, top first (a via's span is written top first)."""
+        if self.rot % 90:
+            _as_polygon(c, self.text_angle)
         _move_points(c, self, self.text_angle)
         _map_layers(c, self.layer)
         if head(c) == "via":
@@ -188,6 +190,28 @@ class _Place:
         cat[1], cat[2] = (num(v) for v in self(float(sat[1]), float(sat[2])))
 
 
+def _as_polygon(c: list, angle) -> None:
+    """A board rectangle or text box as its corner points, in place, since start and end cannot
+    describe one turned by other than 90 degrees; a text box also gets its turned angle."""
+    if head(c) not in ("gr_rect", "gr_text_box") or find(c, "start") is None:
+        return
+    s, e = find(c, "start"), find(c, "end")
+    (x0, y0), (x1, y1) = (float(s[1]), float(s[2])), (float(e[1]), float(e[2]))
+    i = c.index(s)
+    c.remove(s)
+    c.remove(e)
+    c.insert(i, [Sym("pts"), *([Sym("xy"), num(x), num(y)] for x, y in
+                               ((x0, y0), (x1, y0), (x1, y1), (x0, y1)))])
+    if head(c) == "gr_rect":
+        c[0] = Sym("gr_poly")
+        return
+    old = find(c, "angle")
+    if old is None:
+        c.insert(i + 1, [Sym("angle"), num(angle(0.0))])
+    else:
+        old[1] = num(angle(float(old[1])))
+
+
 def _move_points(node: list, f, angle) -> None:
     """Points through ``f``; the angle of a text's ``at`` through ``angle``."""
     for c in node:
@@ -215,19 +239,23 @@ def _map_layers(node: list, f) -> None:
         _map_layers(c, f)
 
 
-def _taken(fp) -> list[tuple[str, tuple]]:
-    """(side, box) a part takes: its courtyard on its side, and each through-hole pad and
-    hole on the other side too, one box each, so the space between distant holes stays free.
-    Without a courtyard: the pads' extent, or for holes only (guide holes) each hole."""
+def _taken(fp) -> list[tuple[str, list]]:
+    """(side, polygon) a part takes: its courtyard on its side, and each through-hole pad and
+    hole on the other side too, one polygon each, so the space between distant holes stays
+    free. Without a courtyard: the hull of its pads, or for holes only (guide holes) each hole.
+    Polygons turn with the part: at 45 degrees they are no bounding boxes."""
     other = "B" if fp.side == "F" else "F"
     pads = fp.pads()
     thru = [p for p in pads if p.kind in ("thru_hole", "np_thru_hole")]
-    holes = [union((p.box, p.hole_box)) for p in thru]
-    if fp.courtyard() is None and thru and all(p.kind == "np_thru_hole" for p in pads):
+    holes = [hull(p.outline + (p.hole_outline or [])) for p in thru]
+    court = fp.courtyard_outline()
+    if court:
+        own = [court]
+    elif thru and all(p.kind == "np_thru_hole" for p in pads):
         own = holes
     else:
-        own = [b] if (b := fp.box()) else []
-    return [(fp.side, b) for b in own] + [(other, b) for b in holes]
+        own = [hull(q for p in pads for q in p.outline)] if pads else []
+    return [(fp.side, p) for p in own] + [(other, p) for p in holes]
 
 
 def _refuse_locked(src, pairs: dict, instance: str, f: "_Place") -> None:
@@ -533,7 +561,7 @@ class StampMixin:
         onto one instance of the block: parts placed as on
         the block board, tracks, vias, zones, keep-outs, graphics and board-only parts
         copied with the instance's nets. ``at``: where the block board's origin (top-left
-        of its outline) goes, mm; the block turns about that point by ``rot`` (0/90/180/270
+        of its outline) goes, mm; the block turns about that point by ``rot`` (a multiple of 45
         degrees, counter-clockwise), so at 90 it lies above ``at``. ``anchor="top-left"``:
         ``at`` is the top-left corner of the turned outline's bounding box instead (None: as
         recorded for the instance, else ``"origin"``). The result gives the turned bounds as
@@ -772,8 +800,8 @@ class StampMixin:
         from .board import Board
         if at is None:
             raise env.KatError("stamp needs at=(x, y)")
-        if rot % 90:
-            raise env.KatError("stamp turns blocks by multiples of 90 degrees only")
+        if rot % 45:
+            raise env.KatError("stamp turns blocks by multiples of 45 degrees only")
         block_pcb, lib_instance = lib.board_of(block_pcb, near=self.path)
         source_instance = source_instance or lib_instance
         earlier = self._stamp_record(instance) if instance else {}
@@ -847,7 +875,8 @@ class StampMixin:
     def stamp_collisions(self, instances: list[str] | None = None) -> list[dict]:
         """Collisions between stamped instances, pairwise per layer (``cells``): copper
         closer than its clearance (same net allowed), overlapping courtyards per side,
-        copper or parts in a keep-out. Rows: ``i``, ``j`` (instances), ``layer``,
+        copper or parts in a keep-out, pours of different nets overlapping at one priority.
+        Rows: ``i``, ``j`` (instances), ``layer``,
         ``kind``, ``a``/``b`` (items), ``nets``, ``gap``/``need`` (mm), ``x``, ``y``.
         ``instances``: only collisions of these."""
         from . import cells
@@ -890,14 +919,15 @@ class StampMixin:
         for g in self._groups():
             if not str(g[1]).startswith(f"{instance} ("):
                 stamped |= {str(u) for u in (find(g, "members") or [None])[1:]}
-        after = [(f.side(side), f.box_of(b))           # (side, box) of the block's parts, placed
-                 for sf in src.footprints() if sf.uuid in pairs for side, b in _taken(sf)]
+        after = [(f.side(side), [f(*q) for q in poly])   # (side, polygon) of the block's parts, placed
+                 for sf in src.footprints() if sf.uuid in pairs for side, poly in _taken(sf)]
 
         def top_level(fp) -> bool:
             return not fp.field("Block") and fp.path.count("/") <= 1 and fp.uuid not in stamped
 
+        from .cells import polygons_overlap
         obstacles = [fp for fp in self.footprints() if fp.uuid not in own and top_level(fp)
-                     and any(s1 == s2 and overlap(b1, b2, -1e-6) for s1, b1 in _taken(fp) for s2, b2 in after)]
+                     and any(s1 == s2 and polygons_overlap(p1, p2) for s1, p1 in _taken(fp) for s2, p2 in after)]
         if not obstacles:
             return []
         fixed = [fp.ref for fp in obstacles if fp.uuid in stamped or fp.locked]
@@ -906,11 +936,11 @@ class StampMixin:
             raise env.KatError(f"{instance} would overlap {', '.join(sorted(fp.ref for fp in obstacles))}"
                                f"{why}: move them first, pass make_room=True, or stamp elsewhere")
         moved = []
-        blocked = [(side, b) for side, b in after]
+        blocked = [(side, box_of(p)) for side, p in after]
         for fp in obstacles:
-            mine = _taken(fp)
-            others = [t for o in self.footprints() if o.uuid not in own and o.node is not fp.node
-                      and (top_level(o) or o.uuid in stamped) for t in _taken(o)]
+            mine = [(side, box_of(p)) for side, p in _taken(fp)]
+            others = [(side, box_of(p)) for o in self.footprints() if o.uuid not in own and o.node is not fp.node
+                      and (top_level(o) or o.uuid in stamped) for side, p in _taken(o)]
             best = None
             for ux, uy in ((1, 0), (0, 1), (-1, 0), (0, -1)):
                 d = 0.5

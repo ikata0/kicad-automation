@@ -6,13 +6,14 @@ Nets live on the pads by name (no net table in KiCad 10). Every save goes throug
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import env
 from ..sexpr import Sym, dumps, find, find_all, head, loads, num
 from . import footprints as fps
-from .geometry import Box, box_of, pad_outline, to_board, union
+from .geometry import Box, box_of, hull, pad_outline, to_board, union
 from .finish import FinishMixin
 from .placement import PlacementMixin
 from .setup import SetupMixin
@@ -57,14 +58,20 @@ class Pad:
         return box_of(self.outline)
 
     @property
-    def hole_box(self) -> Box | None:
-        """Bounding box of the drilled hole in board mm, a slot's length and angle included;
-        None for a pad without a hole."""
+    def hole_outline(self) -> list[tuple[float, float]] | None:
+        """The drilled hole as a polygon in board mm (16-gon), a slot's length and angle
+        included; None for a pad without a hole."""
         d = find(self.node, "drill")
         nums = [float(t) for t in (d or [])[1:] if not isinstance(t, list) and str(t) != "oval"]
         if not nums:
             return None
-        return box_of(pad_outline("oval", self.x, self.y, nums[0], nums[-1], self.angle))
+        return pad_outline("oval", self.x, self.y, nums[0], nums[-1], self.angle)
+
+    @property
+    def hole_box(self) -> Box | None:
+        """Bounding box of the drilled hole in board mm; None for a pad without a hole."""
+        outline = self.hole_outline
+        return box_of(outline) if outline else None
 
     def on(self, layer: str) -> bool:
         """True if the pad has copper on ``layer`` (wildcards such as *.Cu resolved)."""
@@ -233,6 +240,38 @@ class Footprint:
     def courtyard(self) -> Box | None:
         """Courtyard bounding box in board mm, or None without a courtyard."""
         return self.graphics_box("CrtYd")
+
+    def courtyard_outline(self) -> list[tuple[float, float]] | None:
+        """The courtyard as a polygon in board mm, turned with the part: the convex hull of its
+        graphics (never smaller than the drawn courtyard; a rectangle stays that rectangle);
+        None without a courtyard. ``courtyard`` is its bounding box, which at 45 degrees is
+        much larger."""
+        from .coupling import _arc_points, _pt, _pts
+        layer = f"{self.side}.CrtYd"
+        pts: list[tuple[float, float]] = []
+        for g in self.node:
+            h = head(g)
+            if not h or not h.startswith("fp_") or h in ("fp_text", "fp_text_box"):
+                continue
+            lay = find(g, "layer")
+            if lay is None or str(lay[1]) != layer:
+                continue
+            if h == "fp_circle":
+                cx, cy = _pt(find(g, "center"))
+                ex, ey = _pt(find(g, "end"))
+                r = math.hypot(ex - cx, ey - cy) / math.cos(math.pi / 16)      # outside the circle
+                pts += [(cx + r * math.cos(k * math.pi / 8), cy + r * math.sin(k * math.pi / 8))
+                        for k in range(16)]
+            elif h == "fp_poly":
+                pts += _pts(g)
+            elif h == "fp_arc":
+                pts += _arc_points(_pt(find(g, "start")), _pt(find(g, "mid")), _pt(find(g, "end")))
+            elif h == "fp_rect":
+                (x0, y0), (x1, y1) = _pt(find(g, "start")), _pt(find(g, "end"))
+                pts += [(x0, y0), (x1, y0), (x1, y1), (x0, y1)]
+            else:
+                pts += [_pt(n) for k in ("start", "end") if (n := find(g, k)) is not None]
+        return hull(self.to_board(x, y) for x, y in pts) if pts else None
 
     def box(self) -> Box | None:
         """Courtyard, or the pads' extent for footprints without one."""

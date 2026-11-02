@@ -75,7 +75,9 @@ def run(pcb: Path) -> dict:
 
         for f in b.footprints():
             box = f.box()
-            if not box or all(within(c) for c in ((box[0], box[1]), (box[2], box[1]), (box[2], box[3]), (box[0], box[3]))):
+            corners = f.courtyard_outline() or (box and ((box[0], box[1]), (box[2], box[1]),
+                                                         (box[2], box[3]), (box[0], box[3])))
+            if not box or all(within(c) for c in corners):
                 continue
             # pads inside, only the body beyond the edge: an edge-mount part (overhang)
             pads_in = all(within(q) for p in f.pads() for q in p.outline)

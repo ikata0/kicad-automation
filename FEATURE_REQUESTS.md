@@ -78,12 +78,6 @@ region, report which ports can reach the source without crossing occupied cells
 or keepouts. A coarse maze/grid check should detect inaccessible placements
 before detailed routing; fitting by area alone is insufficient.
 
-### FR-015: Support non-orthogonal stamp rotation
-
-**Open.** Allow 45-degree placements, with corresponding geometry, layer-aware
-collision checks, and transformed ports. `StampMixin.stamp` in
-`src\kat\pcb\stamping.py` currently rejects rotations not divisible by 90 degrees.
-
 ## Routing and board-editing APIs
 
 ### FR-017: Build and route blind/buried vias
@@ -232,3 +226,11 @@ Collisions are not part of the preview.
 in natural order of their names (returned as `order`) and judge only their final geometry.
 A refusal lists every collision and its pairs, and restores the board. Single stamps go the
 same way, so they no longer leave a half-changed board in memory when refused.
+
+### FR-015: Support non-orthogonal stamp rotation
+
+`stamp` takes multiples of 45 degrees, on both sides. Collision checks use turned courtyard
+polygons (`Footprint.courtyard_outline`) and copper. Board rectangles and text boxes become
+polygons, as `gr_rect` is always axis-aligned, and coordinates keep 1 nm. Pad positions are
+checked against IPC-D-356, and DRC agrees on interlocking. `Board.collisions` and `move`
+still compare bounding boxes, so they stay stricter than DRC around such a part.

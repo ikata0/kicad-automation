@@ -857,7 +857,7 @@ def build_parser() -> argparse.ArgumentParser:
                     help="only report origin, outline and ports; the board stays as it is")
     s9.add_argument("--step", metavar="DX,DY",
                     help="offset from one instance to the next (mm; default the block's pitch, kat pcb cell)")
-    s9.add_argument("--rot", type=float, default=0.0, help="0, 90, 180 or 270")
+    s9.add_argument("--rot", type=float, default=0.0, help="degrees, a multiple of 45")
     s9.add_argument("--no-lock", action="store_true", help="leave the copied copper unlocked")
     s9.add_argument("--make-room", action="store_true", help="move design parts out of the block's way")
     s9.add_argument("--side", choices=("top", "bottom"), help="side of the block's parts (default: as recorded, else top)")

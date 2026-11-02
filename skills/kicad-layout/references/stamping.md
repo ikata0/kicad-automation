@@ -9,7 +9,7 @@ instances pair by symbol path; flat instances pair by relative SKiDL tag.
 Use `b.instances(block)` to inspect the matches.
 
 The block outline's top-left goes to at and the block turns about that point,
-counter-clockwise, by 0/90/180/270 degrees: at 90 it lies above at. --anchor
+counter-clockwise, by a multiple of 45 degrees: at 90 it lies above at. --anchor
 top-left makes at the turned outline's top-left corner instead. The result gives
 origin and the turned bounds (outline). --preview reports those and the ports
 (positions, order per edge) without changing the board; it works without an

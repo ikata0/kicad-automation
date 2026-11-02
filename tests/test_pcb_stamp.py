@@ -162,8 +162,8 @@ def test_refusals(hier, tmp_path):
     b = Board(pcb)
     with pytest.raises(kat.KatError, match="no part"):
         b.stamp(hier["rc"], "/CH_A", at=(112, 102))                 # wrong block
-    with pytest.raises(kat.KatError, match="multiples of 90"):
-        b.stamp(hier["b1"], "/CH_A", at=(112, 102), rot=45)
+    with pytest.raises(kat.KatError, match="multiples of 45"):
+        b.stamp(hier["b1"], "/CH_A", at=(112, 102), rot=30)
     # miswired: one pad of CH_A's RC2 input on another net
     pad = next(p for p in find_all(b.footprint("C401").node, "pad") if str(p[1]) == "1")  # CH_A/RC2
     _set_child(pad, "net", "/OUT_A")
@@ -442,6 +442,7 @@ def test_port_order_per_edge():
     assert order(90) == {"left": ["b", "a"], "top": ["c"], "right": ["d"]}
     assert order(180) == {"bottom": ["b", "a"], "left": ["c"], "top": ["d"]}
     assert order(270) == {"right": ["a", "b"], "bottom": ["c"], "left": ["d"]}
+    assert order(45) == {"top-left": ["a", "b"], "top-right": ["c"], "bottom-right": ["d"]}
 
 
 def layout_of(pcb: Path) -> dict:
@@ -514,6 +515,169 @@ def test_batch_make_room_does_not_depend_on_the_order_named(hier, tmp_path):
     assert moved[0] == moved[1] and moved[0][0]
 
 
+def turned_design(hier, tmp_path):
+    """A copy of the design with room for a block at 45 degrees."""
+    c = copy_of(hier, tmp_path)
+    with kat.pcb.edit(c["top"]) as e:
+        e.outline(rect=(60, 60, 140, 100))
+        e.plane("GND", "In1.Cu")
+    return c
+
+
+@pytest.mark.parametrize("side,rot", [("top", 45), ("bottom", 45), ("top", 135), ("bottom", 315)])
+def test_45_degree_stamp_is_where_kicad_says(hier, tmp_path, side, rot):
+    """FR-015: pads against KiCad's IPC-D-356, worked out from the block board by hand; DRC
+    finds no error and the footprints still equal their library copies; ports turn too."""
+    import math
+    from kat.pcb.geometry import rotate
+    from test_pcb_geometry import ipc356
+    c = turned_design(hier, tmp_path)
+    pcb, b1 = c["top"], c["b1"]
+    src = Board(b1)
+    x0, y0, x1, _ = src.outline_box()
+    at = (165, 125)
+    with kat.pcb.edit(pcb) as e:
+        r = e.stamp(b1, "/CH_B", at=at, rot=rot, side=side)
+    assert r["outline"] == pytest.approx(Board(pcb).stamp_preview(b1, at, rot, "/CH_B", side)["outline"])
+    kicad = ipc356(pcb)
+    checked = 0
+    for sref, tref in r["pairs"].items():
+        for p in src.footprint(sref).pads():
+            lx = x1 - p.x if side == "bottom" else p.x - x0
+            dx, dy = rotate(lx, p.y - y0, rot)
+            want = (at[0] + dx, at[1] + dy)
+            got = kicad[(tref, p.number)]
+            assert math.dist(want, got) < 0.005, (sref, p.number, want, got)
+            checked += 1
+    assert checked == 14
+    res = check(pcb)
+    assert res["drc_errors"] == 0 and res["parity"] == 0, res["by_type"]
+    assert not {"lib_footprint_mismatch", "lib_footprint_issues"} & set(res["by_type"]), res["by_type"]
+    assert res["unconnected"] == 4 and res["outside_outline"] == [], res["unconnected"]      # as at 0 degrees
+    assert all(f.rot % 90 == pytest.approx(45) for f in map(Board(pcb).footprint, r["pairs"].values())
+               if f.ref.startswith("R")), r["pairs"]
+
+
+@pytest.mark.requires("routing")
+def test_a_45_degree_stamp_can_be_routed(hier, tmp_path):
+    """FR-015: turned pads reach the router and its tracks connect them; judged by DRC. The
+    picture of the result is left in the design's folder for review (KAT_E2E_OUT)."""
+    import os
+    c = turned_design(hier, tmp_path)
+    pcb, b1 = c["top"], c["b1"]
+    with kat.pcb.edit(pcb) as e:
+        e.stamp(b1, "/CH_B", at=(165, 125), rot=45)
+    res = kat.pcb.route(pcb, passes=6, timeout=300)
+    assert res["check"]["drc_errors"] == 0 and res["check"]["unconnected"] == 0, res["check"]
+    if out := os.environ.get("KAT_E2E_OUT"):
+        kat.pcb.view(pcb, region=(100, 95, 90, 60), layers="top", out=Path(out) / "stamp_45.png")
+
+
+def test_a_board_rectangle_and_text_box_turn_as_polygons(hier, tmp_path):
+    """FR-015: gr_rect cannot be turned by 45 degrees; KiCad keeps the corners we write."""
+    import math
+    from kat.sexpr import loads
+    from kat.pcb.geometry import rotate
+    c = turned_design(hier, tmp_path)
+    pcb, b1 = c["top"], c["b1"]
+    with kat.pcb.edit(b1) as e:
+        x0, y0, _, _ = e.outline_box()
+        e._insert(loads(f'''(gr_rect (start {x0 + 1} {y0 + 1}) (end {x0 + 5} {y0 + 3}) (stroke (width 0.1) (type solid))
+            (fill no) (layer "F.Fab") (uuid "aaaaaaaa-1111-4111-8111-111111111111"))'''))
+        e._insert(loads(f'''(gr_text_box "tb" (start {x0 + 6} {y0 + 1}) (end {x0 + 9} {y0 + 3}) (margins 0.1 0.1 0.1 0.1)
+            (layer "F.Fab") (uuid "bbbbbbbb-1111-4111-8111-111111111111")
+            (effects (font (size 0.5 0.5) (thickness 0.1)) (justify left top)) (border yes)
+            (stroke (width 0.1) (type solid)))'''))
+    with kat.pcb.edit(pcb) as e:
+        e.stamp(b1, "/CH_B", at=(130, 120), rot=45)
+    b = Board(pcb)
+    polys = [n for n in b.tree if head(n) == "gr_poly" and str(find(n, "layer")[1]) == "F.Fab"]
+    assert len(polys) == 1                                       # /CH_B's copy; /CH_A was not stamped again
+    corners = [(1, 1), (5, 1), (5, 3), (1, 3)]
+    want = [(130 + d[0], 120 + d[1]) for d in (rotate(x, y, 45) for x, y in corners)]
+    got = [[(float(q[1]), float(q[2])) for q in find_all(find(n, "pts"), "xy")] for n in polys]
+    assert any(all(math.dist(w, g) < 1e-3 for w, g in zip(want, poly)) for poly in got), got
+    boxes = [n for n in b.tree if head(n) == "gr_text_box" and find(n, "pts") is not None]
+    assert boxes and float(find(boxes[0], "angle")[1]) == 45
+    assert check(pcb)["drc_errors"] == 0
+
+
+def test_pours_of_different_nets_must_not_overlap(hier, tmp_path):
+    """Found with FR-015: two stamped pours on one layer with equal priority and different nets
+    are a DRC error (zones_intersect), so they collide, at any angle; the same net or a
+    different priority makes it fine."""
+    from kat.pcb import cells
+    from kat.sexpr import loads
+
+    def pour(net, priority=1, x=0.0):
+        z = loads(f'''(zone (net "{net}") (layer "F.Cu") (uuid "11111111-1111-4111-8111-111111111111")
+            (name "p") (priority {priority}) (hatch edge 0.5) (connect_pads (clearance 0.2))
+            (min_thickness 0.25) (fill yes) (polygon (pts (xy {x} 0) (xy {x + 2} 0) (xy {x + 2} 2) (xy {x} 2))))''')
+        return cells.items([z], ["F.Cu", "B.Cu"])
+
+    cl = lambda a, b: 0.2
+    assert cells.clashes(pour("A"), pour("B", x=1), cl)[0]["kind"] == "pour"
+    assert "pours overlap" in cells.text(cells.clashes(pour("A"), pour("B", x=1), cl)[0])
+    assert not cells.clashes(pour("A"), pour("B", x=3), cl)      # apart
+    assert not cells.clashes(pour("A"), pour("A", x=1), cl)      # one net
+    assert not cells.clashes(pour("A", 1), pour("B", 2, x=1), cl)    # priorities decide
+    assert cells.clashes(pour("A"), pour("A", x=1), cl, same_ok=lambda n: False)     # copies of a block's net
+
+    rc = copy_of(hier, tmp_path)["rc"]
+    assert "pour" in {i.kind for i in cells.block_items(rc)["items"]}
+    assert "F.Cu" in kat.pcb.block_cell(rc)["layers"]            # a block's cell still reports
+
+
+def test_turned_blocks_interlock_by_their_real_shapes(hier, tmp_path, monkeypatch):
+    """FR-015: two RC blocks at 45 degrees stepped across their long axis. The stamp is accepted
+    where the courtyards' bounding boxes overlap, and DRC is clean a little further out: the
+    check does not fill pours, so a neighbour can still starve a thermal spoke there. Forced
+    closer than the check allows, both object."""
+    from kat.pcb import cells
+    from kat.pcb.geometry import overlap
+    c = copy_of(hier, tmp_path)
+    b1, rc = c["b1"], c["rc"]
+    with kat.pcb.edit(b1) as e:
+        e.outline(rect=(60, 60, 120, 100))
+        e.tree[:] = [n for n in e.tree if not (head(n) == "segment" and find(n, "locked") is None)]
+
+    def place(d: float) -> dict:
+        return {"/RC1": ((120, 120), 45), "/RC2": ((120 + d, 120 + d), 45), "/RC3": ((90, 90), 0)}
+
+    def boxes_overlap(res) -> bool:
+        b = Board(b1)
+        a = [b.footprint(r).courtyard() for r in res["instances"][0]["pairs"].values()]
+        n = [b.footprint(r).courtyard() for r in res["instances"][1]["pairs"].values()]
+        return any(overlap(x, y) for x in a for y in n)
+
+    free = None
+    for k in range(1, 60):
+        d = k * 0.1
+        try:
+            Board(b1).stamp(rc, place(d))
+        except kat.KatError as e:
+            assert "collide" in str(e)
+            continue
+        free = d
+        break
+    assert free is not None
+    clean = None
+    for k in range(12):
+        d = free + k * 0.1
+        with kat.pcb.edit(b1) as e:
+            res = e.stamp(rc, place(d))
+        if check(b1)["drc_errors"] == 0:
+            clean = d
+            break
+    assert clean is not None and boxes_overlap(res), (free, clean)
+    assert kat.pcb.stamp_collisions(b1)["ok"]
+    monkeypatch.setattr(cells, "against", lambda *a, **k: [])    # forced closer: both object
+    with kat.pcb.edit(b1) as e:
+        e.stamp(rc, place(free - 0.3))
+    assert check(b1)["drc_errors"] > 0
+    assert kat.pcb.stamp_collisions(b1)["collisions"]
+
+
 def guide_holes(b, ref, at, spacing, drill=1.0):
     """A board-only part of two distant holes and no courtyard (a connector's guide pegs)."""
     from copy import deepcopy
@@ -567,7 +731,7 @@ def test_hole_box_covers_a_turned_slot(tmp_path, monkeypatch):
     assert f.pads()[0].hole_box == pytest.approx((48.5, 49.5, 51.5, 50.5))
     taken = stamp_mod._taken(f)
     assert [s for s, _ in taken] == ["F", "F", "B", "B"]
-    assert taken[2][1] == pytest.approx((48.5, 49.5, 51.5, 50.5))       # the slot, not the pad
+    assert stamp_mod.box_of(taken[2][1]) == pytest.approx((48.5, 49.5, 51.5, 50.5))     # the slot, not the pad
 
 
 def test_stamp_refuses_to_move_a_locked_part(hier, tmp_path):

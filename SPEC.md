@@ -564,8 +564,9 @@ with kat.pcb.edit("top/top.kicad_pcb") as b:
   net-class clearance of the two nets (same net on the design: shared, e.g. GND, no
   collision), courtyard vs courtyard per side (overlap; touching is fine), keep-out vs
   the copper kinds it forbids on its layer and vs courtyards on its outer layer. Vias
-  and through-hole pads count on every layer they span; pours are left out (they yield
-  to other nets). So a block may run a rail under its neighbour on an inner layer, or
+  and through-hole pads count on every layer they span. Pours yield to other nets and are
+  no obstacle, unless two of different nets overlap on a layer with the same priority
+  (`zones_intersect` in DRC, kind `pour`). So a block may run a rail under its neighbour on an inner layer, or
   overlap the neighbour's outline, as long as nothing on any layer meets. A stamp that
   collides is refused with the rows; `b.stamp_collisions()` /
   `kat pcb collisions PCB [INSTANCE...]` lists the pairs on a design (rows `i`, `j`,
@@ -591,9 +592,13 @@ with kat.pcb.edit("top/top.kicad_pcb") as b:
   Edge.Cuts, board-only parts (new references). The block board's own groups become
   sub-groups of the instance group `"/CH_A (NAME)"`.
 - **Transform:** the block origin (top-left of its outline) goes to `at` and the block turns
-  about that point by 0, 90, 180 or 270 degrees, counter-clockwise, on the same side as on
+  about that point by a multiple of 45 degrees, counter-clockwise, on the same side as on
   the block board. So a block `w` x `h` covers, from `at`: at 0 `+w, +h`; at 90 `+h, -w`
-  (above `at`); at 180 `-w, -h`; at 270 `-h, +w`. `anchor="top-left"` / `--anchor top-left`
+  (above `at`); at 180 `-w, -h`; at 270 `-h, +w`. At 45 degrees `outline` is the bounding
+  box of the turned outline; collisions use turned courtyards and copper, so neighbours may
+  sit inside those boxes. A board rectangle becomes a polygon then, since `gr_rect` can only
+  be axis-aligned. `Board.collisions` and `move` still compare bounding boxes, so they are
+  stricter than DRC around a part at 45 degrees. `anchor="top-left"` / `--anchor top-left`
   makes `at` the top-left corner of the turned outline's bounding box instead; existing
   stamps keep what they recorded, and the default stays `origin`. The result gives where
   the origin went (`origin`) and the turned bounds (`outline`, x0, y0, x1, y1 mm).
@@ -979,6 +984,9 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
 | `netrule coupling` reported the harness connector's neighbouring IN/OUT pins, `plane` the intended pour cut-out under Rf/Cf | harness pads are left out (`--harness`); `--except-zone` / `--except-area` |
 | Side-by-side copper (the main case in a guarded layout) has no parallel-plate overlap, so `coupling` gave no pF | `--estimate 2d`: 2D field solution of the cross-section |
 | `pcb sync` on a block board needed `--force`: the harness connector has no MPN | harness parts are exempt from the required fields |
+| A stamp accepted at its tightest spacing can still fail DRC with `starved_thermal`: the collision check does not fill pours, and a neighbour's copper can take a thermal spoke's room | `pcb stamp` ends with the board check; judge by that and step out a little |
+| Interlocked stamps with pours of different nets overlapping at one priority passed the collision check, then failed DRC (`zones_intersect`) | such pours now collide (`pour` rows), at any angle |
+| A courtyard at 45 degrees compared by its bounding box refuses neighbours that fit | courtyards in collision checks are polygons (`Footprint.courtyard_outline`), the convex hull of the drawn courtyard |
 | Swapping or re-placing several stamped instances failed against a neighbour's old copy, and whether it failed depended on the order they were named in | a batch takes them all off first, then stamps them in natural order and reports every collision (§4.18) |
 | A turned stamp's outline is not where people expect: `at` places the block origin and the block turns about it, so at 90 degrees it lies above `at` | the result gives `origin` and the bounds as `outline`; `--preview` tells before stamping; `--anchor top-left` places the turned outline's corner instead (§4.18) |
 | Stamping on the other side of a connector's guide holes was refused: its through-hole pads counted as one box spanning all of them | one box per pad or hole, slots included; DRC agrees (`pth_inside_courtyard` looks at the holes) |
