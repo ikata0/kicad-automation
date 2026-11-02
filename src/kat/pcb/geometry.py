@@ -34,19 +34,74 @@ def rect_points(cx: float, cy: float, w: float, h: float, deg: float) -> list[tu
 
 
 def pad_outline(shape: str, cx: float, cy: float, w: float, h: float, deg: float) -> list[tuple[float, float]]:
-    """Copper outline as a polygon. Round rectangles count as rectangles (conservative),
-    ovals and circles as 16-gons around their stadium; custom pads use their anchor size."""
+    """Copper outline as a polygon, never inside the shape. Round rectangles count as
+    rectangles, ovals and circles as 16-gons around their stadium."""
     if shape in ("circle", "oval"):
-        r = min(w, h) / 2
+        r = min(w, h) / 2 / math.cos(math.pi / 16)   # around the arc, not inside it
         half = (max(w, h) - min(w, h)) / 2  # stadium drawn along x, turned if taller than wide
-        pts = []
-        for i in range(16):
-            a = 2 * math.pi * i / 16
-            ex = half if math.cos(a) >= 0 else -half
-            pts.append((r * math.cos(a) + ex, r * math.sin(a)))
+        # each end cap from one straight side to the other, so those sides stay straight
+        steps = range(16) if half == 0 else range(-4, 5)
+        pts = [(r * math.cos(2 * math.pi * i / 16) + half, r * math.sin(2 * math.pi * i / 16)) for i in steps]
+        if half:
+            pts += [(r * math.cos(2 * math.pi * i / 16) - half, r * math.sin(2 * math.pi * i / 16)) for i in range(4, 13)]
         turn = deg + (0 if w >= h else 90)
         return [(cx + dx, cy + dy) for dx, dy in (rotate(x, y, turn) for x, y in pts)]
     return rect_points(cx, cy, w, h, deg)
+
+
+def _arc_count(r: float, max_error: float) -> int:
+    """Segments of a full circle of radius ``r`` for a polygon at most ``max_error`` off."""
+    if r <= max_error:
+        return 8
+    return max(8, math.ceil(math.pi / math.acos(1 - max_error / r)))
+
+
+def circle_points(cx: float, cy: float, r: float, max_error: float = 0.001) -> list[tuple[float, float]]:
+    """A polygon around a circle (never inside it, at most ``max_error`` outside)."""
+    n = _arc_count(r, max_error)
+    out_r = r / math.cos(math.pi / n)
+    return [(cx + out_r * math.cos(2 * math.pi * k / n), cy + out_r * math.sin(2 * math.pi * k / n))
+            for k in range(n)]
+
+
+def capsule_points(a: tuple[float, float], b: tuple[float, float], r: float,
+                   max_error: float = 0.001) -> list[tuple[float, float]]:
+    """A polygon around the segment ``a``-``b`` of half width ``r`` (a track)."""
+    return hull(circle_points(*a, r, max_error) + circle_points(*b, r, max_error))
+
+
+def rounded_rect_points(w: float, h: float, radius: float = 0.0, chamfer: float = 0.0,
+                        corners: tuple[str, ...] = (), max_error: float = 0.001) -> list[tuple[float, float]]:
+    """A ``w`` x ``h`` rectangle around the origin, y down: corners rounded by ``radius``, those
+    named in ``corners`` (top_left, top_right, bottom_left, bottom_right) cut by ``chamfer``
+    instead, as KiCad draws them."""
+    hw, hh = w / 2, h / 2
+    out: list[tuple[float, float]] = []
+    n = _arc_count(radius, max_error) if radius > 0 else 0
+    steps = max(2, n // 4)
+    scale = 1 / math.cos(math.pi / (4 * steps)) if radius > 0 else 1.0
+    # corner, its signs, the angle the arc starts at (clockwise on screen, y down)
+    for name, sx, sy, start in (("top_left", -1, -1, 180), ("top_right", 1, -1, 270),
+                                ("bottom_right", 1, 1, 0), ("bottom_left", -1, 1, 90)):
+        cx, cy = sx * hw, sy * hh
+        if name in corners and chamfer > 0:
+            ends = ((cx, cy - sy * chamfer), (cx - sx * chamfer, cy))       # walking round the rectangle
+            out += ends if name in ("top_left", "bottom_right") else ends[::-1]
+        elif radius > 0:
+            ox, oy = cx - sx * radius, cy - sy * radius
+            for k in range(steps + 1):
+                a = math.radians(start + 90 * k / steps)
+                r = radius * (scale if 0 < k < steps else 1.0)
+                out.append((ox + r * math.cos(a), oy + r * math.sin(a)))
+        else:
+            out.append((cx, cy))
+    return out
+
+
+def trapezoid_points(w: float, h: float, dx: float, dy: float) -> list[tuple[float, float]]:
+    """KiCad's trapezoid around the origin: size ``w`` x ``h``, ``rect_delta`` ``dx``, ``dy``."""
+    hw, hh, ddx, ddy = w / 2, h / 2, dx / 2, dy / 2
+    return [(-hw - ddy, hh + ddx), (hw + ddy, hh - ddx), (hw - ddy, -hh + ddx), (-hw + ddy, -hh - ddx)]
 
 
 def box_of(points) -> Box:

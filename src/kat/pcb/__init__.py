@@ -19,7 +19,7 @@ from .board import Board, Footprint, Pad
 
 __all__ = ["Board", "Footprint", "Pad", "block_environment", "block_port", "remove", "check", "coupling_2d", "coupling_rule",
            "drc", "edit", "fab", "instances", "layer_roles", "layer_rule", "load", "net_rules", "plane_rule",
-           "ready", "refill", "route", "snapshot", "stack", "stamp", "stamp_preview", "sync", "view"]
+           "pad_geometry", "ready", "refill", "route", "snapshot", "stack", "stamp", "stamp_preview", "sync", "view"]
 
 
 def load(path: Path | str) -> Board:
@@ -160,6 +160,25 @@ def stamp_preview(pcb: Path | str, block_pcb: Path | str, instances: str | list[
     return tidy({"board": str(pcb), "instances": [
         b.stamp_preview(block_pcb, (at[0] + k * step[0], at[1] + k * step[1]), rot, name, side, layer_map,
                         allow_asymmetric, anchor=anchor) for k, name in enumerate(names)]})
+
+
+def pad_geometry(pcb: Path | str, refs: list[str] | None = None) -> dict:
+    """The exact shape of pads, for clearance and routing code outside kat (``Pad.geometry``;
+    mm, degrees): ``refs`` a list of footprints or single pads (``U1``, ``U1.8``), default
+    all. Returns board, pads."""
+    report.touch(pcb)
+    b = Board(pcb)
+    if not refs:
+        pads = b.pads()
+    else:
+        pads = []
+        for r in refs:
+            ref, _, number = r.partition(".")
+            got = [p for p in b.footprint(ref).pads() if not number or p.number == number]
+            if not got:
+                raise KatError(f"{ref} has no pad {number!r}")
+            pads += got
+    return tidy({"board": str(pcb), "pads": [p.geometry() for p in pads]})
 
 
 def instances(pcb: Path | str, block_pcb: Path | str) -> dict:

@@ -13,7 +13,8 @@ from pathlib import Path
 from .. import env
 from ..sexpr import Sym, dumps, find, find_all, head, loads, num
 from . import footprints as fps
-from .geometry import Box, box_of, hull, pad_outline, to_board, union
+from .geometry import (Box, box_of, capsule_points, circle_points, hull, pad_outline, rotate, rounded_rect_points,
+                       to_board, trapezoid_points, union)
 from .finish import FinishMixin
 from .placement import PlacementMixin
 from .setup import SetupMixin
@@ -26,6 +27,14 @@ FORMAT = "20260206"
 def _f(node, key, i=1, default=0.0) -> float:
     n = find(node, key)
     return float(n[i]) if n is not None and len(n) > i else default
+
+
+def _grown(points, half: float, max_error: float) -> list[tuple[float, float]]:
+    """A filled polygon with a stroke of half width ``half``: the outline as is, when there is
+    no stroke; otherwise its convex hull grown, which is never inside the real shape."""
+    if half <= 0:
+        return list(points)
+    return hull(q for p in points for q in circle_points(*p, half, max_error))
 
 
 @dataclass
@@ -47,31 +56,200 @@ class Pad:
     drill: float | None
     node: list = field(repr=False, compare=False)
 
+    def _value(self, key: str, default: float = 0.0) -> float:
+        n = find(self.node, key)
+        return float(n[1]) if n is not None and len(n) > 1 else default
+
+    @property
+    def offset(self) -> tuple[float, float]:
+        """The copper's offset from the pad's position (the hole), in the pad's own frame, mm."""
+        n = find(find(self.node, "drill") or [], "offset")
+        return (float(n[1]), float(n[2])) if n is not None else (0.0, 0.0)
+
+    @property
+    def center(self) -> tuple[float, float]:
+        """Centre of the copper in board mm: the pad's position plus its offset, turned."""
+        dx, dy = rotate(*self.offset, self.angle)
+        return self.x + dx, self.y + dy
+
+    def _to_board(self, points) -> list[tuple[float, float]]:
+        ox, oy = self.offset
+        cx, cy = self.x, self.y
+        return [(cx + dx, cy + dy) for dx, dy in (rotate(x + ox, y + oy, self.angle) for x, y in points)]
+
+    def polygons(self, max_error: float = 0.001) -> list[list[tuple[float, float]]]:
+        """The pad's copper as polygons in board mm, never inside the real shape and at most
+        ``max_error`` mm outside it: one polygon, or for a custom pad the anchor and one per
+        primitive (their union is the pad). ``geometry`` is the analytic description."""
+        if self.shape == "custom":
+            anchor = (circle_points(0, 0, self.w / 2, max_error) if self._anchor() == "circle"
+                      else rounded_rect_points(self.w, self.h))
+            return [self._to_board(anchor)] + [self._to_board(p) for p in self._primitive_polygons(max_error)]
+        if self.shape == "trapezoid":
+            return [self._to_board(trapezoid_points(self.w, self.h, *self._delta()))]
+        if self.shape == "circle":
+            return [self._to_board(circle_points(0, 0, self.w / 2, max_error))]
+        if self.shape == "oval":
+            r, half = min(self.w, self.h) / 2, abs(self.w - self.h) / 2
+            a, b = ((-half, 0), (half, 0)) if self.w >= self.h else ((0, -half), (0, half))
+            return [self._to_board(capsule_points(a, b, r, max_error))]
+        g = self._corners()
+        return [self._to_board(rounded_rect_points(self.w, self.h, g["radius"], g["chamfer"], g["corners"], max_error))]
+
+    def _anchor(self) -> str:
+        return str(find(find(self.node, "options") or [], "anchor")[1]) if (
+            find(find(self.node, "options") or [], "anchor") is not None) else "rect"
+
+    def _delta(self) -> tuple[float, float]:
+        n = find(self.node, "rect_delta")
+        return (float(n[1]), float(n[2])) if n is not None else (0.0, 0.0)
+
+    def _corners(self) -> dict:
+        size = min(self.w, self.h)
+        n = find(self.node, "chamfer")
+        corners = tuple(str(t) for t in n[1:]) if n is not None else ()
+        return {"radius": self._value("roundrect_rratio") * size if self.shape == "roundrect" else 0.0,
+                "chamfer": self._value("chamfer_ratio") * size if corners else 0.0, "corners": corners}
+
+    def _primitives(self) -> list[dict]:
+        """A custom pad's primitives, numbers in mm in the pad's own frame."""
+        def pt(n, key):
+            v = find(n, key)
+            return (float(v[1]), float(v[2])) if v is not None else None
+        out = []
+        for c in (find(self.node, "primitives") or [])[1:]:
+            if not isinstance(c, list):
+                continue
+            kind = str(c[0])
+            width = float(find(c, "width")[1]) if find(c, "width") is not None else 0.0
+            fill = find(c, "fill")
+            e = {"kind": kind.removeprefix("gr_"), "width": width,
+                 "filled": fill is not None and str(fill[1]) in ("yes", "solid")}
+            if kind == "gr_poly":
+                e["points"] = [(float(q[1]), float(q[2])) for q in find_all(find(c, "pts") or [], "xy")]
+            elif kind == "gr_curve":
+                e["control_points"] = [(float(q[1]), float(q[2])) for q in find_all(find(c, "pts") or [], "xy")]
+            elif kind == "gr_circle":
+                ctr, end = pt(c, "center"), pt(c, "end")
+                e.update(center=ctr, radius=math.hypot(end[0] - ctr[0], end[1] - ctr[1]))
+            else:
+                e.update({k: v for k in ("start", "mid", "end") if (v := pt(c, k)) is not None})
+            out.append(e)
+        return out
+
+    def _primitive_polygons(self, max_error: float) -> list[list[tuple[float, float]]]:
+        from .coupling import _arc_points
+        out = []
+        for e in self._primitives():
+            half = e["width"] / 2
+            kind = e["kind"]
+            if kind == "circle":
+                out.append(circle_points(*e["center"], e["radius"] + half, max_error))
+            elif kind == "line":
+                out.append(capsule_points(e["start"], e["end"], half, max_error))
+            elif kind == "rect":
+                (x0, y0), (x1, y1) = e["start"], e["end"]
+                out.append(hull(q for p in ((x0, y0), (x1, y0), (x1, y1), (x0, y1))
+                                for q in circle_points(*p, half, max_error)) if half
+                           else [(x0, y0), (x1, y0), (x1, y1), (x0, y1)])
+            elif kind == "arc":
+                pts = _arc_points(e["start"], e["mid"], e["end"], 32)
+                out += [capsule_points(a, b, half, max_error) for a, b in zip(pts, pts[1:])]
+            else:                              # poly, curve: the hull of a curve's control points
+                pts = e.get("points") or e.get("control_points") or []
+                if pts:
+                    out.append(hull(q for p in pts for q in circle_points(*p, half, max_error)) if half and kind != "poly"
+                               else _grown(pts, half, max_error))
+        return out
+
+    def geometry(self) -> dict:
+        """The pad's exact shape for clearance and routing code outside kat, mm and degrees:
+        ``ref``, ``number``, ``net``, ``kind``, ``layers``, position ``x``, ``y``, ``angle``,
+        ``shape``, size ``w``, ``h``, copper ``center`` and ``offset``; ``drill`` ({shape, w,
+        h}) if it has a hole; roundrect: ``corner_radius``, ``roundrect_rratio``; chamfers:
+        ``chamfer_size``, ``chamfer_ratio``, ``chamfer`` (corner names); trapezoid:
+        ``rect_delta``; custom: ``anchor`` and ``primitives`` (kind, width, filled and points in
+        the pad's own frame, which turn by ``angle`` and start at ``center``); KiCad 9+
+        per-layer shapes: ``padstack`` ({mode, layers}). ``polygons`` gives the same as
+        polygons."""
+        out: dict = {"ref": self.ref, "number": self.number, "net": self.net, "kind": self.kind,
+                     "layers": list(self.layers), "x": self.x, "y": self.y, "angle": self.angle,
+                     "shape": self.shape, "w": self.w, "h": self.h, "center": list(self.center),
+                     "offset": list(self.offset)}
+        d = find(self.node, "drill")
+        nums = [float(t) for t in (d or [])[1:] if not isinstance(t, list) and str(t) != "oval"]
+        if nums:
+            oval = any(str(t) == "oval" for t in d[1:])
+            out["drill"] = {"shape": "oval" if oval else "circle", "w": nums[0], "h": nums[-1]}
+        g = self._corners()
+        if self.shape == "roundrect":
+            out.update(corner_radius=g["radius"], roundrect_rratio=self._value("roundrect_rratio"))
+        if g["corners"]:
+            out.update(chamfer_size=g["chamfer"], chamfer_ratio=self._value("chamfer_ratio"),
+                       chamfer=list(g["corners"]))
+        if self.shape == "trapezoid":
+            out["rect_delta"] = list(self._delta())
+        if self.shape == "custom":
+            out.update(anchor=self._anchor(), primitives=self._primitives())
+        stack = find(self.node, "padstack")
+        if stack is not None:
+            layers = {}
+            for lay in find_all(stack, "layer"):
+                size = find(lay, "size")
+                shape = find(lay, "shape")
+                layers[str(lay[1])] = {**({"shape": str(shape[1])} if shape is not None else {}),
+                                       **({"w": float(size[1]), "h": float(size[2])} if size is not None else {}),
+                                       **({"roundrect_rratio": float(find(lay, "roundrect_rratio")[1])}
+                                          if find(lay, "roundrect_rratio") is not None else {})}
+            mode = find(stack, "mode")
+            out["padstack"] = {"mode": str(mode[1]) if mode is not None else "normal", "layers": layers}
+        return out
+
     @property
     def outline(self) -> list[tuple[float, float]]:
-        """The pad's copper outline as a polygon in board mm (circles and ovals as 16-gons)."""
-        return pad_outline(self.shape, self.x, self.y, self.w, self.h, self.angle)
+        """The pad's copper outline as one polygon in board mm, simple and never smaller than
+        the pad: circles and ovals as 16-gons, round rectangles and chamfers as rectangles, a
+        custom pad as the hull of its anchor and primitives. ``polygons`` is exact."""
+        if self.shape == "custom":
+            return hull(q for p in self.polygons(0.01) for q in p)
+        if self.shape == "trapezoid":
+            return self.polygons()[0]
+        return pad_outline(self.shape, *self.center, self.w, self.h, self.angle)
 
     @property
     def box(self) -> Box:
         """Bounding box (x0, y0, x1, y1) of the pad's copper in board mm."""
         return box_of(self.outline)
 
-    @property
-    def hole_outline(self) -> list[tuple[float, float]] | None:
-        """The drilled hole as a polygon in board mm (16-gon), a slot's length and angle
-        included; None for a pad without a hole."""
+    def _hole(self) -> tuple[float, tuple[float, float]] | None:
+        """(radius, half axis of a slot in board mm) of the drilled hole; None without one."""
         d = find(self.node, "drill")
         nums = [float(t) for t in (d or [])[1:] if not isinstance(t, list) and str(t) != "oval"]
         if not nums:
             return None
-        return pad_outline("oval", self.x, self.y, nums[0], nums[-1], self.angle)
+        w, h = nums[0], nums[-1]
+        half = abs(w - h) / 2
+        return min(w, h) / 2, rotate(half, 0, self.angle + (0 if w >= h else 90))
+
+    @property
+    def hole_outline(self) -> list[tuple[float, float]] | None:
+        """The drilled hole as a polygon in board mm, a slot's length and angle included, at
+        most 0.01 mm outside it; None for a pad without a hole."""
+        hole = self._hole()
+        if hole is None:
+            return None
+        r, (dx, dy) = hole
+        return capsule_points((self.x - dx, self.y - dy), (self.x + dx, self.y + dy), r, 0.01)
 
     @property
     def hole_box(self) -> Box | None:
         """Bounding box of the drilled hole in board mm; None for a pad without a hole."""
-        outline = self.hole_outline
-        return box_of(outline) if outline else None
+        hole = self._hole()
+        if hole is None:
+            return None
+        r, (dx, dy) = hole
+        ex, ey = abs(dx) + r, abs(dy) + r
+        return self.x - ex, self.y - ey, self.x + ex, self.y + ey
 
     def on(self, layer: str) -> bool:
         """True if the pad has copper on ``layer`` (wildcards such as *.Cu resolved)."""

@@ -731,7 +731,8 @@ def test_hole_box_covers_a_turned_slot(tmp_path, monkeypatch):
     assert f.pads()[0].hole_box == pytest.approx((48.5, 49.5, 51.5, 50.5))
     taken = stamp_mod._taken(f)
     assert [s for s, _ in taken] == ["F", "F", "B", "B"]
-    assert stamp_mod.box_of(taken[2][1]) == pytest.approx((48.5, 49.5, 51.5, 50.5))     # the slot, not the pad
+    # the slot, not the pad; the polygon may lie up to 0.01 mm outside it
+    assert stamp_mod.box_of(taken[2][1]) == pytest.approx((48.5, 49.5, 51.5, 50.5), abs=0.011)
 
 
 def test_stamp_refuses_to_move_a_locked_part(hier, tmp_path):

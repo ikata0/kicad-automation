@@ -106,14 +106,6 @@ both the assignment and tracks. Suggested entry points are `kat pcb escape` or
 `kat pcb flow-route`; the current router wraps Freerouting with fixed net
 assignments.
 
-### FR-020: Expose exact pad geometry
-
-**Partial.** Provide a supported analytic description of pad shapes, including
-roundrect corner parameters, for external clearance/routing code. `Pad` already
-exposes shape, dimensions, and angle, but its `outline` approximates curved pads
-with polygons and does not expose a complete analytic shape API.
-See `src\kat\pcb\board.py` and `src\kat\pcb\geometry.py`.
-
 ### FR-021: Query effective item-to-item clearance
 
 **Partial.** Expose a public query for effective clearance between two items/nets
@@ -234,3 +226,12 @@ polygons (`Footprint.courtyard_outline`) and copper. Board rectangles and text b
 polygons, as `gr_rect` is always axis-aligned, and coordinates keep 1 nm. Pad positions are
 checked against IPC-D-356, and DRC agrees on interlocking. `Board.collisions` and `move`
 still compare bounding boxes, so they stay stricter than DRC around such a part.
+
+### FR-020: Expose exact pad geometry
+
+`Pad.geometry()`, `Pad.polygons(max_error)`, `kat.pcb.pad_geometry` and `kat pcb pads`
+describe corner radius, chamfers, trapezoid delta, drill offset, custom primitives and
+per-layer shapes. The polygons match the distances KiCad's DRC reports for 11 shapes, turned
+and flipped (`tests/test_pcb_pads.py`). This also fixed `Pad.outline`, which understated
+circles, ovals, custom pads, trapezoids and offset pads, and footprint flips, which left
+trapezoid tapers and chamfer corners unmirrored.

@@ -9,6 +9,7 @@ Units: um with resolution 10 (as KiCad writes them).
 
 from __future__ import annotations
 
+import hashlib
 import math
 import re
 from pathlib import Path
@@ -236,9 +237,11 @@ def _padstack(p, layers: list[str], cache: dict) -> str:
             shapes = " ".join(f"(shape (circle {_q(l)} {_um(p.w)}))" for l in layers)
             cache[name] = f"    (padstack {_q(name)} {shapes} (attach off))"
         return name
+    pts = [(x - p.x, y - p.y) for x, y in p.outline]
     name = f"{p.shape}_{_um(p.w)}x{_um(p.h)}_a{ang:g}_{'-'.join(layers)}"
+    if p.shape in ("custom", "trapezoid") or p.offset != (0.0, 0.0):    # its size does not say its shape
+        name += "_" + hashlib.sha1(repr([(round(x, 4), round(y, 4)) for x, y in pts]).encode()).hexdigest()[:8]
     if name not in cache:
-        pts = [(x - p.x, y - p.y) for x, y in p.outline]
         shapes = " ".join("(shape " + _poly(l, pts + pts[:1]) + ")" for l in layers)
         cache[name] = f"    (padstack {_q(name)} {shapes} (attach off))"
     return name

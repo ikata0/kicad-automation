@@ -204,6 +204,8 @@ def cmd_pcb(a):
         if a.args:
             raise env.KatError(f"{a.kind} takes no further arguments")
         return kat.pcb.net_rules(a.pcb, a.kind == "clear")
+    if a.pcb_cmd == "pads":
+        return kat.pcb.pad_geometry(a.pcb, a.ref or None)
     if a.pcb_cmd == "instances":
         return kat.pcb.instances(a.pcb, a.block)
     if a.pcb_cmd == "environment":
@@ -940,6 +942,11 @@ def build_parser() -> argparse.ArgumentParser:
                      help="plane: the same for every zone / rule area whose name matches (repeatable)")
     s16.add_argument("--except-area", action="append", metavar="X0,Y0,X1,Y1",
                      help="plane: no pour needed inside this rectangle, mm (repeatable)")
+    s19 = psp.add_parser("pads", formatter_class=_Fmt, help="exact pad shapes, for code outside kat",
+                         description="Position, size, corner radius, chamfers, trapezoid delta, drill and offset,\n"
+                                     "custom primitives and per-layer shapes of pads, mm and degrees.")
+    s19.add_argument("pcb", metavar="PCB")
+    s19.add_argument("ref", nargs="*", metavar="REF", help="footprints or pads (U1, U1.8); default all")
     s10 = psp.add_parser("instances", formatter_class=_Fmt, help="instances of a block in a design")
     s10.add_argument("pcb", metavar="PCB"); s10.add_argument("block", metavar="BLOCK_PCB")
     s11 = psp.add_parser("environment", formatter_class=_Fmt, help="name a block board's test-environment zones",

@@ -115,6 +115,9 @@ def test_index_and_outlines():
     assert idx.query((7, 7, 8, 8)) == [] and idx.query((7, 7, 8, 8), margin=2.5) == ["b"]
     tall = box_of(pad_outline("oval", 0, 0, 1.0, 3.0, 0))    # long axis vertical
     assert abs(tall[2] - tall[0] - 1.0) < 0.05 and abs(tall[3] - tall[1] - 3.0) < 0.05
+    # the straight sides stay straight: no sag along an oval's long edge
+    wide = pad_outline("oval", 0, 0, 3.0, 1.0, 0)
+    assert all(abs(y) >= 0.5 - 1e-9 for x, y in wide if abs(x) <= 1.0 and abs(y) > 0.4)
     turned = box_of(pad_outline("rect", 0, 0, 1.0, 3.0, 90))
     assert abs(turned[2] - turned[0] - 3.0) < 1e-9
 

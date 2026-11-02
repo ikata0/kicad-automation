@@ -280,6 +280,7 @@ the GND pour into islands. So the agent lays the structure first and locks it:
 | `lock(net)`, `remove_tracks(net, layer)` | locked copper stays for the router and for rip-up |
 | `at_point(at, layer, kind, net)`, `remove(uuid)`, `remove_at(at, ...)` (`kat pcb remove`) | single tracks and vias by uuid or position, locked ones too (naming them is the decision) |
 | `net_rules(net)` | width, clearance, via size of the net's class |
+| `Pad.geometry()`, `Pad.polygons(max_error)`, `kat.pcb.pad_geometry` | a pad's exact shape, as numbers (corner radius, chamfers, trapezoid delta, drill offset, custom primitives, per-layer shapes) or as polygons at most `max_error` outside it. `Pad.outline` stays one simple polygon, never smaller than the pad |
 | `kat.pcb.refill(PCB)` | fill the pours and save them (KiCad's filler) |
 
 Recipe: give each plane its own layer (`plane`), place a via per plane pad (`fanout`), lay
@@ -829,6 +830,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `pcb check PCB` / `pcb snapshot PCB` / `pcb view PCB ...` | board DRC + findings, history step with pictures, zoomed view (§4.12) |
 | `pcb stamp PCB BLOCK_PCB INSTANCE... --at X,Y [--step DX,DY] [--rot R] [--anchor origin/top-left] [--no-lock] [--make-room] [--side bottom] [--layer-map auto/roles/MAP] [--allow-asymmetric]` | copy a checked block layout onto instances (`all`), flipped on the bottom side, then the board check (§4.18) |
 | `pcb stamp PCB BLOCK_PCB [INSTANCE...] --at X,Y --preview [...]` | origin, turned bounds and ports of a proposed stamp, board unchanged (§4.18) |
+| `pcb pads PCB [REF...]` | exact pad shapes (radius, chamfers, trapezoid, offset, primitives), for code outside kat (§4.9) |
 | `pcb collisions PCB [INSTANCE...]` | per-layer collisions between stamped instances (§4.18) |
 | `pcb cell BLOCK_PCB [--pitch DX,DY / --clear] [--min-pitch x/y/arc [--center CX,CY] [--side top/bottom/alternate] [--layer-map MAP] [--allow-asymmetric] [--shared GLOB] [--save]]` | a block's stamping pitch and per-layer footprint; smallest collision-free pitch (§4.18) |
 | `pcb netrule PCB coupling A B [--distance D] [--estimate plate/2d] [--harness]` / `layers NETS LAYER...` / `plane NETS [--net N] [--except-zone NAME] [--except-zone-glob GLOB] [--except-area X0,Y0,X1,Y1]` / `list` / `clear` | kat's net rules, checked by `pcb check` (§4.12) |
@@ -984,6 +986,7 @@ schematic through `sync`, so fixing the gate is a design change (§4.3), not a d
 | `netrule coupling` reported the harness connector's neighbouring IN/OUT pins, `plane` the intended pour cut-out under Rf/Cf | harness pads are left out (`--harness`); `--except-zone` / `--except-area` |
 | Side-by-side copper (the main case in a guarded layout) has no parallel-plate overlap, so `coupling` gave no pF | `--estimate 2d`: 2D field solution of the cross-section |
 | `pcb sync` on a block board needed `--force`: the harness connector has no MPN | harness parts are exempt from the required fields |
+| `Pad.outline` used a custom pad's anchor only and ignored trapezoid tapers and drill offsets, so clearance checks could pass copper that DRC refuses; flipping also left tapers and chamfered corners unmirrored | outlines now cover them; `Pad.polygons` is exact and checked against the distances DRC reports |
 | A stamp accepted at its tightest spacing can still fail DRC with `starved_thermal`: the collision check does not fill pours, and a neighbour's copper can take a thermal spoke's room | `pcb stamp` ends with the board check; judge by that and step out a little |
 | Interlocked stamps with pours of different nets overlapping at one priority passed the collision check, then failed DRC (`zones_intersect`) | such pours now collide (`pour` rows), at any angle |
 | A courtyard at 45 degrees compared by its bounding box refuses neighbours that fit | courtyards in collision checks are polygons (`Footprint.courtyard_outline`), the convex hull of the drawn courtyard |

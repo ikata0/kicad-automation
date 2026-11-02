@@ -86,6 +86,12 @@ def mirror(node: list, top: bool = True, swap=swap_side) -> None:
             for j in range(1, len(c)):
                 if isinstance(c[j], str) and not isinstance(c[j], Sym):
                     c[j] = swap(c[j])
+        elif h == "rect_delta" and len(c) > 2:          # a trapezoid's taper mirrors with it
+            c[2] = _neg(c[2])
+        elif h == "chamfer":                            # top corners become bottom corners
+            for j in range(1, len(c)):
+                name = str(c[j])
+                c[j] = Sym(name.replace("top", "bottom") if "top" in name else name.replace("bottom", "top"))
         elif h == "effects":
             just = find(c, "justify")
             if just is None:
