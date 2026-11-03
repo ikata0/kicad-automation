@@ -161,9 +161,31 @@ def test_freerouting_still_ignores_its_ignore_net_classes(bench, tmp_path):
     specctra.write_dsn(b, dsn)
     slow = set(re.search(r"\(class SLOW ([^()]*)", dsn.read_text())[1].split())
     subprocess.run([router.java(), "-Djava.awt.headless=true", "-jar", str(router.jar_path()), "--gui.enabled=false",
-                    "-de", str(dsn), "-do", str(ses), "-mp", "10", "--router.ignore_net_classes=SLOW"],
+                    router.NO_ANALYTICS, "-de", str(dsn), "-do", str(ses), "-mp", "10", "--router.ignore_net_classes=SLOW"],
                    capture_output=True, stdin=subprocess.DEVNULL, timeout=120, check=True)
     assert slow and slow <= {w["net"] for w in specctra.read_ses(ses)["wires"]}
+
+
+@needs_routing
+def test_the_router_sends_no_analytics(bench, monkeypatch):
+    """In a sandbox with no network, nothing can leave and an attempt to send leaves a line in the
+    router's log. There is one without kat's setting, so this also notices if an upgrade changes either."""
+    try:
+        if subprocess.run(["unshare", "-rn", "true"], capture_output=True).returncode:
+            pytest.skip("no network namespaces here")
+    except FileNotFoundError:
+        pytest.skip("no unshare here")
+    real = subprocess.Popen
+    monkeypatch.setattr(subprocess, "Popen",
+                        lambda args, **kw: real(["unshare", "-rn", *args] if "-jar" in args else args, **kw))
+
+    def attempts() -> int:
+        r = kat.pcb.route(bench, passes=2, timeout=120, optimize=False)
+        return (Path(r["dir"]) / "freerouting.log").read_text().lower().count("analytics")
+
+    assert attempts() == 0
+    monkeypatch.setattr(router, "NO_ANALYTICS", "--gui.enabled=false")
+    assert attempts() > 0
 
 
 @needs_routing

@@ -27,6 +27,8 @@ VERSION = "2.4.1"
 URL = f"https://github.com/freerouting/freerouting/releases/download/v{VERSION}/freerouting-{VERSION}.jar"
 SHA256 = "251101c3eeac22d7e7dfcf6796603279e5d1000283eb82d8f093780f7afc6aa9"
 JAVA_MIN = 25     # the pinned jar's classes are version 69 (test_java_minimum_matches_the_jar)
+# Freerouting sends usage data to api.freerouting.app unless told not to; kat always tells it not to
+NO_ANALYTICS = "--usage_and_diagnostic_data.disable_analytics=true"
 
 
 def jar_path() -> Path:
@@ -165,7 +167,7 @@ def route(pcb: Path | str, passes: int = 20, nets: list[str] | None = None, time
     lines = []
     with open(log_file, "w", encoding="utf-8") as logf:
         # streamed: the log grows while it runs, and each pass is echoed on stderr
-        proc = subprocess.Popen([exe, "-Djava.awt.headless=true", "-jar", str(jar), "--gui.enabled=false",
+        proc = subprocess.Popen([exe, "-Djava.awt.headless=true", "-jar", str(jar), "--gui.enabled=false", NO_ANALYTICS,
                                  "-de", str(dsn.resolve()), "-do", str(ses.resolve()), "-mp", str(passes),
                                  f"--router.job_timeout={timeout // 3600:02d}:{timeout % 3600 // 60:02d}:{timeout % 60:02d}",
                                  *extra],

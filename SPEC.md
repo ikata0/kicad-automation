@@ -363,7 +363,8 @@ runs `kat pcb check`. No pcbnew involved.
 - DSN, SES and the Freerouting log go to `history/<stamp>_route/`.
 - Freerouting (Java 25+, GPL-3) is an external program: `kat pcb route --install`
   downloads the pinned release once into kat's cache, checked by SHA-256
-  (`KAT_FREEROUTING=/path/to.jar` uses another copy).
+  (`KAT_FREEROUTING=/path/to.jar` uses another copy). Freerouting's analytics are on by default;
+  kat turns them off on every run.
 - Tracks the router narrowed at fine-pitch pads are widened to the net-class width where
   the clearance allows (`widened`; the rest in `narrow`), checked against all the router's
   new copper. A track in `narrow` still under the board's minimum goes up to that minimum unless it
@@ -1157,6 +1158,7 @@ column in place of the net.
 | kat's docs and check asked for Java 21, but Freerouting 2.4.1 is compiled for Java 25 (class file version 69) | `JAVA_MIN` is 25; a test compares it with the pinned jar |
 | Freerouting accepts `router.ignore_net_classes` in every form and routes those nets anyway, and exits 0 on a setting it does not know, with only a log line | `route` refuses the first and offers `skip_classes`, which kat applies itself; `settings` reports what the router refused and what kat has not seen work |
 | Freerouting's optimizer normally ends at once on a finished board, but can start from a wrong score ("5 unrouted" after a routing stage with none) and spend 6 minutes on one pass | `stages` shows it; `--no-optimize` skips it |
+| Freerouting sends analytics to `api.freerouting.app` by default | `route` always passes `usage_and_diagnostic_data.disable_analytics=true`; a test with no network checks that the router then tries to send nothing |
 | `route --timeout` killed the router and lost all its work | the limit is now the router's own (`job_timeout`): it stops, what it has is kept, and `timed_out` says so |
 | Pins that could be swapped were routed in the order the design happened to give, with crossings and vias a different assignment does not need | `kat pcb escape` chooses assignment and tracks together, then `kat back-annotate` carries the assignment through the design |
 | Escaping a SKiDL pin name with `+` or brackets (`u[r"IN\+"]`) finds no pin: names match exactly unless `match_pin_regex` is set | write the name literally, `u["IN+"]`; a name with a space takes the pin number (`tests/test_skidl_blocks.py` pins this down) |
