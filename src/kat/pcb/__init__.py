@@ -57,10 +57,12 @@ def drc(pcb: Path | str, parity: bool = True, refill: bool = False) -> dict:
     return tidy(checks.drc(Path(pcb), parity, refill))
 
 
-def check(pcb: Path | str) -> dict:
-    """DRC (zones refilled in memory, parity) plus kat's findings; ``ok`` / ``clean``."""
+def check(pcb: Path | str, mapping: Path | str | None = None, complete: bool | list[str] = True) -> dict:
+    """DRC (zones refilled in memory, parity) plus kat's findings; ``ok`` / ``clean``.
+    ``mapping``: a pin table the pads must also agree with, and ``complete`` what it must cover
+    (``kat.mapping.check``), reported in ``mapping``."""
     report.touch(pcb)
-    return tidy(checks.run(Path(pcb)))
+    return tidy(checks.run(Path(pcb), Path(mapping) if mapping else None, complete))
 
 
 def snapshot(pcb: Path | str, slug: str = "", note: str | None = None, out: Path | str | None = None,

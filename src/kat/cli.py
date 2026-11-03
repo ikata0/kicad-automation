@@ -142,7 +142,7 @@ def cmd_pcb(a):
         return kat.pcb.sync(a.pcb, a.sch, a.dry_run, a.force, a.rip_stale,
                             () if a.no_require else (a.require_field or ["MPN"]))
     if a.pcb_cmd == "check":
-        return kat.pcb.check(a.pcb)
+        return kat.pcb.check(a.pcb, a.map, _complete(a))
     if a.pcb_cmd == "refill":
         return kat.pcb.refill(a.pcb)
     if a.pcb_cmd == "fab":
@@ -268,8 +268,19 @@ def cmd_netlist(a):
     return kat.nets(a.sch)
 
 
+def _complete(a):
+    """What a mapping table must cover, from --partial and --complete."""
+    if a.partial and a.complete:
+        raise env.KatError("--partial and --complete exclude each other")
+    return False if a.partial else (a.complete or True)
+
+
 def cmd_check(a):
-    return kat.check(a.sch, a.expect, a.full)
+    return kat.check(a.sch, a.expect, a.full, a.map, _complete(a))
+
+
+def cmd_map(a):
+    return kat.mapping.check(a.file, a.mapping, _complete(a), a.pins.split(",") if a.pins else None)
 
 
 def cmd_ready(a):
@@ -342,6 +353,13 @@ Every command prints one JSON document. Exit code 0 = fine, 1 = checks failed,
 class _Fmt(argparse.RawDescriptionHelpFormatter):
     def __init__(self, prog):
         super().__init__(prog, max_help_position=30, width=100)
+
+
+def _map_options(q) -> None:
+    """--partial and --complete, for every command that reads a mapping table."""
+    q.add_argument("--complete", action="append", metavar="REF",
+                   help="connected pins of this part must be in the table (repeatable; default: every part in it)")
+    q.add_argument("--partial", action="store_true", help="the table need not list all connected pins")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -467,11 +485,35 @@ def build_parser() -> argparse.ArgumentParser:
             "  ok    = ERC has no errors and the netlist matches\n"
             "  clean = ok and no drawing findings\n"
             "The overlap estimate ignores pin names/numbers: always look at the snapshot too.\n"
-            "Netlist differences are listed up to 10 per kind (totals in counts); --full lists all.",
-            ["kat check tia.kicad_sch", "kat check tia.kicad_sch --expect tia_design.net"])
+            "Netlist differences are listed up to 10 per kind (totals in counts); --full lists all.\n"
+            "--map also holds the sheet against an external pin table (see kat map).",
+            ["kat check tia.kicad_sch", "kat check tia.kicad_sch --expect tia_design.net",
+             "kat check tia.kicad_sch --map j1_pinout.csv --complete J1"])
     q.add_argument("--full", action="store_true", help="list every netlist difference")
     q.add_argument("--expect", metavar="NETLIST",
                    help="KiCad s-expression netlist (e.g. from SKiDL) the drawing must match")
+    q.add_argument("--map", metavar="TABLE", help="pin table the sheet must agree with (CSV or JSON)")
+    _map_options(q)
+
+    q = cmd("map", cmd_map, "Check a schematic, board or netlist against an external pin table.",
+            "The table is specified independently of the design: a datasheet, a mating board, a\n"
+            "legacy product. CSV (`,` `;` or tab, # starts a comment line) or JSON. Its columns:\n"
+            "  ref,pin,net or pin,net        J1,3,CH1 / J1.3,CH1: pin on that net; an empty net or\n"
+            "                                NC: unconnected. CH1 matches /CH_A/CH1; /CH_A/CH1 in full\n"
+            "  channel                       a logical name: its pins share a net, channels never do\n"
+            "  source, destination, dest,    several pins in a row share a net, and rows do not\n"
+            "  from, to                      unless one channel or net says so\n"
+            "Reports missing (pins or parts the design lacks), mismatched (expected, actual), split\n"
+            "(should share a net), merged (should not), extra (connected pins of the table's parts\n"
+            "that it lacks; --complete, --partial). Other columns are listed in ignored.\n"
+            "Exit code 1 when it does not agree.",
+            ["kat map tia.kicad_sch j1_pinout.csv",
+             "kat map board.kicad_pcb channels.csv --complete J1 --complete J2",
+             "kat map design.net pins.json --partial"], sch=False)
+    q.add_argument("file", metavar="SOURCE", help=".kicad_sch, .kicad_pcb or a netlist (.net)")
+    q.add_argument("mapping", metavar="TABLE", help="CSV or JSON pin table")
+    q.add_argument("--pins", metavar="COL,...", help="the columns that hold pins (REF.NUMBER)")
+    _map_options(q)
 
     q = cmd("ready", cmd_ready, "Gate before the PCB layout: is the schematic finished?",
             "Checks the parts KiCad will put on the board (symbols marked 'not on board' are\n"
@@ -772,8 +814,11 @@ def build_parser() -> argparse.ArgumentParser:
                                     "  ok    = no DRC errors, parity 0, nothing unconnected, outline\n"
                                     "  clean = ok, no DRC warnings, no kat findings\n"
                                     "islands counts copper cut off from its net (starved thermals,\n"
-                                    "isolated copper): the router's own \"all routed\" does not see them.")
+                                    "isolated copper): the router's own \"all routed\" does not see them.\n"
+                                    "--map also holds the pads against an external pin table (see kat map).")
     s2.add_argument("pcb", metavar="PCB")
+    s2.add_argument("--map", metavar="TABLE", help="pin table the pads must agree with (CSV or JSON)")
+    _map_options(s2)
     s8 = psp.add_parser("refill", formatter_class=_Fmt, help="fill all pours and save them",
                         description="KiCad's zone filler (through DRC) fills every pour and the result\n"
                                     "is saved into the board. Run it after the finish pass.")

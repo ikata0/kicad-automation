@@ -47,13 +47,14 @@ def drc(pcb: Path, parity: bool = True, refill: bool = False, save: bool = False
 ISLAND_TYPES = ("starved_thermal", "isolated_copper", "zone_has_empty_net")
 
 
-def run(pcb: Path) -> dict:
+def run(pcb: Path, mapping: Path | None = None, complete: bool | list[str] = True) -> dict:
     """KiCad's DRC (zones refilled in memory, parity against the schematic) plus kat's
     findings: board outline missing, parts outside the outline (``outside_outline``: pads
     outside; ``overhang``: pads inside, only the body beyond the edge), and the board's
-    net rules (``net_rules``: coupling, layers, plane; see ``coupling``).
+    net rules (``net_rules``: coupling, layers, plane; see ``coupling``). ``mapping``: a pin
+    table the pads must agree with (``kat.mapping.check``), reported in ``mapping``.
 
-    ``ok``: no DRC errors, parity 0, nothing unconnected, outline present.
+    ``ok``: no DRC errors, parity 0, nothing unconnected, outline present, mapping agrees.
     ``clean``: ``ok`` and no DRC warnings and no kat findings."""
     from .board import Board
     pcb = Path(pcb)
@@ -93,6 +94,10 @@ def run(pcb: Path) -> dict:
               "violations": d["violations"], "unconnected_items": d["unconnected"],
               "parity_items": d["parity"], **({"net_rules": rules} if rules else {})}
     ok = bool(outline) and d["errors"] == 0 and not d["parity"] and not d["unconnected"]
+    if mapping:
+        from ..mapping import check as check_mapping
+        result["mapping"] = check_mapping(pcb, mapping, complete)
+        ok = ok and result["mapping"]["ok"]
     result["ok"] = ok
     result["clean"] = (ok and d["warnings"] == 0 and not outside and not overhang
                        and not (rules and rules["findings"]))

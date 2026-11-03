@@ -837,13 +837,14 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `lib search WORDS` / `lib show LIB:NAME` | find symbols; units, pins, body |
 | `list SCH [--near X,Y --radius R]` / `pins SCH REF` / `netlist SCH` | inspect placement (or what is near a point, with uuids), pin positions + outward direction, KiCad's nets |
 | `sync SCH NETLIST [--dry-run] [--sheets TYPE,...]` | bring the design into the drawing (§4.4); block types as sheets (§4.21) |
-| `check SCH [--expect NETLIST] [--full]` | ERC + netlist comparison + drawing findings (lists cut to 10 per kind, totals in `counts`; `--full` all) |
+| `check SCH [--expect NETLIST] [--full] [--map TABLE]` | ERC + netlist comparison + drawing findings (lists cut to 10 per kind, totals in `counts`; `--full` all); `--map`: also against a pin table |
+| `map SOURCE TABLE [--complete REF] [--partial] [--pins COL,...]` | a schematic, board or netlist against an external pin table: missing, mismatched, split, merged, extra (§6.2) |
 | `ready SCH [--expect NETLIST] [--require-field NAME]` | gate before the PCB layout (§6.1) |
 | `pcb sync PCB [--sch] [--dry-run] [--force] [--rip-stale]` | parts and nets onto the board (§4.6) |
 | `pcb refill PCB` | fill all pours and save them (after finishing) |
 | `pcb fab PCB` / `pcb ready PCB [--accept KIND=REASON] [--overhang REF]` | fabrication set / release gate (§4.11) |
 | `pcb route PCB [--passes] [--net NAME] [--install]` | Freerouting through kat's DSN/SES, then the board check (§4.10) |
-| `pcb check PCB` / `pcb snapshot PCB` / `pcb view PCB ...` | board DRC + findings, history step with pictures, zoomed view (§4.12) |
+| `pcb check PCB [--map TABLE]` / `pcb snapshot PCB` / `pcb view PCB ...` | board DRC + findings, history step with pictures, zoomed view (§4.12) |
 | `pcb stamp PCB BLOCK_PCB INSTANCE... --at X,Y [--step DX,DY] [--rot R] [--anchor origin/top-left] [--no-lock] [--make-room] [--side bottom] [--layer-map auto/roles/MAP] [--allow-asymmetric]` | copy a checked block layout onto instances (`all`), flipped on the bottom side, then the board check (§4.18) |
 | `pcb stamp PCB BLOCK_PCB [INSTANCE...] --at X,Y --preview [...]` | origin, turned bounds and ports of a proposed stamp, board unchanged (§4.18) |
 | `pcb clearance PCB A B [--layer L]` | effective clearance between two nets or pads, as DRC resolves it (§4.9) |
@@ -906,6 +907,26 @@ netlist difference).
 `ready` is true when there are no errors; `by_problem` counts both lists. Footprints and
 part numbers are chosen in SKiDL (`footprint=`, `part.fields["MPN"]`) and reach the
 schematic through `sync`, so fixing the gate is a design change (§4.3), not a drawing edit.
+
+### 6.2 Checking against an external pin table
+
+The netlist comparison says the drawing matches the design; it cannot say the design is what a
+datasheet, a mating board or a legacy product asks for. `kat map SOURCE TABLE` can, and `kat
+check --map` and `kat pcb check --map` add the same result to their own (`mapping`; a
+disagreement makes them not `ok`). SOURCE is a schematic (KiCad's netlist of it), a board (its
+pads) or a netlist. Table columns:
+
+| Columns | Means |
+|---|---|
+| `ref`, `pin`, `net` or `pin` (`J1.3`), `net` | that pin is on that net. `CH1` matches the last part of the actual name (`/CH_A/CH1`), `/CH_A/CH1` the whole. Empty or `NC`: unconnected |
+| `channel` | a logical name: its pins share a net, and two channels never do |
+| `source`, `destination`, `dest`, `from`, `to` (or `--pins COL,...`) | pins in one row share a net; two rows do not, unless one channel or net says so |
+
+The result lists `missing` (pins or parts the design lacks), `mismatched` (expected, actual),
+`split`, `merged` and `extra`: connected pins of the table's parts that it lacks. For a table
+that covers only one side of a connection, say which parts it covers with `--complete J1`, or
+`--partial` for none. Columns it does not know are listed in `ignored`; a pin given twice with
+different assignments is an error.
 
 ## 7. Pitfalls found, and their solutions
 

@@ -39,13 +39,6 @@ check pin-to-pin net consistency, guide-peg/hole alignment, and mounting-hole
 alignment. This is a geometric/electrical assembly check, distinct from inspecting
 one board's layer stack-up.
 
-### FR-004: Check a netlist against an external mapping table
-
-**Open.** Let schematic/board checks assert a CSV mapping such as connector
-pin-to-net or source-pin-to-logical-channel-to-destination-pin. Report missing,
-extra, and mismatched assignments. Existing netlist parity checks are not a
-substitute for an independently specified mapping.
-
 ### FR-005: Extract legacy pinouts
 
 **Open.** Extract component pin-to-net mappings from ODB++ component and EDA data,
@@ -234,3 +227,10 @@ item, on the `same` layer, `adjacent` layers, the selection's `span` or a list o
 It forbids pours by default, because KiCad's DRC reports copper inside its own track keep-out
 as `items_not_allowed`; forbidding more is allowed and gives a warning. Judged by KiCad's fill
 and DRC (`tests/test_pcb_zones.py`).
+
+### FR-004: Check a netlist against an external mapping table
+
+`kat.mapping.check` and `kat map SOURCE TABLE`, also through `kat check --map` and `kat pcb check
+--map`, which then fail `ok`. Tables are CSV or JSON: `pin,net`, `ref,pin,net`, or pin columns
+with `channel`, as in SPEC.md section 6.2. Reports `missing`, `mismatched`, `split`, `merged` and
+`extra`. Schematics are read through KiCad's netlist, boards by their pads.
