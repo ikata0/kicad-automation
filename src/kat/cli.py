@@ -940,7 +940,7 @@ def build_parser() -> argparse.ArgumentParser:
                                     "Locked copper stays as it is (lock the structure first). DSN, SES and\n"
                                     "log go to history/<stamp>_route/. Judge the result by check.unconnected\n"
                                     "and check.islands, not by router.unrouted.\n"
-                                    "Freerouting (Java 21+, GPL-3) is downloaded once by --install into kat's\n"
+                                    "Freerouting (Java 25+, GPL-3) is downloaded once by --install into kat's\n"
                                     "cache; KAT_FREEROUTING=/path/to.jar uses another copy.")
     s5.add_argument("pcb", metavar="PCB", nargs="?")
     s5.add_argument("--passes", type=int, default=20, help="router passes (default 20)")

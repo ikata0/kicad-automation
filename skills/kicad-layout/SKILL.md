@@ -269,6 +269,6 @@ empty section, and don't change kat's own code unless asked. Template: kicad-des
 
 ## Setup
 
-As for the schematic skill, plus Freerouting for routing: Java 21+, then
+As for the schematic skill, plus Freerouting for routing: Java 25+, then
 `kat pcb route --install` (downloads the pinned release once into kat's cache). For
 `kat open --verify` on boards: `pip install 'kat[gui]'` (kicad-python) and a display.

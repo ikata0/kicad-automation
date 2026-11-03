@@ -361,7 +361,7 @@ runs `kat pcb check`. No pcbnew involved.
   are not stamped anyway); they stay obstacles. Holes without copper (mounting holes) are
   keep-outs of hole radius plus hole clearance.
 - DSN, SES and the Freerouting log go to `history/<stamp>_route/`.
-- Freerouting (Java 21+, GPL-3) is an external program: `kat pcb route --install`
+- Freerouting (Java 25+, GPL-3) is an external program: `kat pcb route --install`
   downloads the pinned release once into kat's cache, checked by SHA-256
   (`KAT_FREEROUTING=/path/to.jar` uses another copy).
 - Tracks the router narrowed at fine-pitch pads are widened to the net-class width where
@@ -1115,6 +1115,8 @@ column in place of the net.
 | Renaming a block instance in the design removed its sheet box and added a new one: new uuid, so the board's footprint paths broke, and its place and wiring were lost | `kat sync --rename-sheet OLD=NEW` keeps the box; `possible_renames` warns on a sync without it; `kat pcb sync` sees the same uuid under a new name and carries over groups and stamp records |
 | A pin assignment computed for a layout had to be typed into the SKiDL script by hand, or was edited only on the board, against the rule that the design owns connectivity | the script reads a pin table (`connect_pins`), and `kat back-annotate` changes the table and runs the whole way through, or puts everything back |
 | ERC and DRC load every library in the table to compare parts with them: 5 to 7 s of CPU per check, even on a two-part sheet, which took the test suite to half an hour | the tests use a private `KICAD_CONFIG_HOME` listing only the libraries they need (`tests/kat_test_support.py`), and run in parallel; `KAT_TEST_ALL_LIBS=1` uses the full tables. kat honours `KICAD_CONFIG_HOME` as KiCad does |
+| A router via between a connector's pins can cut a GND pin's thermal off the plane (`starved_thermal`, 1 island), and any small change to the DSN can move vias there, so a board that routed clean may not any more | judge by `islands` in the board check, and keep vias out of a dense pin field with `keepout(layers, rect=..., tracks=True, vias=False)` |
+| kat's docs and check asked for Java 21, but Freerouting 2.4.1 is compiled for Java 25 (class file version 69) | `JAVA_MIN` is 25; a test compares it with the pinned jar |
 | Escaping a SKiDL pin name with `+` or brackets (`u[r"IN\+"]`) finds no pin: names match exactly unless `match_pin_regex` is set | write the name literally, `u["IN+"]`; a name with a space takes the pin number (`tests/test_skidl_blocks.py` pins this down) |
 
 ## 8. Open points

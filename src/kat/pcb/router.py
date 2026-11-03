@@ -26,7 +26,7 @@ from .board import Board
 VERSION = "2.4.1"
 URL = f"https://github.com/freerouting/freerouting/releases/download/v{VERSION}/freerouting-{VERSION}.jar"
 SHA256 = "251101c3eeac22d7e7dfcf6796603279e5d1000283eb82d8f093780f7afc6aa9"
-JAVA_MIN = 21
+JAVA_MIN = 25     # the pinned jar's classes are version 69 (test_java_minimum_matches_the_jar)
 
 
 def jar_path() -> Path:

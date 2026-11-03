@@ -1,6 +1,6 @@
 """Autorouting through kat's Specctra DSN/SES and Freerouting; judged by KiCad's DRC.
 
-Needs Java 21+ and Freerouting (`kat pcb route --install`); skipped otherwise."""
+Needs Java 25+ and Freerouting (`kat pcb route --install`); skipped otherwise."""
 
 from pathlib import Path
 
@@ -88,3 +88,16 @@ def test_router_keeps_class_layers_class_clearance_and_hole_clearance(placed):
     assert c["unconnected"] == 0 and c["drc_errors"] == 0, r
     assert {t["layer"] for t in Board(placed).tracks() if t["net"] == "/A1"} <= {"F.Cu", "In2.Cu"}
     assert "kat class OTHER SIG" in placed.with_suffix(".kicad_dru").read_text()
+
+
+@pytest.mark.requires("routing")
+def test_java_minimum_matches_the_jar():
+    """The pinned jar's own classes say which Java runs them: class file version - 44."""
+    import struct
+    import zipfile
+    with zipfile.ZipFile(router.jar_path()) as z:
+        manifest = z.read("META-INF/MANIFEST.MF").decode()
+        main = next(l for l in manifest.splitlines() if l.startswith("Main-Class")).split()[1]
+        head = z.read(main.replace(".", "/") + ".class")[:8]
+    assert struct.unpack(">H", head[6:8])[0] - 44 == router.JAVA_MIN
+

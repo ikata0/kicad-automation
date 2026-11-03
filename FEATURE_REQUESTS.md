@@ -43,8 +43,9 @@ before detailed routing; fitting by area alone is insufficient.
 boards and reported ineffective net-class-ignore behaviour. Establish a generic
 benchmark, identify the relevant upstream option, and report unsupported or
 ignored settings rather than implying they took effect. Consider a grid-routing
-alternative if needed. Do not assume the downstream report's Java requirement:
-`src\kat\pcb\router.py` currently declares Java 21 or newer.
+alternative if needed. The Java minimum is settled: Freerouting 2.4.1 is compiled for Java 25, and
+`src\kat\pcb\router.py` now asks for that. One known case: on a 60 x 30 mm board, a cut-out at
+(27, 7)-(33, 23) leaves a net unrouted, while the larger (28, 5)-(32, 25) routes.
 
 ### FR-019: Joint escape routing and pin assignment
 

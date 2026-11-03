@@ -106,7 +106,7 @@ def routing(strict: bool) -> Capability:
         if override:
             raise SetupError(f"KAT_FREEROUTING points to a missing jar: {jar}")
         return Capability(False, "Freerouting not installed; run `kat pcb route --install`"
-                          + ("; Java 21+ also missing" if not java else ""))
+                          + ("; Java 25+ also missing" if not java else ""))
     try:
         with zipfile.ZipFile(jar) as archive:
             manifest = archive.read("META-INF/MANIFEST.MF")
@@ -124,7 +124,7 @@ def routing(strict: bool) -> Capability:
     except (OSError, UnicodeError, zipfile.BadZipFile, KeyError) as e:
         raise SetupError(f"cannot read Freerouting jar {jar}: {e}") from e
     if not java:
-        return Capability(False, "Java 21+ not on PATH")
+        return Capability(False, "Java 25+ not on PATH")
     return Capability(True, f"Java {match[1]}; {jar}")
 
 
