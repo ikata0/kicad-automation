@@ -62,15 +62,6 @@ source and regenerate/sync the netlist and schematic. Preserve the rule that
 connectivity is owned by the design, not edited only on the PCB, and verify
 netlist parity after the change.
 
-## Schematic sync and documentation
-
-### FR-026: Preserve arrangement when sheet instances are renamed
-
-**Open.** Accept an explicit old-to-new instance-name mapping, or another safe
-identity mechanism, during hierarchical sync. Preserve sheet UUIDs, placement,
-and wiring rather than removing/recreating renamed sheets. `_boxes` in
-`src\kat\syncer_hier.py` currently matches by sheet name.
-
 ## Resolved
 
 ### FR-027: Document literal SKiDL pin-name selection
@@ -242,3 +233,11 @@ guide holes of mating connectors by position, the sides they are on, net names p
 mounting holes, in board A's frame. Positions come from pads already checked against IPC-D-356, and
 the tests compare the transform with KiCad's own export. Two boards at a time; stack height, body
 collisions and connector gender are not checked.
+
+### FR-026: Preserve arrangement when sheet instances are renamed
+
+`kat sync SCH NETLIST --rename-sheet OLD=NEW` and `kat.sync(rename_sheets=...)` keep the box's uuid,
+place, size, pins and wiring. A sync without it names look-alikes in `possible_renames`, which is
+only a hint. `kat pcb sync` then sees the same sheet uuid under a new name and carries over stamped
+groups, zone names and stamp records (`Board.rename_instances`). A sheet inside a block's own drawing
+is renamed there, not by the design that uses it.

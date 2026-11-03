@@ -182,12 +182,41 @@ def _flat(s: Schematic, design: Design, parts: list, rename: dict[str, str], pow
     return sync.report
 
 
+def _rename_boxes(s: Schematic, within: str, names: dict[str, str], report: dict) -> None:
+    """Rename sheet boxes in place: the box, with its uuid, position and wiring, stays."""
+    for sh in hierarchy.sheets(s):
+        path = f"{within}/{sh['name']}" if within else sh["name"]
+        if path in names:
+            new = names[path].rsplit("/", 1)[-1]
+            next(p for p in find_all(sh["node"], "property") if str(p[1]) == "Sheetname")[2] = new
+            report["renamed_sheets"].append({"from": path, "to": names[path], "uuid": sh["uuid"]})
+
+
+def _possible_renames(s: Schematic, design: Design, want: dict[str, str], near: Path, generate: dict | None) -> list[dict]:
+    """Boxes about to be removed and added that look like one renamed: per sheet file, one of
+    each. Nothing proves it, so this is only a hint."""
+    gone: dict[str, list[str]] = {}
+    have = {sh["name"]: sh for sh in hierarchy.sheets(s)}
+    for name, sh in have.items():
+        if name not in want:
+            gone.setdefault(str(Path(sh["path"]).resolve()), []).append(name)
+    new: dict[str, list[str]] = {}
+    for name, path in want.items():
+        if name not in have and not (generate or {}).get(path):
+            new.setdefault(str(block_sheet(design.rec[path]["type"], near).resolve()), []).append(name)
+    return [{"from": gone[f][0], "to": new[f][0]} for f in gone
+            if f in new and len(gone[f]) == 1 and len(new[f]) == 1]
+
+
 def _boxes(s: Schematic, design: Design, within: str, rename: dict[str, str], near: Path,
-           report: dict, generate: dict | None = None) -> None:
+           report: dict, generate: dict | None = None, sheet_names: dict[str, str] | None = None) -> None:
     """Sheet boxes for the child instances of ``within`` on sheet ``s``, their pins wired
-    to the nets by labels; boxes of instances that are gone are removed."""
+    to the nets by labels; boxes of instances that are gone are removed, and those named in
+    ``sheet_names`` ({old path: new path}) are renamed instead."""
     from .syncer import _clean
     want = {p.rsplit("/", 1)[-1]: p for p in design.children(within)}
+    _rename_boxes(s, within, sheet_names or {}, report)
+    report["possible_renames"] += _possible_renames(s, design, want, near, generate)
     for sh in hierarchy.sheets(s):
         if sh["name"] not in want:
             _remove_box_wiring(s, sh)
@@ -384,12 +413,39 @@ def _ports_to_hier(s: Schematic, ports: dict[str, str], shapes: dict[str, str]) 
 
 # --- the driver ---------------------------------------------------------------------------
 
+def _sheet_names(root: Path, design: Design, names: dict[str, str] | None, generate: dict) -> dict[str, str]:
+    """{old path: new path} of a rename, checked: both on one parent, and only where kat draws
+    the parent, since a nested sheet belongs to its block's own drawing."""
+    out = {str(k).strip("/"): str(v).strip("/") for k, v in (names or {}).items()}
+    if not out:
+        return {}
+    present = {i["path"].strip("/") for i in hierarchy.tree(root)} if root.exists() else set()
+    for old, new in out.items():
+        parent = old.rpartition("/")[0]
+        if old not in present:
+            raise env.KatError(f"no sheet {old!r} to rename: {', '.join(sorted(p for p in present if p)) or 'there are none'}")
+        if parent and parent not in generate:
+            raise env.KatError(f"{old} comes from its block's own drawing: rename it there (kat block build)")
+        if new not in design.sheet_paths:
+            raise env.KatError(f"the design has no sheet instance {new!r}: {', '.join(design.sheet_paths)}")
+        if new.rpartition("/")[0] != parent:
+            raise env.KatError(f"{old} -> {new}: a rename stays on its parent sheet")
+        if old in design.sheet_paths:
+            raise env.KatError(f"{old} is still in the design: it cannot also be renamed")
+        if new in present:
+            raise env.KatError(f"{new} is already a sheet: it cannot take {old}'s place")
+    if len(set(out.values())) != len(out):
+        raise env.KatError("two sheets cannot be renamed to one")
+    return out
+
+
 def run(root: Path, design_path: Path, sheets: list[str] | None = None, dry_run: bool = False,
-        generate: dict[str, Path] | None = None) -> dict:
+        generate: dict[str, Path] | None = None, rename_sheets: dict[str, str] | None = None) -> dict:
     """Sync ``design_path`` into the hierarchy under ``root``. ``sheets``: the block types
     drawn as sheets (default: the remembered choice). ``generate``: {instance: file} of
     instances whose sheet is written here instead of taken from the library (the block's
-    own build)."""
+    own build). ``rename_sheets``: {old path: new path}; those boxes keep their uuid, place
+    and wiring."""
     root = Path(root)
     sheets = sheets if sheets is not None else remembered_sheets(root)
     if not sheets:
@@ -397,8 +453,9 @@ def run(root: Path, design_path: Path, sheets: list[str] | None = None, dry_run:
     generate = generate or {}
     design = Design(design_path, set(sheets))
     near = root.parent
-    report = {"added": [], "removed": [], "updated": [], "renamed": [], "attached": [],
-              "unresolved": [], "files": [], "parameters": {}}
+    sheet_names = _sheet_names(root, design, rename_sheets, generate)
+    report = {"added": [], "removed": [], "updated": [], "renamed": [], "renamed_sheets": [], "possible_renames": [],
+              "attached": [], "unresolved": [], "files": [], "parameters": {}}
     files: dict[Path, Schematic] = {}
 
     def draw(file: Path, within: str, rename: dict[str, str], is_root: bool) -> None:
@@ -423,7 +480,7 @@ def run(root: Path, design_path: Path, sheets: list[str] | None = None, dry_run:
                 report["parameters"].update(_parameters(cs, inst))
                 if not dry_run:
                     cs.save()                     # the parent's box reads its ports from the file
-        _boxes(s, design, within, rename, near, report, generate)
+        _boxes(s, design, within, rename, near, report, generate, sheet_names)
         report["files"].append(str(file))
 
     draw(root, "", {}, True)

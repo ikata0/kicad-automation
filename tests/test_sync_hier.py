@@ -446,3 +446,174 @@ def test_a_changed_cell_is_restamped_in_its_own_place(lib, tmp_path):
     assert res["flat"]["restamped"] == ["CELL"] and res["flat"]["ok"], res["flat"]
     plan = kat.stamp(flat, "CELL", "all", design=lib / "PAIR" / "PAIR.net", plan=True)
     assert plan["free"], plan
+
+
+RENAMED_PY = DESIGN_PY.replace('tag=f"CH_{ch}"', 'tag={"A": "LEFT", "B": "CH_B"}[ch]')
+
+
+def renamed_project(lib, tmp_path):
+    """A design with sheets CH_A and CH_B, CH_A moved by hand and resized."""
+    blocks.build("RC", force=True)
+    d = tmp_path / "design"
+    d.mkdir()
+    (d / "design.py").write_text(DESIGN_PY)
+    subprocess.run([sys.executable, "design.py"], cwd=d, check=True, capture_output=True)
+    sch = d / "top" / "top.kicad_sch"
+    assert cli.main(["new", str(sch)]) == 0
+    assert kat.sync(sch, d / "design.net", sheets=["rc"])["check"]["ok"]
+    with kat.edit(sch) as s:
+        s.move("CH_A", to=(152.4, 101.6))
+        s.sheet_box("CH_A", size=(25.4, 12.7), left=["out"], right=["inp"])
+    return d, sch
+
+
+def rename_in_design(d):
+    (d / "design.py").write_text(RENAMED_PY)
+    subprocess.run([sys.executable, "design.py"], cwd=d, check=True, capture_output=True)
+
+
+def box(sch, name):
+    return {sh["name"]: sh for sh in hierarchy.sheets(Schematic(sch))}[name]
+
+
+def test_a_renamed_instance_keeps_its_box(lib, tmp_path):
+    d, sch = renamed_project(lib, tmp_path)
+    before = box(sch, "CH_A")
+    other = box(sch, "CH_B")
+    wires = len(Schematic(sch).wires())
+    rename_in_design(d)
+    plan = kat.sync(sch, d / "design.net", dry_run=True, rename_sheets={"CH_A": "LEFT"})
+    assert plan["dry_run"] and plan["renamed_sheets"][0]["to"] == "LEFT"
+    assert "CH_A" in {sh["name"] for sh in hierarchy.sheets(Schematic(sch))}, "a dry run saves nothing"
+    rep = kat.sync(sch, d / "design.net", rename_sheets={"/CH_A": "/LEFT"})
+    assert rep["check"]["ok"], rep["check"]
+    assert not rep["added"] and not rep["removed"] and not rep["possible_renames"], rep
+    assert rep["renamed_sheets"] == [{"from": "CH_A", "to": "LEFT", "uuid": before["uuid"]}]
+    after = box(sch, "LEFT")
+    assert {k: after[k] for k in ("uuid", "at", "size", "pins", "file", "fields")} == \
+        {k: before[k] for k in ("uuid", "at", "size", "pins", "file", "fields")}
+    assert box(sch, "CH_B")["uuid"] == other["uuid"]
+    assert len(Schematic(sch).wires()) == wires, "the wiring stays"
+    assert {i["path"] for i in hierarchy.tree(sch)} == {"/", "/LEFT", "/CH_B"}
+    again = kat.sync(sch, d / "design.net")
+    assert again["check"]["ok"] and not again["added"] and not again["removed"] and not again["renamed_sheets"]
+
+
+def test_without_the_rename_it_is_replaced_and_named_as_a_possibility(lib, tmp_path):
+    d, sch = renamed_project(lib, tmp_path)
+    old = box(sch, "CH_A")
+    rename_in_design(d)
+    plan = kat.sync(sch, d / "design.net", dry_run=True)
+    assert plan["possible_renames"] == [{"from": "CH_A", "to": "LEFT"}]
+    rep = kat.sync(sch, d / "design.net")
+    assert rep["check"]["ok"] and rep["removed"] == ["sheet CH_A"] and rep["added"] == ["sheet LEFT"]
+    assert box(sch, "LEFT")["uuid"] != old["uuid"]
+
+
+@pytest.mark.parametrize("names, match", [
+    ({"NOPE": "LEFT"}, "no sheet 'NOPE'"),
+    ({"CH_A": "NOPE"}, "no sheet instance 'NOPE'"),
+    ({"CH_B": "LEFT"}, "still in the design"),
+    ({"CH_A": "CH_B"}, "already a sheet"),
+])
+def test_bad_renames_change_nothing(lib, tmp_path, names, match):
+    d, sch = renamed_project(lib, tmp_path)
+    rename_in_design(d)
+    text = sch.read_text()
+    with pytest.raises(kat.KatError, match=match):
+        kat.sync(sch, d / "design.net", rename_sheets=names)
+    assert sch.read_text() == text
+
+
+def test_a_rename_on_a_flat_sheet_is_refused(tmp_path):
+    from test_sync import BASE_NETS, BASE_PARTS, write_netlist
+    sch = tmp_path / "p" / "p.kicad_sch"
+    assert cli.main(["new", str(sch)]) == 0
+    net = write_netlist(tmp_path / "d.net", BASE_PARTS, BASE_NETS)
+    with pytest.raises(kat.KatError, match="flat"):
+        kat.sync(sch, net, rename_sheets={"A": "B"})
+
+
+def test_the_board_keeps_placement_copper_and_stamp_records(lib, tmp_path):
+    from test_pcb_stamp import check, env_board, layout_rc
+    from kat.pcb.board import Board
+    from kat.pcb.stamping import stamps_file
+    d, sch = renamed_project(lib, tmp_path)
+    rc_pcb = lib / "RC" / "RC.kicad_pcb"
+    with kat.pcb.edit(rc_pcb) as b:
+        env_board(b, 14, 10)
+        b.footprint("J1").place(111, 101.46, 0)
+    layout_rc(rc_pcb)
+    with kat.pcb.edit(rc_pcb) as b:
+        env_board(b, 14, 10)
+    pcb = sch.with_suffix(".kicad_pcb")
+    kat.pcb.sync(pcb, force=True)
+    with kat.pcb.edit(pcb) as b:
+        b.set_copper_layers(4)
+        b.outline(rect=(100, 100, 40, 20))
+        b.plane("GND", "In1.Cu")
+        b.stamp("RC", {"/CH_A": (110, 103), "/CH_B": (110, 111)})
+    base = Board(pcb)
+    where = {f.ref: (f.x, f.y, f.rot, f.path) for f in base.footprints()}
+    tracks = len(base.tracks())
+    assert any(str(g[1]).startswith("/CH_A") for g in base._groups())
+    rename_in_design(d)
+    kat.sync(sch, d / "design.net", rename_sheets={"CH_A": "LEFT"})
+    plan = kat.pcb.sync(pcb, force=True, dry_run=True)
+    assert plan["renamed_instances"] == [{"from": "/CH_A", "to": "/LEFT"}]
+    assert any(str(g[1]).startswith("/CH_A") for g in Board(pcb)._groups()), "a dry run saves nothing"
+    r = kat.pcb.sync(pcb, force=True)
+    assert r["check"]["parity"] == 0, r
+    assert r["renamed_instances"] == [{"from": "/CH_A", "to": "/LEFT"}] and r["renamed_instances_items"]["groups"] >= 1
+    after = Board(pcb)
+    assert {f.ref: (f.x, f.y, f.rot, f.path) for f in after.footprints()} == where
+    assert len(after.tracks()) == tracks
+    names = [str(g[1]) for g in after._groups()]
+    assert any(n.startswith("/LEFT") for n in names) and not any(n.startswith("/CH_A") for n in names), names
+    saved = json.loads(stamps_file(pcb).read_text())
+    assert "/LEFT" in saved and "/CH_A" not in saved
+    assert kat.pcb.instances(pcb, "RC")["instances"] == ["/CH_B", "/LEFT"]
+    # stamping it again replaces the copy instead of adding a second
+    with kat.pcb.edit(pcb) as b:
+        b.stamp("RC", {"/LEFT": (110, 103)})
+    assert len(Board(pcb).tracks()) == tracks
+    c = check(pcb)
+    assert c["drc_errors"] == 0 and c["parity"] == 0, c
+    again = kat.pcb.sync(pcb, force=True)
+    assert "renamed_instances" not in again and not again["changed"]
+
+
+def test_renaming_a_sheet_with_sheets_inside_it(lib, tmp_path):
+    blocks.new("CH")
+    (lib / "CH" / "CH.py").write_text(CH_PY)
+    blocks.build("RC", force=True)
+    blocks.build("CH", force=True)
+    d = tmp_path / "design"
+    d.mkdir()
+    (d / "design.py").write_text(TOP_PY)
+    subprocess.run([sys.executable, "design.py"], cwd=d, check=True, capture_output=True)
+    sch = d / "top" / "top.kicad_sch"
+    assert cli.main(["new", str(sch)]) == 0
+    assert kat.sync(sch, d / "design.net", sheets=["ch", "rc"])["check"]["ok"]
+    before = box(sch, "CH_A")
+    uuids = {i["path"].removeprefix("/CH_A"): i["uuids"] for i in hierarchy.tree(sch) if i["path"].startswith("/CH_A")}
+    (d / "design.py").write_text(TOP_PY.replace('tag=f"CH_{name}"', 'tag={"A": "LEFT", "B": "CH_B"}[name]'))
+    subprocess.run([sys.executable, "design.py"], cwd=d, check=True, capture_output=True)
+    with pytest.raises(kat.KatError, match="own drawing"):
+        kat.sync(sch, d / "design.net", rename_sheets={"CH_A/RC1": "CH_A/RC9"})
+    rep = kat.sync(sch, d / "design.net", rename_sheets={"CH_A": "LEFT"})
+    assert rep["check"]["ok"] and not rep["added"] and not rep["removed"], rep
+    assert box(sch, "LEFT")["uuid"] == before["uuid"]
+    after = {i["path"].removeprefix("/LEFT"): i["uuids"] for i in hierarchy.tree(sch) if i["path"].startswith("/LEFT")}
+    assert after == uuids and "/RC1" in after
+    assert kat.check(sch, d / "design.net")["netlist_vs_expected"]["match"]
+
+
+def test_cli_rename(lib, tmp_path, capsys):
+    d, sch = renamed_project(lib, tmp_path)
+    rename_in_design(d)
+    capsys.readouterr()
+    assert cli.main(["sync", str(sch), str(d / "design.net"), "--rename-sheet", "CH_A"]) == 2
+    assert "OLD=NEW" in json.loads(capsys.readouterr().out)["error"]
+    assert cli.main(["sync", str(sch), str(d / "design.net"), "--rename-sheet", "CH_A=LEFT"]) == 0
+    assert json.loads(capsys.readouterr().out)["renamed_sheets"][0]["to"] == "LEFT"

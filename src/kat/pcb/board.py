@@ -527,6 +527,7 @@ class Board(SetupMixin, PlacementMixin, StructureMixin, StampMixin, FinishMixin)
         self._gen_rules: dict[str, str] = {}
         self._route_edits: dict = {}
         self._stamps: dict = {}
+        self._renamed_instances: dict[str, str] = {}
 
     @staticmethod
     def create(path: Path | str) -> "Board":

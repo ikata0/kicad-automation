@@ -324,7 +324,11 @@ def cmd_view(a):
 
 
 def cmd_sync(a):
-    return kat.sync(a.sch, a.netlist, a.dry_run, a.sheets.split(",") if a.sheets else None)
+    bad = [x for x in a.rename_sheet or [] if "=" not in x]
+    if bad:
+        raise env.KatError(f"--rename-sheet {bad[0]!r}: give OLD=NEW")
+    return kat.sync(a.sch, a.netlist, a.dry_run, a.sheets.split(",") if a.sheets else None,
+                    dict(x.split("=", 1) for x in a.rename_sheet or []) or None)
 
 
 # --- parser -------------------------------------------------------------------
@@ -644,12 +648,17 @@ def build_parser() -> argparse.ArgumentParser:
             "Running it twice changes nothing. Review the reported spots afterwards.\n"
             "--sheets TYPE,...: instances of these SKiDL block types become hierarchical sheets\n"
             "that use the block library's own drawing (kat block build); references follow the\n"
-            "design. The choice is remembered in NAME.kat.json.",
+            "design. The choice is remembered in NAME.kat.json.\n"
+            "--rename-sheet OLD=NEW: after renaming an instance in the design, its box keeps its\n"
+            "uuid, place and wiring instead of being removed and added anew; possible_renames in\n"
+            "the result names boxes that look like one. Check with --dry-run first.",
             ["kat sync tia.kicad_sch tia_design.net", "kat sync tia.kicad_sch tia_design.net --dry-run",
              "kat sync top.kicad_sch design.net --sheets ch,rc"])
     q.add_argument("netlist", metavar="NETLIST", help="KiCad s-expression netlist, e.g. SKiDL generate_netlist()")
     q.add_argument("--dry-run", action="store_true", help="report what would change, save nothing")
     q.add_argument("--sheets", metavar="TYPE,...", help="block types drawn as hierarchical sheets")
+    q.add_argument("--rename-sheet", action="append", metavar="OLD=NEW",
+                   help="an instance renamed in the design (repeatable)")
 
     # --- editing ---
     q = cmd("add", cmd_add, "Place a library symbol.",

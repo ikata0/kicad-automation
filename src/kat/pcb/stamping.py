@@ -905,13 +905,48 @@ class StampMixin:
         return known[_norm(instance)]
 
     def _save_stamps(self) -> None:
-        if not self._stamps:
+        if not self._stamps and not self._renamed_instances:
             return
         f = stamps_file(self.path)
         saved = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
-        f.write_text(json.dumps({**saved, **self._stamps}, indent=2, sort_keys=True) + "\n",
-                     encoding="utf-8")
+        for old, new in self._renamed_instances.items():
+            if old in saved:
+                saved[new] = saved.pop(old)
+        self._renamed_instances = {}
+        if saved or self._stamps:
+            f.write_text(json.dumps({**saved, **self._stamps}, indent=2, sort_keys=True) + "\n",
+                         encoding="utf-8")
         self._stamps = {}
+
+    def rename_instances(self, names: dict[str, str]) -> dict:
+        """Carry a block instance's stamped copy over to its new name (``/CH_A``: ``/CH_X``): the
+        groups and zones named after it, and its stamp record, saved with the board. ``kat pcb
+        sync`` calls this when a footprint's sheet keeps its uuid under a new name. Returns groups
+        and zones (how many were renamed)."""
+        names = {_norm(k): _norm(v) for k, v in names.items()}
+
+        def renamed(text: str) -> str:
+            for old in sorted(names, key=len, reverse=True):
+                if text == old or text.startswith((old + " ", old + "/", old + ":")):
+                    return names[old] + text[len(old):]
+            return text
+
+        groups = zones = 0
+        for g in self._groups():
+            new = renamed(str(g[1]))
+            if new != str(g[1]):
+                g[1] = new
+                groups += 1
+        for z in self.zones():
+            name = find(z, "name")
+            if name is not None and renamed(str(name[1])) != str(name[1]):
+                name[1] = renamed(str(name[1]))
+                zones += 1
+        for old, new in names.items():
+            if old in self._stamps:
+                self._stamps[new] = self._stamps.pop(old)
+        self._renamed_instances.update(names)
+        return {"groups": groups, "zones": zones}
 
     def _room_for(self, src, pairs: dict, instance: str, f: "_Place", make_room: bool) -> list[dict]:
         """Refuse (or with ``make_room`` move) the design's parts outside any block instance

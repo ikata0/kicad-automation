@@ -814,6 +814,15 @@ kat stamp top.kicad_sch RC all --at 50.8,50.8 --step 0,40.64 --expect design.net
 kat sync top/top.kicad_sch design.net --sheets ch,rc      # remembered in top.kat.json
 ```
 
+- **Renaming an instance.** A box is matched by its name, so a new `tag=` in the design means one
+  box removed and another added, with a new uuid, place and wiring. Say what happened with
+  `--rename-sheet CH_A=LEFT` and the box stays, with its uuid, place, size, pins and wiring;
+  sheets inside it keep theirs too. A sync without it names look-alikes in `possible_renames`, so
+  run `--dry-run` after a rename. `kat pcb sync` then finds the stamped groups of a name the
+  schematic no longer has, whose parts' paths give the same sheet uuid, and carries over those groups,
+  zone names and stamp records (`renamed_instances`), so `stamp` replaces the copy instead of adding a
+  second. A sheet inside a block's own drawing is renamed there.
+
 - Instances of the listed block types (SKiDL function names, from `design.blocks.json`)
   become sheet boxes named by their instance tag (`CH_A`), pointing to the library's
   `NAME_block.kicad_sch` (relative path). The block's checked drawing is used as it is;
@@ -871,7 +880,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `lib search WORDS` / `lib show LIB:NAME` | find symbols; units, pins, body |
 | `lib make --pins TABLE --name NAME [--lib L] [--out DIR] [--view component/pin] [--y-up] [--origin table/pin1/center] [--drill] [--pad] [--pitch] [--marker PIN]` | generate a symbol and a footprint from a pin table (§4.7) |
 | `list SCH [--near X,Y --radius R]` / `pins SCH REF` / `netlist SCH` | inspect placement (or what is near a point, with uuids), pin positions + outward direction, KiCad's nets |
-| `sync SCH NETLIST [--dry-run] [--sheets TYPE,...]` | bring the design into the drawing (§4.4); block types as sheets (§4.21) |
+| `sync SCH NETLIST [--dry-run] [--sheets TYPE,...] [--rename-sheet OLD=NEW]` | bring the design into the drawing (§4.4); block types as sheets; a renamed instance keeps its box (§4.21) |
 | `check SCH [--expect NETLIST] [--full] [--map TABLE]` | ERC + netlist comparison + drawing findings (lists cut to 10 per kind, totals in `counts`; `--full` all); `--map`: also against a pin table |
 | `map SOURCE TABLE [--complete REF] [--partial] [--pins COL,...]` | a schematic, board or netlist against an external pin table: missing, mismatched, split, merged, extra (§6.2) |
 | `ready SCH [--expect NETLIST] [--require-field NAME]` | gate before the PCB layout (§6.1) |
@@ -1086,6 +1095,7 @@ column in place of the net.
 | Freerouting 2.4.1 can leave a net unrouted around a board cut-out, in passes of 0.02 s with no violation, however many passes it gets. A solid keep-out polygon does so more often than a ring along the same edge, and which shapes fail is hard to predict | a cut-out is a ring in the DSN. A rule area (`keepout`, `keepout_around`) stays a solid polygon. Check `unconnected`, and finish such a net by hand or move a part |
 | With no edge clearance set on the board, the DSN had no edge bands, while KiCad's DRC applies its default 0.5 mm: tracks along an edge or a cut-out failed DRC | the DSN uses the same default |
 | Non-rectangular outlines counted as their bounding box, so `pcb check` missed parts past a rounded corner and the router ran through cut-outs; DRC found the rest afterwards | `Board.outline_loops`: largest closed loop is the edge, others are cut-outs |
+| Renaming a block instance in the design removed its sheet box and added a new one: new uuid, so the board's footprint paths broke, and its place and wiring were lost | `kat sync --rename-sheet OLD=NEW` keeps the box; `possible_renames` warns on a sync without it; `kat pcb sync` sees the same uuid under a new name and carries over groups and stamp records |
 | Escaping a SKiDL pin name with `+` or brackets (`u[r"IN\+"]`) finds no pin: names match exactly unless `match_pin_regex` is set | write the name literally, `u["IN+"]`; a name with a space takes the pin number (`tests/test_skidl_blocks.py` pins this down) |
 
 ## 8. Open points
