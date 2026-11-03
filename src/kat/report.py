@@ -367,7 +367,7 @@ def command(argv: list[str], hint: Path | str | None = None) -> Iterator[Entry]:
     finally:
         _current = None
         found = e.project()
-        if found is not None:
+        if found is not None and found[0].is_dir():       # a failed command may name a folder that never came
             root = found[0]
             head = f"`kat {_cmdline(argv, root)}` · {time.time() - t0:.1f} s · exit {e.exit}"
             lines = summarize(e.result, root)

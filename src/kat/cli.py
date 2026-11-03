@@ -204,6 +204,11 @@ def cmd_pcb(a):
         if a.args:
             raise env.KatError(f"{a.kind} takes no further arguments")
         return kat.pcb.net_rules(a.pcb, a.kind == "clear")
+    if a.pcb_cmd == "import-mech":
+        assume = "plated" if a.assume_plated else "non_plated" if a.assume_non_plated else None
+        return kat.pcb.import_mechanics(a.pcb, a.odb, a.gerber, a.drill or None, a.step, xy(a.at) if a.at else None,
+                                        xy(a.offset) if a.offset else None, a.vias, a.min_drill, a.annular,
+                                        assume, a.tolerance, a.dry_run)
     if a.pcb_cmd == "odb-pinout":
         return kat.pcb.odb_pinout(a.job, a.step, a.ref or None, a.out)
     if a.pcb_cmd == "clearance":
@@ -996,6 +1001,30 @@ def build_parser() -> argparse.ArgumentParser:
                      help="plane: the same for every zone / rule area whose name matches (repeatable)")
     s16.add_argument("--except-area", action="append", metavar="X0,Y0,X1,Y1",
                      help="plane: no pour needed inside this rectangle, mm (repeatable)")
+    s22 = psp.add_parser("import-mech", formatter_class=_Fmt, help="board edge and holes from fabrication data",
+                         description="From an ODB++ job (profile and drill layers), or an outline Gerber and\n"
+                                     "Excellon files (G85 and M15 slots), so that a new board fits an old one's\n"
+                                     "mechanics. The outline replaces Edge.Cuts; holes become board-only footprints\n"
+                                     "MH1, ... replacing those of an earlier import. Vias, holes smaller than\n"
+                                     "--min-drill and holes on existing pads are left out. Plating comes from the\n"
+                                     "files; holes that do not say are non-plated, with a warning, unless\n"
+                                     "--assume-plated. Coordinates stay as given unless --at or --offset. Stroke\n"
+                                     "ends within --tolerance join, a stroke's centre line is the edge, and chains\n"
+                                     "that do not close are reported in open. Ends with the board check.")
+    s22.add_argument("pcb", metavar="PCB", help="the .kicad_pcb file (created if missing)")
+    s22.add_argument("--odb", metavar="JOB", help="ODB++ directory or archive")
+    s22.add_argument("--step", help="ODB++ step, if several have a profile")
+    s22.add_argument("--gerber", metavar="FILE", help="outline Gerber")
+    s22.add_argument("--drill", action="append", metavar="FILE", help="Excellon file (repeatable)")
+    s22.add_argument("--at", metavar="X,Y", help="where the outline's top-left corner goes (mm)")
+    s22.add_argument("--offset", metavar="DX,DY", help="shift everything by this (mm)")
+    s22.add_argument("--vias", action="store_true", help="also import holes marked as vias")
+    s22.add_argument("--min-drill", type=float, default=0.0, metavar="MM", help="leave out smaller holes")
+    s22.add_argument("--annular", type=float, default=0.25, metavar="MM", help="ring of plated holes (default 0.25)")
+    s22.add_argument("--assume-plated", action="store_true", help="holes that do not say are plated")
+    s22.add_argument("--assume-non-plated", action="store_true", help="holes that do not say are non-plated, no warning needed")
+    s22.add_argument("--tolerance", type=float, default=0.01, metavar="MM", help="stroke ends that still join (default 0.01)")
+    s22.add_argument("--dry-run", action="store_true", help="report only, save nothing")
     s21 = psp.add_parser("odb-pinout", formatter_class=_Fmt, help="pin-to-net mapping of a legacy board's ODB++ job",
                          description="From the component layers and EDA data of an ODB++ job: a directory, .zip,\n"
                                      ".tgz, .tar.gz or .tar (read in memory, never unpacked; files may be plain,\n"

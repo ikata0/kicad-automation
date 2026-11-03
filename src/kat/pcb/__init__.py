@@ -18,7 +18,7 @@ from . import checks, syncer, views
 from .board import Board, Footprint, Pad
 
 __all__ = ["Board", "Footprint", "Pad", "block_environment", "block_port", "remove", "check", "clearance", "coupling_2d", "coupling_rule",
-           "drc", "edit", "fab", "instances", "layer_roles", "layer_rule", "load", "net_rules", "odb_pinout", "plane_rule",
+           "drc", "edit", "fab", "import_mechanics", "instances", "layer_roles", "layer_rule", "load", "net_rules", "odb_pinout", "plane_rule",
            "pad_geometry", "ready", "refill", "route", "snapshot", "stack", "stamp", "stamp_preview", "sync", "view"]
 
 
@@ -211,6 +211,66 @@ def odb_pinout(job: Path | str, step: str | None = None, refs: list[str] | None 
             write(out, {f"{r}.{pin}": net for r, c in res["components"].items() for pin, net in c["pins"].items()})
         res["out"] = str(out)
     return res
+
+
+def import_mechanics(pcb: Path | str, odb: Path | str | None = None, gerber: Path | str | None = None,
+                     drills: list[Path | str] | None = None, step: str | None = None,
+                     at: tuple[float, float] | None = None, offset: tuple[float, float] | None = None,
+                     vias: bool = False, min_drill: float = 0.0, annular: float = 0.25,
+                     assume: str | None = None, tolerance: float = 0.01, dry_run: bool = False) -> dict:
+    """Board edge, cut-outs and holes from fabrication data: an ODB++ job ``odb`` (``step`` if
+    several), an outline ``gerber`` and Excellon ``drills`` (G85 and M15 slots). The outline
+    replaces Edge.Cuts and the holes replace those of an earlier import, as board-only footprints
+    MH1, ...; the board is created if missing. Coordinates stay as the files give them (y down);
+    ``at`` puts the outline's top-left corner there, or ``offset`` shifts all (mm). Holes marked as
+    vias or smaller than ``min_drill`` (mm) are left out unless ``vias``; a hole on an existing pad
+    is left out. ``annular``: ring of a plated hole (mm). ``assume``: "plated" or "non_plated" for
+    holes whose file does not say (default non_plated, with a warning). ``tolerance``: mm between
+    stroke ends that still join. ``dry_run``: report, save nothing. Returns board, loops, cutouts,
+    outline, offset, holes {plated, non_plated, slots, skipped}, open (chains that did not close),
+    widths, warnings and the board check."""
+    from . import mechanics
+    report.touch(pcb)
+    if not (odb or gerber or drills):
+        raise KatError("name an ODB++ job, an outline Gerber or drill files")
+    if odb and (gerber or drills):
+        raise KatError("an ODB++ job has outline and holes: give it alone")
+    loops, holes, opened, widths, warnings = [], [], [], [], []
+    if odb:
+        got = mechanics.read_odb(odb, step)
+        loops, holes, warnings = got["loops"], got["holes"], got["warnings"]
+    if gerber:
+        got = mechanics.read_gerber(gerber, tolerance)
+        loops, opened, widths = got["loops"], got["open"], got["widths"]
+        warnings += got["warnings"]
+        if not loops:
+            raise KatError(f"{Path(gerber).name} has no closed outline: {len(opened)} open chains "
+                           "(tolerance= joins ends further apart)")
+    for d in drills or []:
+        got = mechanics.read_excellon(d)
+        holes += got["holes"]
+        warnings += got["warnings"]
+    if Path(pcb).exists():
+        b = Board(pcb)
+    elif dry_run:
+        raise KatError(f"{pcb} does not exist: a dry run has no board to report on")
+    else:
+        Path(pcb).parent.mkdir(parents=True, exist_ok=True)
+        b = Board.create(pcb)
+    res = mechanics.apply(b, loops, holes, at, offset, vias, min_drill, annular, assume)
+    res["warnings"] = warnings + res["warnings"]
+    res["open"] = [{"from": list(c[0][1]), "to": list(c[-1][-1]), "segments": len(c)} for c in opened]
+    if res["open"]:
+        res["warnings"].append(f"{len(opened)} open chains left out")
+    if widths:
+        res["widths"] = widths
+    if not dry_run:
+        b.save()
+    out = {"board": str(pcb), "dry_run": dry_run, **res}
+    if not dry_run:
+        c = checks.run(Path(pcb))
+        out["check"] = {k: c[k] for k in ("ok", "drc_errors", "unconnected", "parity", "by_type")}
+    return tidy(out)
 
 
 def instances(pcb: Path | str, block_pcb: Path | str) -> dict:

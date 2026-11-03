@@ -16,13 +16,6 @@ file or its eventual tests.
 
 ## Import and library generation
 
-### FR-001: Import board mechanics from fabrication data
-
-**Open.** Import outlines, holes, and slots from ODB++ profiles, outline Gerbers,
-and Excellon (including G85/M15 slots). Create `Edge.Cuts` geometry and appropriate
-plated/non-plated holes without requiring custom extraction scripts.
-Current fabrication support in `src\kat\pcb\fabrication.py` exports files only.
-
 ### FR-002: Generate symbols and footprints from a pin table
 
 **Open.** Generate a symbol and/or grid/connector footprint from CSV or JSON
@@ -238,3 +231,14 @@ gzipped. `--out` writes the `ref,pin,net` table that `kat map` reads; a job can 
 of `kat map`. Checked against KiCad's own ODB++ export of boards with parts on both sides, whose
 pads give the expected nets (`tests/test_pcb_odb.py`). Jobs from other CAD tools were not available:
 their format is covered by hand-written files following the ODB++ specification.
+
+### FR-001: Import board mechanics from fabrication data
+
+`kat.pcb.import_mechanics` and `kat pcb import-mech PCB --odb JOB` or `--gerber FILE --drill FILE...`.
+Reads ODB++ profiles and drill layers, outline Gerbers and Excellon (hits, G85 and M15 slots), and
+makes Edge.Cuts and board-only hole footprints, plated or not. Board exports judge it: a board imported
+from KiCad's own files, in every zero and unit format it writes, exports to the same holes and outline,
+with a clean DRC (`tests/test_pcb_mechanics.py`). Other CAD tools' files were not available, so their
+forms are covered by hand-written files. Routed arcs are left out with a warning. Beyond the request,
+`Board.outline_loops` now gives the real board edge and cut-outs, so the router stays out of cut-outs
+and `kat pcb check` sees parts past a rounded corner; it used the bounding box before.

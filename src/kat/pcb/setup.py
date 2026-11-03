@@ -67,13 +67,17 @@ def _norm(t):
 class SetupMixin:
     # --- outline -----------------------------------------------------------------------
 
+    def clear_outline(self) -> None:
+        """Remove every drawing on Edge.Cuts."""
+        for n in [n for n in self.tree if head(n) and head(n).startswith("gr_")
+                  and find(n, "layer") is not None and str(find(n, "layer")[1]) == "Edge.Cuts"]:
+            self.tree.remove(n)
+
     def outline(self, rect: tuple[float, float, float, float] | None = None, radius: float = 0.0,
                 polygon: list[Point] | None = None) -> dict:
         """Replace the board outline: ``rect`` (x, y, w, h) with optional corner ``radius``,
         or a ``polygon``. Everything on Edge.Cuts is replaced."""
-        for n in [n for n in self.tree if head(n) and head(n).startswith("gr_")
-                  and find(n, "layer") is not None and str(find(n, "layer")[1]) == "Edge.Cuts"]:
-            self.tree.remove(n)
+        self.clear_outline()
         items = []
         if polygon:
             items.append([Sym("gr_poly"), _pts(polygon),

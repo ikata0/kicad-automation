@@ -82,10 +82,14 @@ def _via_padstack(name: str, size: float, layers: list[str]) -> str:
     return f'    (padstack "{name}" {shapes} (attach off))'
 
 
+DEFAULT_EDGE_CLEARANCE = 0.5     # what KiCad's DRC applies when the board sets none
+
+
 def _outline_points(b: Board) -> list[tuple[float, float]]:
-    for n in b.tree:
-        if head(n) == "gr_poly" and str(find(n, "layer")[1]) == "Edge.Cuts":
-            return [(float(p[1]), float(p[2])) for p in find_all(find(n, "pts"), "xy")]
+    """The board edge: its largest closed loop, else the extent of what Edge.Cuts has."""
+    loops = b.outline_loops()
+    if loops:
+        return loops[0]
     box = b.outline_box()
     if not box:
         raise env.KatError("routing needs a board outline")
@@ -120,13 +124,18 @@ def write_dsn(b: Board, path: Path, nets: list[str] | None = None, skip_pins: se
     outline = _outline_points(b)
     lines.append("    (boundary (path pcb 0 " + " ".join(_xy(x, y) for x, y in outline + outline[:1]) + "))")
     # the board's edge clearance: a band along every outline edge the router keeps out of
-    edge = b.board_minimums().get("min_copper_edge_clearance", 0) or 0
-    if edge > 0:
-        for (ax, ay), (bx, by) in zip(outline, outline[1:] + outline[:1]):
+    edge = b.board_minimums().get("min_copper_edge_clearance", DEFAULT_EDGE_CLEARANCE) or 0
+    cutouts = b.outline_loops()[1:]
+    # a cut-out always gets a ring of them, so nothing reaches its inside: Freerouting 2.4.1
+    # leaves nets unrouted around a solid polygon of this size, in any layer form
+    for loop, width in [(outline, edge), *((c, max(edge, 0.05)) for c in cutouts)]:
+        if width <= 0:
+            continue
+        for (ax, ay), (bx, by) in zip(loop, loop[1:] + loop[:1]):
             length = math.hypot(bx - ax, by - ay)
             if length < 1e-9:
                 continue
-            nx, ny = -(by - ay) / length * edge, (bx - ax) / length * edge
+            nx, ny = -(by - ay) / length * width, (bx - ax) / length * width
             band = [(ax + nx, ay + ny), (bx + nx, by + ny), (bx - nx, by - ny), (ax - nx, ay - ny)]
             for layer in copper:
                 lines.append(f'    (wire_keepout "" {_poly(layer, band)})')

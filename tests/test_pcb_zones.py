@@ -178,6 +178,7 @@ def test_keepout_around_warns_when_its_copper_would_break_it(tmp_path):
     f = b.add_footprint(SMD, "R1", 30, 5)
     node = f.pad("1").node
     node.insert(node.index(find(node, "layers")) + 1, [Sym("net"), "A"])
+    b.constraints(edge_clearance=0)               # only the area's own keep-outs in the DSN
     dsn = tmp_path / "k.dsn"
     specctra.write_dsn(b, dsn)
     text = dsn.read_text()

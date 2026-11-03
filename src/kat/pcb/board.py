@@ -657,6 +657,51 @@ class Board(SetupMixin, PlacementMixin, StructureMixin, StampMixin, FinishMixin)
                 pts += [(float(p[1]), float(p[2])) for k in ("start", "mid", "end") if (p := find(n, k))]
         return box_of(pts) if pts else None
 
+    def outline_loops(self, max_error: float = 0.01) -> list[list[tuple[float, float]]]:
+        """The closed loops of the board outline as polygons (arcs within ``max_error`` mm),
+        largest first: the board edge, then its cut-outs. Empty if Edge.Cuts does not close."""
+        from .geometry import arc_points, chain
+        loops, segments = [], []
+        for n in self.tree:
+            h = head(n)
+            lay = find(n, "layer") if h and h.startswith("gr_") else None
+            if lay is None or str(lay[1]) != "Edge.Cuts":
+                continue
+            pt = lambda k, node=n: (float(find(node, k)[1]), float(find(node, k)[2]))   # noqa: E731
+            if h == "gr_line":
+                segments.append(("line", pt("start"), pt("end")))
+            elif h == "gr_arc":
+                segments.append(("arc", pt("start"), pt("mid"), pt("end")))
+            elif h == "gr_circle":
+                c, e = pt("center"), pt("end")
+                segments.append(("circle", c, math.hypot(e[0] - c[0], e[1] - c[1])))
+            elif h == "gr_rect":
+                (ax, ay), (bx, by) = pt("start"), pt("end")
+                x0, x1, y0, y1 = min(ax, bx), max(ax, bx), min(ay, by), max(ay, by)
+                loops.append([(x0, y0), (x1, y0), (x1, y1), (x0, y1)])
+            elif h == "gr_poly":
+                pts = [(float(p[1]), float(p[2])) for p in find_all(find(n, "pts") or [], "xy")]
+                if len(pts) >= 3:
+                    loops.append(pts)
+        closed, _ = chain(segments)
+        for loop in closed:
+            pts: list[tuple[float, float]] = []
+            for s in loop:
+                if s[0] == "circle":
+                    (cx, cy), r = s[1], s[2]
+                    k = max(8, math.ceil(math.pi / math.acos(max(0.0, 1 - max_error / r)))) if r > max_error else 8
+                    pts = [(cx + r * math.cos(2 * math.pi * i / k), cy + r * math.sin(2 * math.pi * i / k))
+                           for i in range(k)]
+                elif s[0] == "arc":
+                    pts += arc_points(s[1], s[2], s[3], max_error)[:-1]
+                else:
+                    pts.append(s[1])
+            loops.append(pts)
+
+        def area(p: list[tuple[float, float]]) -> float:
+            return abs(sum(a[0] * b[1] - b[0] * a[1] for a, b in zip(p, p[1:] + p[:1]))) / 2
+        return sorted(loops, key=area, reverse=True)
+
     def _insert(self, node: list) -> None:
         """After the last item of the same kind, else before copper items / at the end."""
         kind = head(node)

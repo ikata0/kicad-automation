@@ -225,6 +225,7 @@ Methods of `kat.pcb.Board`, used inside `with kat.pcb.edit(PCB) as b:` (saved on
 | `set_copper_layers(n)` | 2, 4, 6 … copper layers (inner ones refused for removal while used) |
 | `plane(net, "In1.Cu")`, `set_layer_type(layer, "power")` | a whole-board plane on its own layer; layer type power = the router lays no tracks there |
 | `mounting_hole(at, "M3")`, `add_board_part(lib_id, ref, at)` | footprints without a symbol, marked board-only: sync and parity leave them alone |
+| `kat.pcb.import_mechanics(pcb, odb= / gerber=, drills=[...])` | a board edge, cut-outs and holes taken from fabrication data; see below |
 | `zone(net, layers, polygon=None)` | copper pour (default: outline minus 0.5 mm); filled by KiCad on check; `pads` thermal, solid, none or thru_hole_only, and `pad_connection("U1.8", mode)` per pad |
 | `keepout(layers, rect/polygon, tracks=False, vias=True, ...)` | rule area; `False` forbids that item kind |
 | `netclass(name, track, clearance, via, via_drill, nets=[patterns], layers=[...])` | `.kicad_pro` net class + pattern assignment; `layers`: the copper the router may use for it (`<board>.kat.json`; DRC does not check it) |
@@ -243,8 +244,25 @@ replaced or unchanged.
 Net classes and rules are what DRC and the router use; derive them from the specification
 (current → width, voltage → clearance/creepage) before placing parts. Set the board's
 minimums (`constraints`) from the fab's capabilities first: KiCad's defaults (e.g. 0.25 mm
-hole clearance) otherwise flag a fine board, and no rule can go below them. Pending class
+hole clearance) otherwise flag a fine board. Pending class
 and constraint changes are seen by later calls of the same pass (`net_rules`).
+
+**Mechanics from fabrication data.** `kat pcb import-mech PCB --odb JOB`, or `--gerber FILE --drill
+FILE...`, makes a new board fit an old one. It reads the ODB++ profile and drill layers, or an
+outline Gerber (RS-274X; lines, arcs, regions) and Excellon files (hits, `G85` slots, slots routed
+between `M15` and `M16`), in every zero and unit format KiCad writes. Files keep their coordinates
+with y negated, as KiCad's exports do, so a KiCad board comes back where it was; `--at X,Y` puts
+the outline's top-left corner elsewhere. All closed loops go on Edge.Cuts, replacing what is there,
+and each hole becomes a board-only footprint `MH1`, ... replacing an earlier import's. Plating
+comes from `TF.FileFunction`, `TA.AperFunction`, `;TYPE=` or the `.drill` attribute, else NPTH or
+PTH in the file's or layer's name; holes that do not say are non-plated with a warning. Vias stay
+out unless `--vias`. Not read: routed arcs (a warning), step-and-repeat and incremental
+coordinates (errors). Open chains are listed in `open`: a stroke's centre line is taken as the edge,
+so a drawing frame on the same layer has to be removed first. Judge the result by the DRC the
+command ends with, and by `kat pcb view`.
+
+The board's largest closed loop is its edge and the others are cut-outs (`Board.outline_loops`):
+the router keeps out of them, and parts past a rounded corner count as outside the outline.
 
 ### 4.8 Placement
 
@@ -847,6 +865,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `pcb check PCB [--map TABLE]` / `pcb snapshot PCB` / `pcb view PCB ...` | board DRC + findings, history step with pictures, zoomed view (§4.12) |
 | `pcb stamp PCB BLOCK_PCB INSTANCE... --at X,Y [--step DX,DY] [--rot R] [--anchor origin/top-left] [--no-lock] [--make-room] [--side bottom] [--layer-map auto/roles/MAP] [--allow-asymmetric]` | copy a checked block layout onto instances (`all`), flipped on the bottom side, then the board check (§4.18) |
 | `pcb stamp PCB BLOCK_PCB [INSTANCE...] --at X,Y --preview [...]` | origin, turned bounds and ports of a proposed stamp, board unchanged (§4.18) |
+| `pcb import-mech PCB --odb JOB / --gerber FILE --drill FILE... [--at X,Y] [--offset DX,DY] [--vias] [--min-drill MM] [--assume-plated]` | board edge, cut-outs and holes from fabrication data (§4.7) |
 | `pcb odb-pinout JOB [--step S] [--ref REF] [--out FILE]` | a legacy board's pin-to-net mapping from ODB++; `--out` a table for `kat map` and SKiDL (§6.2) |
 | `pcb clearance PCB A B [--layer L]` | effective clearance between two nets or pads, as DRC resolves it (§4.9) |
 | `pcb pads PCB [REF...]` | exact pad shapes (radius, chamfers, trapezoid, offset, primitives), for code outside kat (§4.9) |
@@ -1015,7 +1034,7 @@ column in place of the net.
 | The router left a block's harness routes behind in the stamp: stubs from the block pads that shorted into the neighbouring rows | copper that only serves the harness is not stamped |
 | A design's stricter net class on a block's port nets made the stamped copper DRC errors (208 in the LED matrix) | stamp compares the classes and refuses more clearance (a wider track is no DRC error: a warning) |
 | Freerouting knows neither KiCad's hole clearance nor class layers or class-to-class clearance: SPI routed on the analog layer, 60 violations of a 1 mm rule, 73 hole-clearance errors | the DSN carries `use_layer`, `class_class`, via clearances from the hole clearance and an edge band; set them with `netclass(layers=)`, `class_clearance`, `constraints` |
-| A custom DRC rule cannot ask less than the board minimum (edge-mount SMA needed edge clearance 0) | `constraints(edge_exempt=[...])`: minimum 0 plus a generated rule for the rest; `rules()` warns below a minimum |
+| An edge-mount SMA needs edge clearance 0 while the rest of the board keeps its minimum | `constraints(edge_exempt=[...])`: minimum 0 plus a generated rule for the rest; `rules()` warns below a minimum |
 | A part on B is mirrored top to bottom, not left to right: a horizontal two-pad part keeps its pad order at rot 0, while pins off its axis swap sides and angles turn the other way | check a bottom part's pads with the board view (`pcb view PCB --around REF --layers bottom`), not by analogy with the top side (§4.8) |
 | The widened neck of a routed track came 0.087 mm from a via the router had just added | the router's vias and wires go in before any widening |
 | Freerouting routes pins to locked port vias of the net; KiCad warns `via_dangling` for such a via joined on one layer only | judge it; `kat pcb ready --accept via_dangling=REASON` |
@@ -1046,6 +1065,9 @@ column in place of the net.
 | Stamping on the other side of a connector's guide holes was refused: its through-hole pads counted as one box spanning all of them | one box per pad or hole, slots included; DRC agrees (`pth_inside_courtyard` looks at the holes) |
 | A part locked in KiCad was still moved by `Board.move` and `stamp`; only `make_room` honoured the flag | `Footprint.lock()` / `unlock()` / `locked`; moves refuse unless `force=True`, `stamp` refuses unless unlocked |
 | `pcb view --layers In9.Cu` on a board without that layer: kicad-cli exits 0 and writes nothing, kat failed with a raw file error | layer names are checked against the board first |
+| Freerouting 2.4.1 can leave a net unrouted around a board cut-out, in passes of 0.02 s with no violation, however many passes it gets. A solid keep-out polygon does so more often than a ring along the same edge, and which shapes fail is hard to predict | a cut-out is a ring in the DSN. A rule area (`keepout`, `keepout_around`) stays a solid polygon. Check `unconnected`, and finish such a net by hand or move a part |
+| With no edge clearance set on the board, the DSN had no edge bands, while KiCad's DRC applies its default 0.5 mm: tracks along an edge or a cut-out failed DRC | the DSN uses the same default |
+| Non-rectangular outlines counted as their bounding box, so `pcb check` missed parts past a rounded corner and the router ran through cut-outs; DRC found the rest afterwards | `Board.outline_loops`: largest closed loop is the edge, others are cut-outs |
 | Escaping a SKiDL pin name with `+` or brackets (`u[r"IN\+"]`) finds no pin: names match exactly unless `match_pin_regex` is set | write the name literally, `u["IN+"]`; a name with a space takes the pin number (`tests/test_skidl_blocks.py` pins this down) |
 
 ## 8. Open points
