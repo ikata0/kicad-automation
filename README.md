@@ -203,6 +203,7 @@ that extra even when rsvg-convert is available.
 For a shorter run, a single test, or strict CI coverage:
 
 ```powershell
+.\.venv\Scripts\python.exe -m pytest -n0 tests\test_env.py     # one process, e.g. with -s or --pdb
 .\.venv\Scripts\python.exe -m pytest -m 'not slow'
 .\.venv\Scripts\python.exe -m pytest tests\test_env.py
 .\.venv\Scripts\python.exe -m pytest --strict-deps

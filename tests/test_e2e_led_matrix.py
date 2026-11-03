@@ -63,12 +63,12 @@ def test_led_matrix(root, test_dependencies):
     assert len(report["added"]) == 202 and report["check"]["ok"]
     kat.snapshot(sch, slug="import", expect=net)
 
-    t0 = time.time()
+    t0 = time.monotonic()
     with kat.edit(sch) as s:
         arrange.pass1(s)
     with kat.edit(sch) as s:
         arrange.pass2(s)
-    elapsed = time.time() - t0
+    elapsed = time.monotonic() - t0
     assert elapsed < 60, f"arrangement took {elapsed:.0f} s"
     with kat.edit(sch) as s:
         s.title(title="LED matrix 10x10", rev="A", date="2026-09-25",

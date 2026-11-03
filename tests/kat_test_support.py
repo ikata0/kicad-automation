@@ -184,6 +184,31 @@ def discover(strict: bool = False, gui: bool = False) -> dict[str, Capability]:
     return capabilities
 
 
+# The stock libraries the tests use. ERC and DRC compare parts with their libraries and load every
+# library in the table first: all 223 symbol libraries take 3 s of CPU per check on a two-part sheet,
+# and these take almost none. A test needing another one fails with "unknown ... library": add it here.
+SYMBOL_LIBS = ("Amplifier_Operational", "Analog_Switch", "Connector", "Connector_Generic", "Device", "LED",
+               "Transistor_BJT", "power")
+FOOTPRINT_LIBS = ("Capacitor_SMD", "Connector_Coaxial", "Connector_IDC", "Connector_PinHeader_2.54mm", "Fiducial",
+                  "LED_SMD", "MountingHole", "Package_DFN_QFN", "Package_SO", "Package_TO_SOT_SMD", "Resistor_SMD")
+
+
+def small_library_tables(root: Path) -> Path:
+    """A private KiCad configuration under ``root`` whose library tables hold only what the tests
+    use, for ``KICAD_CONFIG_HOME``. Returns the folder to set it to."""
+    config = root / "config"
+    folder = config / env.KICAD_MAJOR
+    folder.mkdir(parents=True)
+    tables = (("symbols", "sym-lib-table", "sym_lib_table", SYMBOL_LIBS, "{}.kicad_sym"),
+              ("footprints", "fp-lib-table", "fp_lib_table", FOOTPRINT_LIBS, "{}.pretty"))
+    for kind, file, head, names, pattern in tables:
+        stock = env.stock_dir(kind)
+        rows = [f'  (lib (name "{n}") (type "KiCad") (uri "{(stock / pattern.format(n)).as_posix()}") (options "") (descr ""))'
+                for n in names if stock is not None and (stock / pattern.format(n)).exists()]
+        (folder / file).write_text("\n".join([f"({head}", "  (version 7)", *rows, ")"]) + "\n", encoding="utf-8")
+    return config
+
+
 def missing(capabilities: dict[str, Capability], names=REQUIRED) -> list[str]:
     return [f"{name}: {capabilities[name].detail}" for name in names
             if not capabilities[name].available]

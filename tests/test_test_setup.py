@@ -350,7 +350,7 @@ def test_repository_runs_independent_tests_without_optional_dependencies():
         "support.discover = lambda *args: {name: support.Capability(False, 'not installed') "
         "for name in (*support.REQUIRED, 'pymupdf', 'gui')}\n"
         "import pytest\n"
-        "raise SystemExit(pytest.main(['tests', '-q', "
+        "raise SystemExit(pytest.main(['tests', '-q', '-o', 'addopts=', "
         "'--ignore=tests/test_test_setup.py']))\n"
     )
     result = subprocess.run([sys.executable, "-c", script], cwd=root,
