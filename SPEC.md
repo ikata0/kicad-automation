@@ -368,7 +368,8 @@ runs `kat pcb check`. No pcbnew involved.
 - Tracks the router narrowed at fine-pitch pads are widened to the net-class width where
   the clearance allows (`widened`; the rest in `narrow`), checked against all the router's
   new copper. A track in `narrow` still under the board's minimum goes up to that minimum unless it
-  would then touch other copper, since kat's clearance check is on the cautious side of DRC's.
+  would then touch other copper: that error is certain, and DRC can still accept the wider track, or
+  report a clearance error instead. A board that sets no minimum is not covered, though DRC then uses 0.2 mm.
 - **Hole to hole:** the minimum reaches the router as via clearance where it asks more than the
   copper does. The router does not keep vias of one net apart, so `apply_session` lists any new
   via still too close in `hole_to_hole`; DRC judges them.

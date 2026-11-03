@@ -282,8 +282,9 @@ def apply_session(b: Board, result: dict) -> dict:
             cu.add_track(w["start"], w["end"], want, w["layer"], w["net"])   # the wider copper counts now
             widened += 1
             continue
-        # Under the board's minimum is a sure DRC error, while this clearance check is on the cautious
-        # side of KiCad's: so up to the minimum, unless that would touch other copper. DRC judges the result.
+        # Under the board's minimum is a sure DRC error, while a clearance this check doubts may pass (it can
+        # also fail): so up to the minimum, unless that would touch other copper. DRC judges the result.
+        # A board that sets no minimum gets no widening here, though DRC then uses 0.2 mm.
         width = w["width"]
         if width < floor - 1e-6 and all(c.get("gap", 0) > 0 for c in cu.conflicts(w["net"], {w["layer"]}, cl,
                                                                                   seg=(seg, floor / 2))):
