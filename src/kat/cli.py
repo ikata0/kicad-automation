@@ -209,6 +209,15 @@ def cmd_pcb(a):
         if a.args:
             raise env.KatError(f"{a.kind} takes no further arguments")
         return kat.pcb.net_rules(a.pcb, a.kind == "clear")
+    if a.pcb_cmd == "mate":
+        def pairs(items, what):
+            bad = [x for x in items if "=" not in x]
+            if bad:
+                raise env.KatError(f"{what} {bad[0]!r}: give A=B")
+            return [tuple(x.split("=", 1)) for x in items]
+        holes = "auto" if a.holes == ["auto"] else None if a.holes == ["none"] else pairs(a.holes, "--holes")
+        return kat.pcb.mate(a.pcb, a.other, pairs(a.pair or [], "--pair"), xy(a.at), a.rot, a.flip,
+                            dict(pairs(a.net or [], "--net")), holes, not a.below, a.tolerance, a.hole_tolerance)
     if a.pcb_cmd == "import-mech":
         assume = "plated" if a.assume_plated else "non_plated" if a.assume_non_plated else None
         return kat.pcb.import_mechanics(a.pcb, a.odb, a.gerber, a.drill or None, a.step, xy(a.at) if a.at else None,
@@ -1039,6 +1048,26 @@ def build_parser() -> argparse.ArgumentParser:
                      help="plane: the same for every zone / rule area whose name matches (repeatable)")
     s16.add_argument("--except-area", action="append", metavar="X0,Y0,X1,Y1",
                      help="plane: no pour needed inside this rectangle, mm (repeatable)")
+    s23 = psp.add_parser("mate", formatter_class=_Fmt, help="check two boards as they mate",
+                         description="Board B over board A, in A's frame: mirrored about its y axis with --flip (its\n"
+                                     "top then faces A), turned by --rot, moved by --at. For each --pair, pads and\n"
+                                     "guide holes must coincide (by position, not by pin number), the connectors must\n"
+                                     "be on the sides that face each other, and mated pins must carry the same net\n"
+                                     "name, or the one given by --net. Nets joined through the connectors are listed\n"
+                                     "in shorts; a pin connected on one board only in open, which does not fail.\n"
+                                     "Hole-only footprints need a partner if inside the other board's outline\n"
+                                     "(--holes auto), or name them with --holes A=B, or --holes none.\n"
+                                     "Exit code 1 when it does not fit.")
+    s23.add_argument("pcb", metavar="BOARD_A"); s23.add_argument("other", metavar="BOARD_B")
+    s23.add_argument("--pair", action="append", metavar="REF_A=REF_B", help="mating connectors (repeatable)")
+    s23.add_argument("--at", default="0,0", metavar="X,Y", help="B's origin in A's frame (mm, default 0,0)")
+    s23.add_argument("--rot", type=float, default=0.0, help="degrees, counter-clockwise")
+    s23.add_argument("--flip", action="store_true", help="B lies with its top towards A")
+    s23.add_argument("--below", action="store_true", help="B lies under A's bottom side")
+    s23.add_argument("--net", action="append", metavar="NET_A=NET_B", help="nets that differ by intent (repeatable)")
+    s23.add_argument("--holes", nargs="+", default=["auto"], metavar="HOLES", help="auto (default), none or REF_A=REF_B...")
+    s23.add_argument("--tolerance", type=float, default=0.05, metavar="MM", help="pins (default 0.05)")
+    s23.add_argument("--hole-tolerance", type=float, default=0.1, metavar="MM", help="guide and mounting holes (default 0.1)")
     s22 = psp.add_parser("import-mech", formatter_class=_Fmt, help="board edge and holes from fabrication data",
                          description="From an ODB++ job (profile and drill layers), or an outline Gerber and\n"
                                      "Excellon files (G85 and M15 slots), so that a new board fits an old one's\n"

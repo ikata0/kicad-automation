@@ -18,7 +18,7 @@ from . import checks, syncer, views
 from .board import Board, Footprint, Pad
 
 __all__ = ["Board", "Footprint", "Pad", "block_environment", "block_port", "remove", "check", "clearance", "coupling_2d", "coupling_rule",
-           "drc", "edit", "fab", "import_mechanics", "instances", "layer_roles", "layer_rule", "load", "net_rules", "odb_pinout", "plane_rule",
+           "drc", "edit", "fab", "import_mechanics", "instances", "layer_roles", "layer_rule", "load", "mate", "net_rules", "odb_pinout", "plane_rule",
            "pad_geometry", "ready", "refill", "route", "snapshot", "stack", "stamp", "stamp_preview", "sync", "view"]
 
 
@@ -271,6 +271,27 @@ def import_mechanics(pcb: Path | str, odb: Path | str | None = None, gerber: Pat
         c = checks.run(Path(pcb))
         out["check"] = {k: c[k] for k in ("ok", "drc_errors", "unconnected", "parity", "by_type")}
     return tidy(out)
+
+
+def mate(a: Path | str, b: Path | str, pairs: list[tuple[str, str]], at: tuple[float, float] = (0.0, 0.0),
+         rot: float = 0.0, flip: bool = False, nets: dict[str, str] | None = None, holes="auto",
+         above: bool = True, tolerance: float = 0.05, hole_tolerance: float = 0.1) -> dict:
+    """Check two boards as they mate, in board A's frame. Board B is mirrored about its y axis if
+    ``flip`` (its top then faces A), turned by ``rot`` degrees and moved by ``at`` (mm). ``pairs``:
+    mating connectors [(ref on A, ref on B), ...]; ``above``: B lies over A's top side, else under
+    its bottom, which sets the side each connector must be on.
+
+    Pads and guide holes of a pair mate by position within ``tolerance`` and ``hole_tolerance``
+    (mm), not by pin number. Nets of mated pins must have the same name, or the name in ``nets``
+    ({net on A: net on B}); generated names only count for ``shorts``. ``holes``: "auto" compares
+    hole-only footprints, each of which needs a partner if it lies inside the other board's
+    outline; a list of (ref on A, ref on B) names them; None skips them.
+
+    Returns ok, pairs (pins with nets and offsets), holes, misaligned, wrong_side, net_mismatch,
+    shorts (nets joined through the connectors), holes_unmatched, open (a pin connected on one board
+    only, which does not fail ok) and counts."""
+    from .mating import mate as _mate
+    return _mate(a, b, pairs, at, rot, flip, nets, holes, above, tolerance, hole_tolerance)
 
 
 def instances(pcb: Path | str, block_pcb: Path | str) -> dict:

@@ -448,6 +448,14 @@ Board geometry (pad positions, courtyards) follows KiCad's storage convention �
 in footprint coordinates, bottom side mirrored in y, pad and text angles absolute — and is
 tested against IPC-D-356 and DRC's library comparison.
 
+**Two boards together.** `kat pcb mate A B --pair J1=P1 --at X,Y` checks what one board's DRC
+cannot: board B laid over board A by a given transform. Pads and guide holes of each pair must
+coincide, by position and not by pin number; the connectors must be on the sides that face each
+other; mated pins must carry the same net name or the one given by `--net`; nets joined through
+the connectors are `shorts`. A pin connected on one board only is listed in `open` without failing.
+Hole-only footprints need a partner when inside the other board's outline. Stack height, body
+collisions between the boards and connector gender are not checked.
+
 ### 4.13 Design journal
 
 Every project has a design report `NAME_REPORT.md` in its root (next to `NAME.kicad_pro`),
@@ -874,6 +882,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `pcb check PCB [--map TABLE]` / `pcb snapshot PCB` / `pcb view PCB ...` | board DRC + findings, history step with pictures, zoomed view (§4.12) |
 | `pcb stamp PCB BLOCK_PCB INSTANCE... --at X,Y [--step DX,DY] [--rot R] [--anchor origin/top-left] [--no-lock] [--make-room] [--side bottom] [--layer-map auto/roles/MAP] [--allow-asymmetric]` | copy a checked block layout onto instances (`all`), flipped on the bottom side, then the board check (§4.18) |
 | `pcb stamp PCB BLOCK_PCB [INSTANCE...] --at X,Y --preview [...]` | origin, turned bounds and ports of a proposed stamp, board unchanged (§4.18) |
+| `pcb mate BOARD_A BOARD_B --pair J1=P1 [--at X,Y] [--rot R] [--flip] [--below] [--net A=B] [--holes auto/none/A=B] [--tolerance] [--hole-tolerance]` | two boards as they mate: pins by position, nets, guide holes, mounting holes (§4.12) |
 | `pcb import-mech PCB --odb JOB / --gerber FILE --drill FILE... [--at X,Y] [--offset DX,DY] [--vias] [--min-drill MM] [--assume-plated]` | board edge, cut-outs and holes from fabrication data (§4.7) |
 | `pcb odb-pinout JOB [--step S] [--ref REF] [--out FILE]` | a legacy board's pin-to-net mapping from ODB++; `--out` a table for `kat map` and SKiDL (§6.2) |
 | `pcb clearance PCB A B [--layer L]` | effective clearance between two nets or pads, as DRC resolves it (§4.9) |

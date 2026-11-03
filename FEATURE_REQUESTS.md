@@ -16,13 +16,6 @@ file or its eventual tests.
 
 ## Import and library generation
 
-### FR-003: Validate a multi-board stack
-
-**Open.** Given two boards, their relative transform, and mating connector pairs,
-check pin-to-pin net consistency, guide-peg/hole alignment, and mounting-hole
-alignment. This is a geometric/electrical assembly check, distinct from inspecting
-one board's layer stack-up.
-
 ## Electrical checks
 
 ### FR-006: Estimate coupling across repeated blocks in 3D
@@ -241,3 +234,11 @@ numbers, names, positions or grid places, drills, pad sizes, shapes and electric
 takes pin-side coordinates and `--marker` sets the marked pin. Checked in the full flow: KiCad's ERC
 and netlist for the symbol, and DRC's library check and IPC-D-356 for the footprint
 (`tests/test_libmake.py`). It draws an outline around the pads, not the part's body.
+
+### FR-003: Validate a multi-board stack
+
+`kat pcb mate A B --pair J1=P1 --at X,Y [--rot R] [--flip]` and `kat.pcb.mate`. Compares pads and
+guide holes of mating connectors by position, the sides they are on, net names pin to pin, and
+mounting holes, in board A's frame. Positions come from pads already checked against IPC-D-356, and
+the tests compare the transform with KiCad's own export. Two boards at a time; stack height, body
+collisions and connector gender are not checked.
