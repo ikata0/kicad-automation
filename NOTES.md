@@ -112,3 +112,6 @@ done
    on an inner layer after the map should be rejected by the request 6 check.
 
 ---
+
+We must make Java 25 a minimum because Freerouting requires it.
+
