@@ -206,7 +206,8 @@ def _components(text: str, name: str, nets: list[str], packages: list[str], side
             net = nets[k] if 0 <= k < len(nets) else ""
             if k >= len(nets):
                 raise env.KatError(f"{name}: pin {pin} refers to net {k}, but the job has {len(nets)}")
-            net = "" if net == NO_NET else net
+            # KiCad gives each free pin a net of its own, which is no connection
+            net = "" if net == NO_NET or net.rsplit("/", 1)[-1].startswith("unconnected-(") else net
             # one number on several pads: a connected one speaks for all
             if net or pin not in current["pins"]:
                 current["pins"][pin] = net

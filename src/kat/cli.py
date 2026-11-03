@@ -300,6 +300,19 @@ def cmd_check(a):
     return kat.check(a.sch, a.expect, a.full, a.map, _complete(a))
 
 
+def cmd_back_annotate(a):
+    if bool(a.assign) == bool(a.from_table):
+        raise env.KatError("give the assignment: --assign PIN=NET... or --from TABLE")
+    assignment = a.from_table
+    if a.assign:
+        bad = [x for x in a.assign if "=" not in x]
+        if bad:
+            raise env.KatError(f"--assign {bad[0]!r}: give PIN=NET (an empty NET: unconnected)")
+        assignment = dict(x.split("=", 1) for x in a.assign)
+    return kat.mapping.back_annotate(a.mapping, assignment, a.run, a.sch, a.netlist, a.pcb, None, a.dry_run, a.force,
+                                     a.rip_stale, () if a.no_require else (a.require_field or ["MPN"]))
+
+
 def cmd_map(a):
     return kat.mapping.check(a.file, a.mapping, _complete(a), a.pins.split(",") if a.pins else None)
 
@@ -659,6 +672,29 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--sheets", metavar="TYPE,...", help="block types drawn as hierarchical sheets")
     q.add_argument("--rename-sheet", action="append", metavar="OLD=NEW",
                    help="an instance renamed in the design (repeatable)")
+
+    q = cmd("back-annotate", cmd_back_annotate, "Apply a computed pin assignment through the design.",
+            "Connectivity belongs to the design, and the SKiDL script stays as it is: it reads the\n"
+            "pin table (kat.skidl_blocks.connect_pins). This sets the assignment in TABLE, keeping its\n"
+            "comments and other columns, runs the script, syncs the sheet and --pcb, keeping\n"
+            "placement, and verifies netlist, sheet and board against the table and each other. If a\n"
+            "step fails, table, netlist, sheet and board are put back. moved names nets that left a\n"
+            "part (a pure swap has none); copper that no longer fits is in board.stale_tracks\n"
+            "(--rip-stale removes it): route again after it.",
+            ["kat back-annotate j1.csv --assign J1.1=CH2 J1.2=CH1 --run design.py --sch top.kicad_sch --pcb top.kicad_pcb",
+             "kat back-annotate j1.csv --from computed.csv --run design.py --sch top.kicad_sch --dry-run"], sch=False)
+    q.add_argument("mapping", metavar="TABLE", help="the pin table the SKiDL script reads (CSV or JSON)")
+    q.add_argument("--assign", nargs="+", metavar="PIN=NET", help="new assignments, e.g. J1.3=CH1")
+    q.add_argument("--from", dest="from_table", metavar="FILE", help="new assignments as a table")
+    q.add_argument("--run", required=True, metavar="SCRIPT", help="the SKiDL script")
+    q.add_argument("--netlist", metavar="NETLIST", help="what it writes (default: its name with .net)")
+    q.add_argument("--sch", required=True, metavar="SCH", help="the schematic")
+    q.add_argument("--pcb", metavar="PCB", help="the board, if there is one yet")
+    q.add_argument("--dry-run", action="store_true", help="only report the changes")
+    q.add_argument("--force", action="store_true", help="sync the board even if `kat ready` fails")
+    q.add_argument("--rip-stale", action="store_true", help="remove copper that no longer fits")
+    q.add_argument("--require-field", action="append", metavar="NAME", help="as for pcb sync")
+    q.add_argument("--no-require", action="store_true", help="the gate requires no fields")
 
     # --- editing ---
     q = cmd("add", cmd_add, "Place a library symbol.",

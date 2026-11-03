@@ -55,13 +55,6 @@ both the assignment and tracks. Suggested entry points are `kat pcb escape` or
 `kat pcb flow-route`; the current router wraps Freerouting with fixed net
 assignments.
 
-### FR-022: Back-annotate connector pin assignments
-
-**Open.** Apply a computed connector pin-to-net assignment back to the circuit
-source and regenerate/sync the netlist and schematic. Preserve the rule that
-connectivity is owned by the design, not edited only on the PCB, and verify
-netlist parity after the change.
-
 ## Resolved
 
 ### FR-027: Document literal SKiDL pin-name selection
@@ -241,3 +234,12 @@ place, size, pins and wiring. A sync without it names look-alikes in `possible_r
 only a hint. `kat pcb sync` then sees the same sheet uuid under a new name and carries over stamped
 groups, zone names and stamp records (`Board.rename_instances`). A sheet inside a block's own drawing
 is renamed there, not by the design that uses it.
+
+### FR-022: Back-annotate connector pin assignments
+
+`kat back-annotate TABLE --assign J1.1=CH2 ... --run design.py --sch SCH --pcb PCB` and
+`kat.mapping.back_annotate`. The SKiDL script is never edited: it reads the table with
+`kat.skidl_blocks.connect_pins`, and the table keeps its comments and other columns. Netlist, sheet and
+board are verified against the table and each other, with parity on the board, and all are put back if
+a step fails. Tested with a real SKiDL script (`tests/test_back_annotate.py`). Sheets inside a block's
+own drawing are not restored, since a design's sync only writes instance data there.

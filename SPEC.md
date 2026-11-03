@@ -149,6 +149,22 @@ kat snapshot board/board.kicad_sch --slug change-x --expect design.net
 Then review only the places the report lists (new parts in the strip below the drawing,
 re-attached pins) and fold them into the arrangement with another pass.
 
+**A computed pin assignment.** Pins swapped to untangle a layout are a design change, and the
+script stays as it is: it reads a table instead.
+
+```python
+pins = kat.skidl_blocks.connect_pins(j, "j1.csv", ref="J1")      # ref,pin,net
+```
+```sh
+kat back-annotate j1.csv --assign J1.1=CH2 J1.2=CH1 --run design.py --sch top.kicad_sch --pcb top.kicad_pcb
+```
+
+This keeps the table's comments and other columns, runs the script, syncs sheet and board, keeping
+placement, and verifies each against the table. If a step fails, table, netlist, sheet and board are
+put back. `moved` names nets that left a part, which a pure swap never does, and
+`board.stale_tracks` the copper that no longer fits (`--rip-stale`): route again after it. The same
+table goes to `kat map` and can come from `kat pcb odb-pinout`.
+
 ### 4.4 Sync semantics
 
 | Change in the design | Effect on the drawing |
@@ -882,6 +898,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `list SCH [--near X,Y --radius R]` / `pins SCH REF` / `netlist SCH` | inspect placement (or what is near a point, with uuids), pin positions + outward direction, KiCad's nets |
 | `sync SCH NETLIST [--dry-run] [--sheets TYPE,...] [--rename-sheet OLD=NEW]` | bring the design into the drawing (§4.4); block types as sheets; a renamed instance keeps its box (§4.21) |
 | `check SCH [--expect NETLIST] [--full] [--map TABLE]` | ERC + netlist comparison + drawing findings (lists cut to 10 per kind, totals in `counts`; `--full` all); `--map`: also against a pin table |
+| `back-annotate TABLE --assign PIN=NET... / --from FILE --run SCRIPT --sch SCH [--pcb PCB] [--netlist NET] [--dry-run] [--rip-stale]` | a computed pin assignment through the SKiDL design, verified, put back on failure (§4.3) |
 | `map SOURCE TABLE [--complete REF] [--partial] [--pins COL,...]` | a schematic, board or netlist against an external pin table: missing, mismatched, split, merged, extra (§6.2) |
 | `ready SCH [--expect NETLIST] [--require-field NAME]` | gate before the PCB layout (§6.1) |
 | `pcb sync PCB [--sch] [--dry-run] [--force] [--rip-stale]` | parts and nets onto the board (§4.6) |
@@ -1096,6 +1113,7 @@ column in place of the net.
 | With no edge clearance set on the board, the DSN had no edge bands, while KiCad's DRC applies its default 0.5 mm: tracks along an edge or a cut-out failed DRC | the DSN uses the same default |
 | Non-rectangular outlines counted as their bounding box, so `pcb check` missed parts past a rounded corner and the router ran through cut-outs; DRC found the rest afterwards | `Board.outline_loops`: largest closed loop is the edge, others are cut-outs |
 | Renaming a block instance in the design removed its sheet box and added a new one: new uuid, so the board's footprint paths broke, and its place and wiring were lost | `kat sync --rename-sheet OLD=NEW` keeps the box; `possible_renames` warns on a sync without it; `kat pcb sync` sees the same uuid under a new name and carries over groups and stamp records |
+| A pin assignment computed for a layout had to be typed into the SKiDL script by hand, or was edited only on the board, against the rule that the design owns connectivity | the script reads a pin table (`connect_pins`), and `kat back-annotate` changes the table and runs the whole way through, or puts everything back |
 | Escaping a SKiDL pin name with `+` or brackets (`u[r"IN\+"]`) finds no pin: names match exactly unless `match_pin_regex` is set | write the name literally, `u["IN+"]`; a name with a space takes the pin number (`tests/test_skidl_blocks.py` pins this down) |
 
 ## 8. Open points

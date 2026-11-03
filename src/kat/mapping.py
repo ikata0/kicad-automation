@@ -21,11 +21,13 @@ from __future__ import annotations
 import csv
 import io
 import json
+import subprocess
+import sys
 from pathlib import Path
 
 from . import env, netlist, report
 
-__all__ = ["check", "read", "write"]
+__all__ = ["back_annotate", "check", "pin_nets", "read", "update", "write"]
 
 PIN_COLUMNS = ("pin", "source", "destination", "dest", "from", "to")
 NOT_CONNECTED = ("", "nc")
@@ -243,3 +245,193 @@ def write(mapping: Path | str, assignment: dict[str, str]) -> dict:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(out.getvalue(), encoding="utf-8")
     return {"file": str(path), "pins": len(rows)}
+
+
+def pin_nets(mapping: Path | str, ref: str | None = None) -> dict[str, str]:
+    """A ``pin,net`` or ``ref,pin,net`` table as a dictionary: {"J1.3": "CH1"}, or with ``ref``
+    only that part's {"3": "CH1"}. An unconnected pin has the net "". This is what a SKiDL script
+    reads (``kat.skidl_blocks.pin_map``)."""
+    out: dict[str, str] = {}
+    table = read(mapping)
+    for r in table["rows"]:
+        if r["net"] is None or len(r["pins"]) != 1:
+            raise env.KatError(f"{Path(mapping).name} row {r['row']}: expected one pin and a net column")
+        (part, number), = r["pins"]
+        net = "" if r["net"].lower() in NOT_CONNECTED else r["net"]
+        if ref is None:
+            out[f"{part}.{number}"] = net
+        elif part == ref:
+            out[number] = net
+    return out
+
+
+def _update_csv(path: Path, assignment: dict[str, str]) -> None:
+    """Change the net cells of a CSV table, leaving comments, other columns and order alone."""
+    text = path.read_text(encoding="utf-8-sig")
+    lines = text.splitlines()
+    data = [i for i, l in enumerate(lines) if l.strip() and not l.lstrip().startswith("#")]
+    try:
+        delimiter = csv.Sniffer().sniff(lines[data[0]], delimiters=",;\t").delimiter
+    except csv.Error:
+        delimiter = ","
+
+    def row_of(line: str) -> list[str]:
+        return next(csv.reader([line], delimiter=delimiter))
+
+    def line_of(cells: list[str]) -> str:
+        out = io.StringIO()
+        csv.writer(out, delimiter=delimiter, lineterminator="").writerow(cells)
+        return out.getvalue()
+
+    header = [c.strip().lower() for c in row_of(lines[data[0]])]
+    if "net" not in header or not ("pin" in header):
+        raise env.KatError(f"{path.name}: back-annotation needs the columns pin (or ref and pin) and net")
+    k_net, k_pin = header.index("net"), header.index("pin")
+    k_ref = header.index("ref") if "ref" in header else None
+    left = dict(assignment)
+    for i in data[1:]:
+        cells = row_of(lines[i])
+        cells += [""] * (len(header) - len(cells))
+        pin = cells[k_pin].strip() if k_ref is None else f"{cells[k_ref].strip()}.{cells[k_pin].strip()}"
+        if pin in left:
+            cells[k_net] = left.pop(pin)
+            lines[i] = line_of(cells)
+    for pin, net in left.items():
+        cells = [""] * len(header)
+        part, number = _split_pin(pin, "assignment")
+        cells[k_net] = net
+        if k_ref is None:
+            cells[k_pin] = pin
+        else:
+            cells[k_ref], cells[k_pin] = part, number
+        lines.append(line_of(cells))
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def _update_json(path: Path, assignment: dict[str, str]) -> None:
+    data = json.loads(path.read_text(encoding="utf-8-sig"))
+    rows = data if isinstance(data, list) else data.get("rows") if isinstance(data, dict) else None
+    if isinstance(rows, list):
+        left = dict(assignment)
+        for r in rows:
+            pin = f"{r['ref']}.{r['pin']}" if r.get("ref") else str(r.get("pin", ""))
+            if pin in left:
+                r["net"] = left.pop(pin)
+        for pin, net in left.items():
+            part, number = _split_pin(pin, "assignment")
+            rows.append({"ref": part, "pin": number, "net": net} if any("ref" in r for r in rows)
+                        else {"pin": pin, "net": net})
+    else:
+        data.update(assignment)
+    path.write_text(json.dumps(data, indent=1) + "\n", encoding="utf-8")
+
+
+def update(mapping: Path | str, assignment: dict[str, str]) -> list[dict]:
+    """Set nets in a table: {"J1.3": "CH1"}, "" for unconnected. Comments, other columns and the
+    order stay; pins it lacks are added at the end. Returns the changes [{pin, from, to}]."""
+    path = Path(mapping)
+    current = pin_nets(path)
+    changes = [{"pin": pin, "from": current.get(pin), "to": net or ""} for pin, net in assignment.items()
+               if current.get(pin) != (net or "")]
+    if changes:
+        wanted = {c["pin"]: c["to"] for c in changes}
+        (_update_json if path.suffix.lower() == ".json" else _update_csv)(path, wanted)
+    return changes
+
+
+def back_annotate(mapping: Path | str, assignment: dict[str, str] | Path | str, script: Path | str,
+                  sch: Path | str, netlist_file: Path | str | None = None, pcb: Path | str | None = None,
+                  args: list[str] | None = None, dry_run: bool = False, force: bool = False,
+                  rip_stale: bool = False, require: tuple[str, ...] | list[str] = ("MPN",)) -> dict:
+    """Apply a computed pin assignment through the design, which owns connectivity. The SKiDL
+    script reads the table (``kat.skidl_blocks.connect_pins``) and is never edited.
+
+    Sets ``assignment`` ({"J1.3": "CH1"}, or a table of them) in ``mapping``, runs ``script`` in
+    its folder (with ``args``), syncs ``sch`` from ``netlist_file`` (default the script's name with
+    .net) and ``pcb`` if given, keeping placement. ``force``, ``rip_stale``, ``require``: as for
+    ``kat.pcb.sync``. ``dry_run``: only report the changes.
+
+    Then it verifies: the netlist has the table's assignment, the sheet matches the netlist and has
+    it too, and the board has parity and has it too. If any step fails, the table, netlist,
+    sheet and board are put back and KatError says why. Returns ok, changes, moved (nets that left a
+    part: a warning, a pure swap has none), sync, board (with stale_tracks and unconnected) and check."""
+    import kat
+
+    from .gui import guard
+    mapping, script, sch = Path(mapping), Path(script), Path(sch)
+    report.touch(sch)
+    net_file = Path(netlist_file) if netlist_file else script.with_suffix(".net")
+    if not net_file.is_absolute() and not net_file.exists():
+        net_file = script.parent / net_file
+    wanted = pin_nets(assignment) if isinstance(assignment, (str, Path)) else {k: v or "" for k, v in assignment.items()}
+    if not wanted:
+        raise env.KatError("the assignment is empty")
+    for pin in wanted:
+        _split_pin(pin, "assignment")
+    if not script.is_file():
+        raise env.KatError(f"{script} does not exist")
+    current = pin_nets(mapping)
+    changes = [{"pin": p, "from": current.get(p), "to": n} for p, n in wanted.items() if current.get(p) != n]
+    after = {**current, **wanted}
+    moved = []
+    for part in sorted({c["pin"].split(".", 1)[0] for c in changes}):
+        had = sorted(n for p, n in current.items() if p.startswith(part + ".") and n)
+        has = sorted(n for p, n in after.items() if p.startswith(part + ".") and n)
+        if had != has:
+            moved.append({"ref": part, "left": sorted(set(had) - set(has)), "came": sorted(set(has) - set(had))})
+    out: dict = {"table": str(mapping), "changes": changes, "moved": moved, "dry_run": dry_run}
+    if dry_run or not changes:
+        return {**out, "ok": True, "changed": False}
+    guard(sch)
+    if pcb is not None:
+        guard(Path(pcb))
+    from .netlist import blocks_file
+    from .syncer_hier import settings_file
+    files = [mapping, net_file, blocks_file(net_file), sch, settings_file(sch)]
+    files += [Path(pcb), Path(pcb).with_suffix(".stamps.json")] if pcb is not None else []
+    saved = {f: f.read_bytes() if f.exists() else None for f in files}
+
+    def put_back(why: str) -> env.KatError:
+        for f, data in saved.items():
+            if data is None:
+                f.unlink(missing_ok=True)
+            else:
+                f.write_bytes(data)
+        return env.KatError(f"back-annotation put back: {why}")
+
+    try:
+        update(mapping, wanted)
+        proc = subprocess.run([sys.executable, script.name, *(args or [])], cwd=script.parent, capture_output=True,
+                              text=True, stdin=subprocess.DEVNULL)
+        if proc.returncode != 0:
+            raise put_back(f"{script.name} failed: {(proc.stderr or proc.stdout).strip()[-1500:]}")
+        if not net_file.exists():
+            raise put_back(f"{script.name} wrote no {net_file.name}")
+        got = check(net_file, mapping, complete=False)
+        if not got["ok"]:
+            raise put_back(f"{net_file.name} does not have the table's assignment: does {script.name} read it? "
+                           f"{ {k: got[k] for k in ('missing', 'mismatched')} }")
+        sync = kat.sync(sch, net_file)
+        if not sync.get("check", {}).get("ok", False):
+            raise put_back(f"the sheet does not match after sync: {sync.get('check')}")
+        on_sheet = check(sch, mapping, complete=False)
+        if not on_sheet["ok"]:
+            raise put_back(f"the sheet does not have the table's assignment: {on_sheet['mismatched']}")
+        out["sync"] = {k: sync.get(k) for k in ("added", "removed", "updated", "detached", "attached", "renamed")
+                       if sync.get(k)}
+        out["check"] = {"netlist": True, "sheet": True}
+        if pcb is not None:
+            board = kat.pcb.sync(pcb, force=force, rip_stale=rip_stale, require=require)
+            if board.get("ok") is False:
+                raise put_back(board.get("error") or f"the board does not match: {board.get('check')}")
+            on_board = check(pcb, mapping, complete=False)
+            if not on_board["ok"]:
+                raise put_back(f"the board does not have the table's assignment: {on_board['mismatched']}")
+            out["board"] = {"parity": board["check"]["parity"], "unconnected": board["check"]["unconnected"],
+                            "stale_tracks": board.get("stale_tracks", [])}
+            out["check"]["board"] = True
+    except env.KatError as e:
+        if str(e).startswith("back-annotation put back"):
+            raise
+        raise put_back(str(e)) from e
+    return {**out, "ok": True, "changed": True}
