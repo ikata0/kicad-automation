@@ -16,15 +16,6 @@ file or its eventual tests.
 
 ## Import and library generation
 
-### FR-002: Generate symbols and footprints from a pin table
-
-**Open.** Generate a symbol and/or grid/connector footprint from CSV or JSON
-containing pin numbers/names, positions, drill sizes, and pad dimensions. Support
-component-side versus pin-side coordinates and an orientation marker. A proposed
-entry point is `kat lib make --pins pins.csv`.
-`src\kat\library.py` and `src\kat\pcb\footprints.py` currently load library parts,
-not generate them from pin tables.
-
 ### FR-003: Validate a multi-board stack
 
 **Open.** Given two boards, their relative transform, and mating connector pairs,
@@ -242,3 +233,11 @@ with a clean DRC (`tests/test_pcb_mechanics.py`). Other CAD tools' files were no
 forms are covered by hand-written files. Routed arcs are left out with a warning. Beyond the request,
 `Board.outline_loops` now gives the real board edge and cut-outs, so the router stays out of cut-outs
 and `kat pcb check` sees parts past a rounded corner; it used the bounding box before.
+
+### FR-002: Generate symbols and footprints from a pin table
+
+`kat lib make --pins pins.csv --name NAME` and `kat.libmake.make`. Tables are CSV or JSON with
+numbers, names, positions or grid places, drills, pad sizes, shapes and electrical types. `--view pin`
+takes pin-side coordinates and `--marker` sets the marked pin. Checked in the full flow: KiCad's ERC
+and netlist for the symbol, and DRC's library check and IPC-D-356 for the footprint
+(`tests/test_libmake.py`). It draws an outline around the pads, not the part's body.

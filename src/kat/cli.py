@@ -134,6 +134,11 @@ def cmd_pins(a):
 def cmd_lib(a):
     if a.lib_cmd == "search":
         return kat.lib_search(" ".join(a.query), a.limit)
+    if a.lib_cmd == "make":
+        pair = lambda v: _xy(v) if v and "," in v else ((float(v), float(v)) if v else None)  # noqa: E731
+        return kat.libmake.make(a.pins, a.name, a.lib, a.out, not a.no_symbol, not a.no_footprint, a.view, a.y_up,
+                                a.origin, a.drill, pair(a.pad), a.shape, pair(a.pitch),
+                                None if a.marker == "none" else a.marker, a.reference, a.force)
     return kat.lib_show(a.lib_id)
 
 
@@ -421,6 +426,39 @@ def build_parser() -> argparse.ArgumentParser:
     s1.add_argument("--limit", type=int, default=30, help="max results (default 30)")
     s2 = lsp.add_parser("show", help="units, pins and fields of one symbol")
     s2.add_argument("lib_id", help="Library:Symbol")
+    s3 = lsp.add_parser("make", formatter_class=_Fmt, help="generate a symbol and a footprint from a pin table",
+                        description="One row per pad, CSV or JSON. Columns (case does not matter):\n"
+                                    "  pin, name             pad number, name on the symbol\n"
+                                    "  x, y  or  row, col    position in mm, or a grid position times --pitch\n"
+                                    "  drill                 mm or WxH (slot); empty: a surface pad unless --drill\n"
+                                    "  pad  or  pad_w, pad_h mm or WxH; default drill + 0.5 mm\n"
+                                    "  shape                 circle, rect, oval, roundrect\n"
+                                    "  type                  electrical type of the symbol pin (default passive)\n"
+                                    "  side                  left, right, top, bottom on the symbol\n"
+                                    "  kind                  tht, smd, npth; a row with a drill but no pin is a hole\n"
+                                    "--view pin: positions are seen from the pin side, which mirrors x. The marker\n"
+                                    "pin (pin 1 by default) gets a triangle on silk and fab and a rectangular pad.\n"
+                                    "Writes OUT/LIB.kicad_sym and OUT/LIB.pretty/NAME.kicad_mod, read back through\n"
+                                    "KiCad, and adds them to the library tables if OUT holds a .kicad_pro.\n"
+                                    "Check a new part with kat pcb view and against its datasheet.")
+    s3.add_argument("--pins", required=True, metavar="TABLE", help="CSV or JSON pin table")
+    s3.add_argument("--name", required=True, help="part name")
+    s3.add_argument("--lib", help="library name (default: the part's)")
+    s3.add_argument("--out", metavar="DIR", help="where the libraries go (default: here)")
+    s3.add_argument("--no-symbol", action="store_true", help="only the footprint")
+    s3.add_argument("--no-footprint", action="store_true", help="only the symbol")
+    s3.add_argument("--view", choices=("component", "pin"), default="component",
+                    help="the side the table's positions are seen from (default component)")
+    s3.add_argument("--y-up", action="store_true", help="y grows upwards in the table (default downwards)")
+    s3.add_argument("--origin", choices=("table", "pin1", "center"), default="table",
+                    help="footprint origin: the table's (default), the marker pin or the centre")
+    s3.add_argument("--drill", type=float, metavar="MM", help="drill of rows that give none")
+    s3.add_argument("--pad", metavar="W[,H]", help="pad size of rows that give none (mm)")
+    s3.add_argument("--shape", choices=("circle", "rect", "oval", "roundrect"), help="shape of rows that give none")
+    s3.add_argument("--pitch", metavar="DX[,DY]", help="mm per col and row")
+    s3.add_argument("--marker", default="auto", metavar="PIN", help="marked pin: auto (pin 1, else the first), a number, none")
+    s3.add_argument("--reference", default="J", help="reference prefix (default J)")
+    s3.add_argument("--force", action="store_true", help="replace a part of that name")
 
     q = cmd("api", cmd_api, "Look up kat's Python API: signatures and docstrings from the code.",
             "Without NAME: the functions of kat and kat.pcb and their classes. NAME may be\n"
