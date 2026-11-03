@@ -18,7 +18,7 @@ from . import checks, syncer, views
 from .board import Board, Footprint, Pad
 
 __all__ = ["Board", "Footprint", "Pad", "block_environment", "block_port", "remove", "check", "clearance", "coupling_2d", "coupling_rule",
-           "drc", "edit", "fab", "instances", "layer_roles", "layer_rule", "load", "net_rules", "plane_rule",
+           "drc", "edit", "fab", "instances", "layer_roles", "layer_rule", "load", "net_rules", "odb_pinout", "plane_rule",
            "pad_geometry", "ready", "refill", "route", "snapshot", "stack", "stamp", "stamp_preview", "sync", "view"]
 
 
@@ -189,6 +189,28 @@ def pad_geometry(pcb: Path | str, refs: list[str] | None = None) -> dict:
                 raise KatError(f"{ref} has no pad {number!r}")
             pads += got
     return tidy({"board": str(pcb), "pads": [p.geometry() for p in pads]})
+
+
+def odb_pinout(job: Path | str, step: str | None = None, refs: list[str] | None = None,
+               out: Path | str | None = None) -> dict:
+    """Pin-to-net mapping of a legacy board, from an ODB++ job (a directory or archive, never
+    unpacked; ``odb.pinout``): per component part, package, side, x, y (mm, y down) and pins, and
+    the nets. ``step``: which one, if several have EDA data; ``refs``: only these components.
+    ``out``: also write it as a ``ref,pin,net`` table (.csv), which ``kat.mapping.check`` and
+    ``kat.skidl_blocks.pin_map`` read, or as JSON (.json); adds ``out`` to the result."""
+    from . import odb
+    from ..mapping import write
+    res = odb.pinout(job, step, refs)
+    if out is not None:
+        out = Path(out)
+        if out.suffix.lower() == ".json":
+            import json
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(res, indent=1) + "\n", encoding="utf-8")
+        else:
+            write(out, {f"{r}.{pin}": net for r, c in res["components"].items() for pin, net in c["pins"].items()})
+        res["out"] = str(out)
+    return res
 
 
 def instances(pcb: Path | str, block_pcb: Path | str) -> dict:

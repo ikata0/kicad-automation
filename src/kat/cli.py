@@ -204,6 +204,8 @@ def cmd_pcb(a):
         if a.args:
             raise env.KatError(f"{a.kind} takes no further arguments")
         return kat.pcb.net_rules(a.pcb, a.kind == "clear")
+    if a.pcb_cmd == "odb-pinout":
+        return kat.pcb.odb_pinout(a.job, a.step, a.ref or None, a.out)
     if a.pcb_cmd == "clearance":
         return kat.pcb.clearance(a.pcb, a.a, a.b, a.layer)
     if a.pcb_cmd == "pads":
@@ -497,7 +499,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     q = cmd("map", cmd_map, "Check a schematic, board or netlist against an external pin table.",
             "The table is specified independently of the design: a datasheet, a mating board, a\n"
-            "legacy product. CSV (`,` `;` or tab, # starts a comment line) or JSON. Its columns:\n"
+            "legacy product (kat pcb odb-pinout writes one). CSV (`,` `;` or tab, # starts a comment line) or JSON. Its columns:\n"
             "  ref,pin,net or pin,net        J1,3,CH1 / J1.3,CH1: pin on that net; an empty net or\n"
             "                                NC: unconnected. CH1 matches /CH_A/CH1; /CH_A/CH1 in full\n"
             "  channel                       a logical name: its pins share a net, channels never do\n"
@@ -510,7 +512,7 @@ def build_parser() -> argparse.ArgumentParser:
             ["kat map tia.kicad_sch j1_pinout.csv",
              "kat map board.kicad_pcb channels.csv --complete J1 --complete J2",
              "kat map design.net pins.json --partial"], sch=False)
-    q.add_argument("file", metavar="SOURCE", help=".kicad_sch, .kicad_pcb or a netlist (.net)")
+    q.add_argument("file", metavar="SOURCE", help=".kicad_sch, .kicad_pcb, a netlist (.net) or an ODB++ job")
     q.add_argument("mapping", metavar="TABLE", help="CSV or JSON pin table")
     q.add_argument("--pins", metavar="COL,...", help="the columns that hold pins (REF.NUMBER)")
     _map_options(q)
@@ -994,6 +996,16 @@ def build_parser() -> argparse.ArgumentParser:
                      help="plane: the same for every zone / rule area whose name matches (repeatable)")
     s16.add_argument("--except-area", action="append", metavar="X0,Y0,X1,Y1",
                      help="plane: no pour needed inside this rectangle, mm (repeatable)")
+    s21 = psp.add_parser("odb-pinout", formatter_class=_Fmt, help="pin-to-net mapping of a legacy board's ODB++ job",
+                         description="From the component layers and EDA data of an ODB++ job: a directory, .zip,\n"
+                                     ".tgz, .tar.gz or .tar (read in memory, never unpacked; files may be plain,\n"
+                                     ".z or .gz). Per component part, package, side, position (mm, y down) and\n"
+                                     "pins, and the nets. --out writes a ref,pin,net table that kat map checks a\n"
+                                     "new design against and a SKiDL script can read, or the whole as .json.")
+    s21.add_argument("job", metavar="JOB", help="ODB++ directory or archive")
+    s21.add_argument("--step", help="which step, if several have EDA data")
+    s21.add_argument("--ref", action="append", metavar="REF", help="only this component (repeatable)")
+    s21.add_argument("--out", metavar="FILE", help="also write .csv (ref,pin,net) or .json")
     s20 = psp.add_parser("clearance", formatter_class=_Fmt, help="effective clearance between two nets or pads",
                          description="Resolved as KiCad's DRC does: the larger of the two classes and the board\n"
                                      "minimum, or the last matching custom rule, which may also lower them. Rules\n"

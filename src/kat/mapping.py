@@ -118,8 +118,8 @@ def _connected(net: str | None) -> bool:
 
 
 def _actual(source: Path) -> dict[tuple[str, str], str]:
-    """(ref, pin) -> net name of a schematic, board or netlist. A pin on no net is absent or
-    has an ``unconnected-(`` name."""
+    """(ref, pin) -> net name of a schematic, board, netlist or ODB++ job. A pin on no net is
+    absent or has an ``unconnected-(`` name."""
     kind = source.suffix.lower()
     if kind == ".kicad_sch":
         nets = netlist.from_schematic(source)
@@ -133,8 +133,12 @@ def _actual(source: Path) -> dict[tuple[str, str], str]:
                 if p.number and (p.net or (f.ref, p.number) not in out):
                     out[(f.ref, p.number)] = p.net or f"{_UNCONNECTED}{f.ref}-Pad{p.number})"
         return out
+    elif source.is_dir() or source.suffix.lower() in (".zip", ".tgz", ".tar", ".gz"):
+        from .pcb import odb
+        return {(ref, pin): net or f"{_UNCONNECTED}{ref}-Pad{pin})"
+                for ref, c in odb.pinout(source)["components"].items() for pin, net in c["pins"].items()}
     else:
-        raise env.KatError(f"{source.name}: give a .kicad_sch, .kicad_pcb or netlist (.net)")
+        raise env.KatError(f"{source.name}: give a .kicad_sch, .kicad_pcb, netlist (.net) or ODB++ job")
     return {pin: name for name, pins in nets.items() for pin in pins}
 
 
@@ -144,7 +148,7 @@ def _pin(pin: tuple[str, str]) -> str:
 
 def check(source: Path | str, mapping: Path | str, complete: bool | list[str] = True,
           pins: list[str] | None = None) -> dict:
-    """Compare ``source`` (.kicad_sch, .kicad_pcb or a netlist) with a mapping
+    """Compare ``source`` (.kicad_sch, .kicad_pcb, a netlist or an ODB++ job) with a mapping
     table (``read``). ``complete``: connected pins of the parts in the mapping (True), of
     these references (a list) or of none (False) must be in the table. ``pins``: see ``read``.
 

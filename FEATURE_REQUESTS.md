@@ -39,11 +39,6 @@ check pin-to-pin net consistency, guide-peg/hole alignment, and mounting-hole
 alignment. This is a geometric/electrical assembly check, distinct from inspecting
 one board's layer stack-up.
 
-### FR-005: Extract legacy pinouts
-
-**Open.** Extract component pin-to-net mappings from ODB++ component and EDA data,
-with output suitable for seeding SKiDL definitions or a mapping-table check.
-
 ## Electrical checks
 
 ### FR-006: Estimate coupling across repeated blocks in 3D
@@ -234,3 +229,12 @@ and DRC (`tests/test_pcb_zones.py`).
 --map`, which then fail `ok`. Tables are CSV or JSON: `pin,net`, `ref,pin,net`, or pin columns
 with `channel`, as in SPEC.md section 6.2. Reports `missing`, `mismatched`, `split`, `merged` and
 `extra`. Schematics are read through KiCad's netlist, boards by their pads.
+
+### FR-005: Extract legacy pinouts
+
+`kat.pcb.odb_pinout` and `kat pcb odb-pinout JOB [--out pins.csv]` read component layers and EDA
+data from a directory or archive, which is never unpacked, with files plain, UNIX compressed or
+gzipped. `--out` writes the `ref,pin,net` table that `kat map` reads; a job can also be the source
+of `kat map`. Checked against KiCad's own ODB++ export of boards with parts on both sides, whose
+pads give the expected nets (`tests/test_pcb_odb.py`). Jobs from other CAD tools were not available:
+their format is covered by hand-written files following the ODB++ specification.

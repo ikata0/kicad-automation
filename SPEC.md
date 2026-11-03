@@ -847,6 +847,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `pcb check PCB [--map TABLE]` / `pcb snapshot PCB` / `pcb view PCB ...` | board DRC + findings, history step with pictures, zoomed view (§4.12) |
 | `pcb stamp PCB BLOCK_PCB INSTANCE... --at X,Y [--step DX,DY] [--rot R] [--anchor origin/top-left] [--no-lock] [--make-room] [--side bottom] [--layer-map auto/roles/MAP] [--allow-asymmetric]` | copy a checked block layout onto instances (`all`), flipped on the bottom side, then the board check (§4.18) |
 | `pcb stamp PCB BLOCK_PCB [INSTANCE...] --at X,Y --preview [...]` | origin, turned bounds and ports of a proposed stamp, board unchanged (§4.18) |
+| `pcb odb-pinout JOB [--step S] [--ref REF] [--out FILE]` | a legacy board's pin-to-net mapping from ODB++; `--out` a table for `kat map` and SKiDL (§6.2) |
 | `pcb clearance PCB A B [--layer L]` | effective clearance between two nets or pads, as DRC resolves it (§4.9) |
 | `pcb pads PCB [REF...]` | exact pad shapes (radius, chamfers, trapezoid, offset, primitives), for code outside kat (§4.9) |
 | `pcb collisions PCB [INSTANCE...]` | per-layer collisions between stamped instances (§4.18) |
@@ -927,6 +928,12 @@ The result lists `missing` (pins or parts the design lacks), `mismatched` (expec
 that covers only one side of a connection, say which parts it covers with `--complete J1`, or
 `--partial` for none. Columns it does not know are listed in `ignored`; a pin given twice with
 different assignments is an error.
+
+**A legacy board as the specification.** `kat pcb odb-pinout JOB --out pins.csv` reads the pin
+assignment of a board from its ODB++ job (component layers and EDA data), and writes the same
+`ref,pin,net` table. An ODB++ job can also be SOURCE itself. Nets on the old board are named as
+that board names them, so a new design usually keeps only the connector rows, or a `channel`
+column in place of the net.
 
 ## 7. Pitfalls found, and their solutions
 
