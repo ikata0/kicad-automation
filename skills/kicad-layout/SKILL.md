@@ -206,6 +206,14 @@ with kat.pcb.edit(PCB) as b:
   `kat pcb check PCB --map pins.csv`; it says `mismatched`, `missing`, `extra` and more.
 - Around a board cut-out Freerouting can leave a net unrouted however many passes it gets:
   check `unconnected`, and finish that net by hand or move a part.
+- Before routing a floorplan: `kat pcb access floorplan.json` says whether each candidate cell's port
+  can reach a source, and what walls it in. Each port is judged alone, so the capacity of a gap is not.
+- Pins that may be swapped, as on a connector: `kat pcb escape PCB pins.json` chooses the assignment
+  and tracks together, without vias on one layer. Give its `assignment` to `kat back-annotate`, then run
+  it again with `--apply`.
+- A route that stopped converging shows in `unrouted` per pass, a slow stage in `stages`.
+  `--skip-class NAME` leaves a class out; `--no-optimize` skips the optimizer. Look at `settings`
+  after `--router-option`: Freerouting exits 0 even on settings it ignores.
 
 ## Review sub-loop
 

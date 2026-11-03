@@ -18,8 +18,8 @@ from . import checks, syncer, views
 from .board import Board, Footprint, Pad
 
 __all__ = ["Board", "Footprint", "Pad", "block_environment", "block_port", "remove", "check", "clearance", "coupling_2d", "coupling_rule",
-           "drc", "edit", "fab", "import_mechanics", "instances", "layer_roles", "layer_rule", "load", "mate", "net_rules", "odb_pinout", "plane_rule",
-           "pad_geometry", "ready", "refill", "route", "snapshot", "stack", "stamp", "stamp_preview", "sync", "view"]
+           "drc", "edit", "escape", "fab", "import_mechanics", "instances", "layer_roles", "layer_rule", "load", "mate", "net_rules", "odb_pinout", "plane_rule",
+           "pad_geometry", "port_access", "ready", "refill", "route", "snapshot", "stack", "stamp", "stamp_preview", "sync", "view"]
 
 
 def load(path: Path | str) -> Board:
@@ -98,15 +98,20 @@ def refill(pcb: Path | str) -> dict:
 
 
 def route(pcb: Path | str, passes: int = 20, nets: list[str] | None = None, timeout: int = 1800,
-          out: Path | str | None = None, install: bool = False) -> dict:
+          out: Path | str | None = None, install: bool = False, skip_classes: list[str] | None = None,
+          optimize: bool = True, options: dict | None = None) -> dict:
     """Autoroute with Freerouting (headless) through kat's Specctra DSN/SES; locked copper
-    stays, ``nets`` limits what is routed. Ends with KiCad's DRC (``check``): trust that,
-    not the router's own count. ``install`` downloads Freerouting first if missing."""
+    stays, ``nets`` limits what is routed and ``skip_classes`` leaves net classes out. Ends with
+    KiCad's DRC (``check``): trust that, not the router's own count. ``timeout`` (s): the router
+    stops there and keeps what it has (``timed_out``). ``optimize=False`` skips its optimizer.
+    ``options``: other Freerouting settings; ``settings`` reports the ones it refused or kat has not
+    seen work. Returns also ``stages`` (seconds) and ``unrouted`` per pass. ``install`` downloads
+    Freerouting first if missing."""
     report.touch(pcb)
     from . import router as _route
     if install:
         _route.install()
-    return tidy(_route.route(Path(pcb), passes, nets, timeout, out))
+    return tidy(_route.route(Path(pcb), passes, nets, timeout, out, skip_classes, optimize, options))
 
 
 def stamp(pcb: Path | str, block_pcb: Path | str, instances: str | list[str],
@@ -292,6 +297,47 @@ def mate(a: Path | str, b: Path | str, pairs: list[tuple[str, str]], at: tuple[f
     only, which does not fail ok) and counts."""
     from .mating import mate as _mate
     return _mate(a, b, pairs, at, rot, flip, nets, holes, above, tolerance, hole_tolerance)
+
+
+def escape(pcb: Path | str, spec: dict | Path | str, apply: bool = False, out: Path | str | None = None) -> dict:
+    """Route a group of permutable pins and choose their assignment with the tracks: a min-cost flow
+    on a grid gives the most vertex-disjoint paths possible at the least total length. On one layer
+    they cannot cross, so a planar escape needs no vias, which Freerouting cannot offer because it
+    takes nets as given. ``spec``, a dictionary or JSON file: ``sources`` and ``targets`` (pads ``J1.3``
+    or ``J1.*``), ``layers`` (default F.Cu), ``vias`` (default false, true needs exactly two layers),
+    ``track``, ``clearance``, ``via``, ``via_drill`` (mm, default the board's Default class), ``grid``
+    (mm, default the tightest legal), ``region`` [x0, y0, x1, y1] or ``margin`` (mm around the pins).
+    ``pairs``, fixed pairs, are reported in ``not_handled``: they are for ``route``.
+
+    Returns assignment {source: target's net}, routes, unrouted_sources, unrouted_targets, max_paths,
+    total_length (mm) and via_count. It changes nothing unless ``apply``, which adds the tracks and
+    checks the board. That needs the pads to have the nets already, because connectivity belongs to the
+    design: run ``kat.mapping.back_annotate`` with ``assignment`` first. ``out``: also write the
+    result as JSON. Tracks follow the grid at right angles; KiCad's DRC judges them."""
+    from . import flowroute
+    return flowroute.escape(pcb, spec, apply, out)
+
+
+def port_access(spec: dict | Path | str) -> dict:
+    """Can the ports of candidate cells reach a source, before detailed routing? A coarse maze on a
+    grid per layer: fitting by area cannot see a port walled in by its neighbours. ``spec`` is a
+    dictionary or a JSON file with: ``board`` (a .kicad_pcb, giving edge, cut-outs, keep-outs and
+    parts; ``parts`` false leaves parts out) or ``outline`` ([x0, y0, x1, y1] mm, with ``board_layers``
+    and ``edge_clearance``); ``layers`` routing may use; ``cells`` [{name, outline [x0, y0, x1, y1] or
+    polygon, blocked_layers (default all), ports [{name, at [x, y] or x and y, layers}]}], or for a
+    library block {block, at, rot, side, instance, anchor}, placed as ``stamp`` would with its port
+    points; ``keepouts`` [{name, box or polygon, layers}]; ``source`` {box, layers}. Options: ``grid``
+    (0.5 mm), ``track`` and ``clearance`` (0.2 mm), ``via`` (0.6 mm), ``vias`` (true), ``escape`` (how
+    far a port may be from free space, mm), ``path`` (true: corner points of each route).
+
+    Returns ok, ports [{cell, port, status reachable with length (mm) and vias, blocked with
+    walled_by, or sealed with why}], counts, overlaps (cells sharing a layer), outside (cells past
+    the edge) and warnings. Each port is judged alone: all of them may still not fit through one
+    gap, so routing and DRC stay the judges."""
+    from . import floorplan
+    if not isinstance(spec, dict):
+        spec = {**floorplan._read(spec), "_base": str(Path(spec).resolve().parent)}
+    return floorplan.access(spec)
 
 
 def instances(pcb: Path | str, block_pcb: Path | str) -> dict:

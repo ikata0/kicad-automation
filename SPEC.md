@@ -366,7 +366,8 @@ runs `kat pcb check`. No pcbnew involved.
   (`KAT_FREEROUTING=/path/to.jar` uses another copy).
 - Tracks the router narrowed at fine-pitch pads are widened to the net-class width where
   the clearance allows (`widened`; the rest in `narrow`), checked against all the router's
-  new copper.
+  new copper. A track in `narrow` still under the board's minimum goes up to that minimum unless it
+  would then touch other copper, since kat's clearance check is on the cautious side of DRC's.
 - **Hole to hole:** the minimum reaches the router as via clearance where it asks more than the
   copper does. The router does not keep vias of one net apart, so `apply_session` lists any new
   via still too close in `hole_to_hole`; DRC judges them.
@@ -386,6 +387,33 @@ runs `kat pcb check`. No pcbnew involved.
 
 Loop: structure (§4.9) → route → check and snapshot → adjust structure, keep-outs or net
 classes → `remove_tracks()` (locked copper stays) → route again.
+
+**Router settings.** `--skip-class NAME` leaves a net class out, with its pads as obstacles; kat does
+this itself because Freerouting 2.4.1 accepts `router.ignore_net_classes` in every form and routes those
+nets anyway. `--no-optimize` skips its optimizer stage, and `--timeout S` is the router's own limit:
+it stops there, what it has is kept, and the result says `timed_out`. `--router-option KEY=VALUE` passes
+any other setting, because Freerouting exits 0 whatever it makes of one: kat refuses those known to do
+nothing or that it sets itself, lists what the router refused in `settings.refused_by_router`, and what
+it has not seen work in `settings.unverified`. The result also gives `stages` (seconds of fanout,
+routing, optimizer) and `unrouted` after each pass, which shows a board that stopped converging.
+`tests/e2e/router_benchmark.py` makes reproducible dense boards for comparing such settings.
+
+**Escape routing with free pin assignment.** `kat pcb escape PCB SPEC.json` (`kat.pcb.escape`) is for
+pins that may be swapped, as on a connector, where Freerouting takes each net as given. A min-cost flow
+on a grid, whose pitch keeps neighbouring tracks legal, finds as many vertex-disjoint paths as can exist
+at the least total length, and with them the assignment. On one layer they cannot cross, so a planar
+escape needs no vias; `"vias": true` allows them between exactly two layers. Connectivity belongs to the
+design, so the flow goes in three steps:
+
+```sh
+kat pcb escape PCB spec.json --out plan.json          # assignment and tracks; the board stays as it is
+kat back-annotate j1.csv --assign J1.1=CH2 J1.2=CH1 --run design.py --sch SCH --pcb PCB
+kat pcb escape PCB spec.json --apply                  # refused until the pads have those nets
+```
+
+Fixed pairs are not handled: they are listed in `not_handled` and go to `kat pcb route`. Tracks follow
+the grid at right angles, and the optimum is that of the grid. `max_paths` below the pin count says
+that no more fit on this grid, on these layers; a finer `grid` cannot go below the track pitch.
 
 ### 4.11 Finishing and fabrication
 
@@ -718,6 +746,14 @@ with kat.pcb.edit("top/top.kicad_pcb") as b:
 - The design is judged as usual: `kat pcb check`, then route what is left
   (`kat pcb route` keeps the locked block copper).
 
+**Checking a floorplan first.** Before routing, `kat pcb access SPEC.json` (`kat.pcb.port_access`)
+says whether each port of candidate cells can reach a source, on a coarse grid per layer, because
+fitting by area cannot see a port walled in by its neighbours. Cells are outlines or library blocks
+placed as `stamp` would; they block the layers they name, as do keep-outs, and a board adds its edge,
+cut-outs, keep-outs and pads. A port is `reachable` (length, vias), `blocked` (`walled_by`) or `sealed`.
+Each port is judged alone, so a gap one track fits through passes for ten: routing and DRC stay
+the judges. A block's outline counts as solid on `blocked_layers`, even where its copper leaves room.
+
 ### 4.19 Block library
 
 Each block is a project of its own in `blocks/NAME/` (`KAT_BLOCKS`, else the nearest
@@ -904,10 +940,12 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `pcb sync PCB [--sch] [--dry-run] [--force] [--rip-stale]` | parts and nets onto the board (§4.6) |
 | `pcb refill PCB` | fill all pours and save them (after finishing) |
 | `pcb fab PCB` / `pcb ready PCB [--accept KIND=REASON] [--overhang REF]` | fabrication set / release gate (§4.11) |
-| `pcb route PCB [--passes] [--net NAME] [--install]` | Freerouting through kat's DSN/SES, then the board check (§4.10) |
+| `pcb route PCB [--passes] [--net NAME] [--skip-class NAME] [--no-optimize] [--timeout S] [--router-option KEY=VALUE] [--install]` | Freerouting through kat's DSN/SES, then the board check (§4.10) |
 | `pcb check PCB [--map TABLE]` / `pcb snapshot PCB` / `pcb view PCB ...` | board DRC + findings, history step with pictures, zoomed view (§4.12) |
 | `pcb stamp PCB BLOCK_PCB INSTANCE... --at X,Y [--step DX,DY] [--rot R] [--anchor origin/top-left] [--no-lock] [--make-room] [--side bottom] [--layer-map auto/roles/MAP] [--allow-asymmetric]` | copy a checked block layout onto instances (`all`), flipped on the bottom side, then the board check (§4.18) |
 | `pcb stamp PCB BLOCK_PCB [INSTANCE...] --at X,Y --preview [...]` | origin, turned bounds and ports of a proposed stamp, board unchanged (§4.18) |
+| `pcb escape PCB SPEC.json [--apply] [--out FILE]` | route permutable pins, choosing the assignment with the tracks (§4.10) |
+| `pcb access SPEC.json` | before routing: can each candidate cell's port reach a source? A coarse maze per layer (§4.18) |
 | `pcb mate BOARD_A BOARD_B --pair J1=P1 [--at X,Y] [--rot R] [--flip] [--below] [--net A=B] [--holes auto/none/A=B] [--tolerance] [--hole-tolerance]` | two boards as they mate: pins by position, nets, guide holes, mounting holes (§4.12) |
 | `pcb import-mech PCB --odb JOB / --gerber FILE --drill FILE... [--at X,Y] [--offset DX,DY] [--vias] [--min-drill MM] [--assume-plated]` | board edge, cut-outs and holes from fabrication data (§4.7) |
 | `pcb odb-pinout JOB [--step S] [--ref REF] [--out FILE]` | a legacy board's pin-to-net mapping from ODB++; `--out` a table for `kat map` and SKiDL (§6.2) |
@@ -1065,7 +1103,7 @@ column in place of the net.
 | kicad-python 0.8: `kipy.schematic` does not import (`PageSettings` missing); KiCad 10.0.6 answers schematic requests with "no handler" | schematic verification = the editor opens the file (lock file) and keeps running |
 | Quitting the editor through the API (`common.Control.quit`) does nothing; SIGTERM closes it but leaves `~NAME.*.lck` behind | kat terminates only the editor it started and removes the lock files that appeared during the run |
 | KiCad's lock file holds hostname and user, no process id | a lock counts as live when it is from another host or a KiCad process of this user runs; otherwise stale |
-| Freerouting narrows tracks at fine-pitch pads below the net-class width (DRC `track_width`); `--router.automatic_neckdown=false` is not applied | on import kat widens them to the class width where the clearance allows and reports the rest (`narrow`) |
+| Freerouting narrows tracks at fine-pitch pads below the net-class width (DRC `track_width`); `--router.automatic_neckdown=false` is not applied | on import kat widens them to the class width where the clearance allows, or else to the board's minimum, and reports the rest (`narrow`) |
 | A reference without a number (`ROUT`) passes ERC and parity, but KiCad treats it as unannotated: the BOM prints `ROUT?` | `kat ready` error `reference_without_number` |
 | No `rsvg-convert` on Windows; `kicad-cli` not on PATH there | PyMuPDF fallback (`[render]` extra, AGPL-3.0); discover KiCad 10 from HKCU/HKLM installer registration (32/64-bit views, custom folders), then standard folders; explicit `KICAD_CLI` and PATH take precedence |
 | A child process cannot update the calling shell's environment | cache the discovered executable as `KICAD_CLI` inside the kat process and pass it to children; each independent CLI invocation discovers again. README shows how PowerShell can explicitly capture the path for tests/SKiDL |
@@ -1117,6 +1155,10 @@ column in place of the net.
 | ERC and DRC load every library in the table to compare parts with them: 5 to 7 s of CPU per check, even on a two-part sheet, which took the test suite to half an hour | the tests use a private `KICAD_CONFIG_HOME` listing only the libraries they need (`tests/kat_test_support.py`), and run in parallel; `KAT_TEST_ALL_LIBS=1` uses the full tables. kat honours `KICAD_CONFIG_HOME` as KiCad does |
 | A router via between a connector's pins can cut a GND pin's thermal off the plane (`starved_thermal`, 1 island), and any small change to the DSN can move vias there, so a board that routed clean may not any more | judge by `islands` in the board check, and keep vias out of a dense pin field with `keepout(layers, rect=..., tracks=True, vias=False)` |
 | kat's docs and check asked for Java 21, but Freerouting 2.4.1 is compiled for Java 25 (class file version 69) | `JAVA_MIN` is 25; a test compares it with the pinned jar |
+| Freerouting accepts `router.ignore_net_classes` in every form and routes those nets anyway, and exits 0 on a setting it does not know, with only a log line | `route` refuses the first and offers `skip_classes`, which kat applies itself; `settings` reports what the router refused and what kat has not seen work |
+| Freerouting's optimizer normally ends at once on a finished board, but can start from a wrong score ("5 unrouted" after a routing stage with none) and spend 6 minutes on one pass | `stages` shows it; `--no-optimize` skips it |
+| `route --timeout` killed the router and lost all its work | the limit is now the router's own (`job_timeout`): it stops, what it has is kept, and `timed_out` says so |
+| Pins that could be swapped were routed in the order the design happened to give, with crossings and vias a different assignment does not need | `kat pcb escape` chooses assignment and tracks together, then `kat back-annotate` carries the assignment through the design |
 | Escaping a SKiDL pin name with `+` or brackets (`u[r"IN\+"]`) finds no pin: names match exactly unless `match_pin_regex` is set | write the name literally, `u["IN+"]`; a name with a space takes the pin number (`tests/test_skidl_blocks.py` pins this down) |
 
 ## 8. Open points

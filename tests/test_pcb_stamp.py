@@ -391,6 +391,25 @@ def test_stamp_bounds_and_anchor(hier, tmp_path):
     assert back["origin"] == [118, 112] and back["outline"] == pytest.approx(r["outline"])
 
 
+def test_a_library_block_as_a_candidate_cell_of_a_floorplan(hier, tmp_path):
+    """FR-013: the block goes where a stamp would put it, with its port points."""
+    c = copy_of(hier, tmp_path)
+    pcb, rc = c["top"], c["rc"]
+    pad = Board(rc).footprint("R1").pad("1")
+    stamp_mod.set_port(rc, "inp", (pad.x, pad.y))
+    spec = {"board": str(pcb), "parts": False, "escape": 8, "source": {"box": [101, 101, 104, 119]},
+            "cells": [{"name": "new", "block": str(rc), "at": [125, 105]}]}
+    want = Board(pcb).stamp_preview(rc, (125, 105))
+    r = kat.pcb.port_access(spec)
+    assert r["ok"] and [p["port"] for p in r["ports"]] == ["inp"], r
+    assert r["ports"][0]["exit"][0] <= want["outline"][0], "it leaves on the source's side"
+    walled = dict(spec, keepouts=[{"name": "wall", "box": [110, 100, 112, 120]}])
+    p = kat.pcb.port_access(walled)["ports"][0]
+    assert p["status"] == "blocked" and "wall" in p["walled_by"]
+    two = dict(spec, cells=spec["cells"] + [{"name": "other", "outline": [want["outline"][0] - 1, 105, want["outline"][0] + 1, 108]}])
+    assert kat.pcb.port_access(two)["overlaps"][0]["b"] == "other"
+
+
 def test_preview_tells_ports_without_changing_the_board(hier, tmp_path, capsys):
     """FR-014: ports where the stamp will put them, mirrored on the bottom side, in order per
     edge, with the file untouched; with an instance their nets are the instance's."""

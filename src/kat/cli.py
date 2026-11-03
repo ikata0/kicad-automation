@@ -163,7 +163,12 @@ def cmd_pcb(a):
             return _route.install()
         if not a.pcb:
             raise env.KatError("give the board (or only --install)")
-        return kat.pcb.route(a.pcb, a.passes, a.net or None, a.timeout, install=a.install)
+        bad = [x for x in a.router_option or [] if "=" not in x]
+        if bad:
+            raise env.KatError(f"--router-option {bad[0]!r}: give KEY=VALUE")
+        return kat.pcb.route(a.pcb, a.passes, a.net or None, a.timeout, install=a.install, skip_classes=a.skip_class,
+                             optimize=not a.no_optimize,
+                             options=dict(x.split("=", 1) for x in a.router_option or []) or None)
     if a.pcb_cmd == "stamp":
         names = "all" if a.instance == ["all"] else a.instance
         if a.preview:
@@ -209,6 +214,10 @@ def cmd_pcb(a):
         if a.args:
             raise env.KatError(f"{a.kind} takes no further arguments")
         return kat.pcb.net_rules(a.pcb, a.kind == "clear")
+    if a.pcb_cmd == "escape":
+        return kat.pcb.escape(a.pcb, a.spec, a.apply, a.out)
+    if a.pcb_cmd == "access":
+        return kat.pcb.port_access(a.spec)
     if a.pcb_cmd == "mate":
         def pairs(items, what):
             bad = [x for x in items if "=" not in x]
@@ -945,7 +954,14 @@ def build_parser() -> argparse.ArgumentParser:
     s5.add_argument("pcb", metavar="PCB", nargs="?")
     s5.add_argument("--passes", type=int, default=20, help="router passes (default 20)")
     s5.add_argument("--net", action="append", metavar="NAME", help="route only this net (repeatable)")
-    s5.add_argument("--timeout", type=int, default=1800, help="seconds (default 1800)")
+    s5.add_argument("--skip-class", action="append", metavar="NAME",
+                    help="leave this net class out; its pads stay obstacles (repeatable)")
+    s5.add_argument("--no-optimize", action="store_true", help="skip the router's optimizer stage")
+    s5.add_argument("--router-option", action="append", metavar="KEY=VALUE",
+                    help="another Freerouting setting (repeatable); settings reports what it refused\n"
+                         "and what kat has not seen work")
+    s5.add_argument("--timeout", type=int, default=1800,
+                    help="seconds (default 1800): the router stops there and what it has is kept (timed_out)")
     s5.add_argument("--install", action="store_true", help="download Freerouting first if missing")
     s6 = psp.add_parser("fab", formatter_class=_Fmt, help="fabrication files",
                         description="fab/<name>-<rev>/: gerbers/ (copper, paste, silk, mask, outline, drill\n"
@@ -1093,6 +1109,35 @@ def build_parser() -> argparse.ArgumentParser:
                      help="plane: the same for every zone / rule area whose name matches (repeatable)")
     s16.add_argument("--except-area", action="append", metavar="X0,Y0,X1,Y1",
                      help="plane: no pour needed inside this rectangle, mm (repeatable)")
+    s25 = psp.add_parser("escape", formatter_class=_Fmt, help="route permutable pins, choosing the assignment",
+                         description="Freerouting takes each net as given. Where pins may be swapped, as on a\n"
+                                     "connector, a min-cost flow on a grid chooses assignment and tracks together, as\n"
+                                     "many paths as can exist, of the least total length. On one layer they cannot\n"
+                                     "cross, so no vias are needed. SPEC is a JSON file:\n"
+                                     '  {"sources": ["J1.*"], "targets": ["U1.1", "U1.2"], "layers": ["F.Cu"]}\n'
+                                     'Also: "vias": true (exactly two layers), "track", "clearance", "via", "via_drill",\n'
+                                     '"grid", "region" [x0, y0, x1, y1], "margin". "pairs" are reported as not_handled.\n'
+                                     "Connectivity belongs to the design, so: plan with this, give the assignment to\n"
+                                     "kat back-annotate, then run this again with --apply. Tracks go at right angles.")
+    s25.add_argument("pcb", metavar="PCB")
+    s25.add_argument("spec", metavar="SPEC", help="JSON file")
+    s25.add_argument("--apply", action="store_true", help="add the tracks, once the pads have the nets; then check")
+    s25.add_argument("--out", metavar="FILE", help="also write the result as JSON")
+    s24 = psp.add_parser("access", formatter_class=_Fmt, help="can candidate cells' ports reach a source?",
+                         description="Before detailed routing: a coarse maze on a grid per layer, from the source\n"
+                                     "outwards. Fitting by area cannot see a port walled in by its neighbours. SPEC is\n"
+                                     "a JSON file:\n"
+                                     '  {"board": "top.kicad_pcb", "layers": ["F.Cu", "In2.Cu"],\n'
+                                     '   "cells": [{"name": "A", "outline": [10, 10, 20, 20], "blocked_layers": ["F.Cu"],\n'
+                                     '              "ports": [{"name": "in", "at": [10, 15], "layers": ["F.Cu"]}]},\n'
+                                     '             {"block": "RC", "at": [30, 10], "instance": "/CH_A"}],\n'
+                                     '   "keepouts": [{"box": [0, 0, 5, 5], "layers": ["F.Cu"]}],\n'
+                                     '   "source": {"box": [0, 40, 60, 50]}, "grid": 0.5}\n'
+                                     'Without "board": "outline": [x0, y0, x1, y1], "board_layers": [...]. A port is\n'
+                                     "reachable (with length and vias), blocked (with walled_by) or sealed (no free\n"
+                                     "space near it). overlaps and outside name cells that do not fit. Each port is\n"
+                                     "judged alone: all may still not fit through one gap. Exit code 1 if any fails.")
+    s24.add_argument("spec", metavar="SPEC", help="JSON file")
     s23 = psp.add_parser("mate", formatter_class=_Fmt, help="check two boards as they mate",
                          description="Board B over board A, in A's frame: mirrored about its y axis with --flip (its\n"
                                      "top then faces A), turned by --rot, moved by --at. For each --pair, pads and\n"

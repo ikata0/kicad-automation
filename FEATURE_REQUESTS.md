@@ -26,35 +26,7 @@ mutual capacitance per net pair. The existing parallel-plate and 2D cross-sectio
 estimates in `src\kat\pcb\coupling.py` and `src\kat\pcb\field2d.py` do not provide
 a tiled 3D field solution.
 
-## Block building and placement
-
-### FR-013: Check floorplan port accessibility
-
-**Open.** Given candidate cells, port positions, allowed layers, and a source
-region, report which ports can reach the source without crossing occupied cells
-or keepouts. A coarse maze/grid check should detect inaccessible placements
-before detailed routing; fitting by area alone is insufficient.
-
 ## Routing and board-editing APIs
-
-### FR-018: Improve autorouter scaling and rule handling
-
-**Needs reproduction.** Investigate poor convergence/runtime on dense multilayer
-boards and reported ineffective net-class-ignore behaviour. Establish a generic
-benchmark, identify the relevant upstream option, and report unsupported or
-ignored settings rather than implying they took effect. Consider a grid-routing
-alternative if needed. The Java minimum is settled: Freerouting 2.4.1 is compiled for Java 25, and
-`src\kat\pcb\router.py` now asks for that. One known case: on a 60 x 30 mm board, a cut-out at
-(27, 7)-(33, 23) leaves a net unrouted, while the larger (28, 5)-(32, 25) routes.
-
-### FR-019: Joint escape routing and pin assignment
-
-**Open.** Provide a generic flow-based river/escape router that jointly assigns
-permutable source/destination pins and routes tracks to block ports. Accept
-allowed layers, preserve planar/no-via constraints when requested, and return
-both the assignment and tracks. Suggested entry points are `kat pcb escape` or
-`kat pcb flow-route`; the current router wraps Freerouting with fixed net
-assignments.
 
 ## Resolved
 
@@ -244,3 +216,54 @@ is renamed there, not by the design that uses it.
 board are verified against the table and each other, with parity on the board, and all are put back if
 a step fails. Tested with a real SKiDL script (`tests/test_back_annotate.py`). Sheets inside a block's
 own drawing are not restored, since a design's sync only writes instance data there.
+
+### FR-013: Check floorplan port accessibility
+
+`kat pcb access SPEC.json` and `kat.pcb.port_access`: a maze search per layer from a source region,
+with candidate cells, library blocks placed as `stamp` would, keep-outs, and a board's edge, cut-outs and
+pads. Reports `reachable`, `blocked` with what walls the port in, or `sealed`, and cells that overlap or
+leave the board. On real boards Freerouting agrees with it (`tests/test_pcb_floorplan.py`). Each port
+is judged alone, so the capacity of a gap is not checked.
+
+### FR-019: Joint escape routing and pin assignment
+
+`kat pcb escape PCB SPEC.json [--apply]` and `kat.pcb.escape`: a min-cost flow on a grid assigns permutable
+sources to targets and routes them together, as vertex-disjoint paths on the allowed layers, with
+vias only when asked for and then between exactly two layers. Returns assignment, tracks, and what did
+not fit. The assignment goes through `kat back-annotate`, and `--apply` then adds the tracks, judged by
+DRC (`tests/test_pcb_escape.py`, including a real SKiDL design). As agreed, this first version handles
+permutable groups only: fixed pairs are listed in `not_handled`. Tracks are at right angles.
+
+### FR-018: Improve autorouter scaling and rule handling
+
+`kat pcb route --skip-class NAME --no-optimize --router-option KEY=VALUE` and the same arguments of
+`kat.pcb.route`. The result now has `stages`, `unrouted` per pass, `timed_out`, `skipped` and
+`settings {refused_by_router, unverified}`. `tests/e2e/router_benchmark.py` is the generic benchmark.
+
+Reproduced on Freerouting 2.4.1: `router.ignore_net_classes` is accepted in every form and has no effect
+(all 24 nets of the class were still routed), so kat refuses it and leaves the nets out of the DSN itself.
+An unknown setting exits 0 with only a log line, which kat now reports. `--timeout` is now the router's own
+`job_timeout`, so a partial result is kept, not lost. On a board that timed out, DRC also lists dangling tracks and
+vias. A 4 s cut-off also showed that a neck-down of 0.075 mm could stay under a board minimum of 0.1 mm, because
+only the class width was tried: such a track now goes up to the minimum unless it would touch other copper.
+
+Benchmark, SOIC-16 grid, seed 1, up to 25 passes, 900 s limit, judged by DRC:
+
+| Parts | Nets | Layers | Seconds | Unconnected | Unrouted per pass |
+|---|---|---|---|---|---|
+| 6x6 | 287 | 2 | 275 | 2 | stalls at 2 from pass 18 on |
+| 6x6 | 287 | 4 | 105 | 0 | 93, 30, 7, 0, 0 |
+| 8x8 | 510 | 4 | 281 | 0 | 199, 69, 22, 3, 1, 0, 0 |
+| 10x10 | 798 | 4 | 915 (limit) | 37 | 309, 112, 37 |
+| 10x10 | 798 | 6 | 752 | 0 | 111, 37, 12, 2, 0, 0 |
+
+DRC found no errors on any of them, so what limits dense boards is time and layers, not bad copper. Almost all
+the time goes to the routing stage, in its first passes. Two more layers help far more than more passes.
+
+No grid router was built: nothing here shows it would do better, and `kat pcb escape` covers planar escape.
+Two limits remain. The cut-out at (27, 7)-(33, 23) on a 60 x 30 mm board still leaves a net unrouted, while the
+larger (28, 5)-(32, 25) routes. The optimizer's slow case is not cured, only avoidable: on the LED matrix with a
+1.5 mm connector keep-out, the optimizer reports 5 unrouted right after a routing stage with none and spends 351 s
+on one pass. That board took 483 s with it and 128 s with `--no-optimize`, with byte-identical sessions, so the pass changed
+nothing. The optimizer stays on by default, as it took under 0.4 s on every benchmark board that finished, and `stages`
+shows when it did not. Freerouting 2.5.0 has not been compared.
