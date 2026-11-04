@@ -23,12 +23,15 @@ from ..sexpr import find, num
 from . import checks, specctra
 from .board import Board
 
-VERSION = "2.4.1"
+VERSION = "2.5.0"
 URL = f"https://github.com/freerouting/freerouting/releases/download/v{VERSION}/freerouting-{VERSION}.jar"
-SHA256 = "251101c3eeac22d7e7dfcf6796603279e5d1000283eb82d8f093780f7afc6aa9"
+SHA256 = "f6f51bb02245e8e717f9359bd260cc9c5c0b1bc0acc8b7cb2cd5b8ffeb5de3c7"
 JAVA_MIN = 25     # the pinned jar's classes are version 69 (test_java_minimum_matches_the_jar)
 # Freerouting sends usage data to api.freerouting.app unless told not to; kat always tells it not to
 NO_ANALYTICS = "--usage_and_diagnostic_data.disable_analytics=true"
+# Its necks can break the board's minimum track (DRC), even where kat then widens what it can. A rare
+# board routes only with them (test_a_tall_cutout_routes_only_with_necks): options can turn them back on.
+NO_NECKDOWN = "--router.automatic_neckdown=false"
 
 
 def jar_path() -> Path:
@@ -69,16 +72,19 @@ def _key(a, b, layer):
     return (layer, min(pa, pb), max(pa, pb))
 
 
-# Settings Freerouting 2.4.1 accepts with no error and no effect, or that kat sets itself
+# Settings that do not do what they say, or that kat sets itself
+_IGNORE_CLASSES = ("Freerouting 2.5.0 still leaves copper on some of those nets, "
+                   "and does nothing given a list: use skip_classes")
 REFUSED_OPTIONS = {
-    "ignore_net_classes": "Freerouting 2.4.1 accepts it and routes those nets anyway: use skip_classes",
-    "automatic_neckdown": "Freerouting 2.4.1 necks down anyway; kat widens what it can afterwards (narrow)",
+    "ignore_net_classes": _IGNORE_CLASSES,
+    "autorouter.ignore_net_classes": _IGNORE_CLASSES,
     "enabled": "kat runs the router in batch mode",
     "max_passes": "use passes",
+    "autorouter.max_passes": "use passes",
     "job_timeout": "use timeout",
 }
 # Options seen to change what the router does, in tests/test_pcb_route.py
-VERIFIED_OPTIONS = {"optimizer.enabled"}
+VERIFIED_OPTIONS = {"optimizer.enabled", "automatic_neckdown"}
 _GRACE = 60         # s after the router's own time limit before it is killed
 
 
@@ -102,13 +108,17 @@ def read_log(log: str) -> dict:
     """What a Freerouting log says: ``stages`` (fanout, routing, optimizer, seconds), ``unrouted``
     after each routing pass, ``timed_out``, and ``failed`` settings it refused [{option, reason}]."""
     stages = {}
+    cut_off = "completed with timeout" in log
     for name, label in (("fanout", "Fanout"), ("routing", "Auto-routing"), ("optimizer", "Optimization")):
         m = re.search(rf"{label} stage completed.*?completed in ([\d.]+) seconds", log)
         if m:
             stages[name] = float(m.group(1))
+        # the limit can pass with no line about it, as when a computer sleeps through it
+        elif f"{label} stage started" in log:
+            cut_off = True
     return {"stages": stages,
             "unrouted": [int(n) for n in re.findall(r"Auto-routing pass #\d+.*?\((\d+) unrouted", log)],
-            "timed_out": "completed with timeout" in log,
+            "timed_out": cut_off,
             "failed": [{"option": a, "reason": b.strip()} for a, b in
                        re.findall(r"Failed to apply CLI router setting: router\.([^:]+): (.*)", log)]}
 
@@ -132,8 +142,9 @@ def route(pcb: Path | str, passes: int = 20, nets: list[str] | None = None, time
     ``skip_classes`` leaves out net classes, whose pads stay obstacles. On a library block's board
     the harness parts are obstacles only (not routed to). ``timeout`` (s) is the router's own limit:
     it stops there and what it has is kept, with ``timed_out`` in the result. ``optimize=False`` skips
-    its optimizer stage. ``options``: other Freerouting settings ({"optimizer.max_passes": 2}); some
-    it ignores or kat sets itself, which are refused. ``settings`` says which it refused and which
+    its optimizer stage. Necks are off unless ``options`` has {"automatic_neckdown": True}.
+    ``options``: other Freerouting settings ({"optimizer.max_passes": 2}); some it ignores or kat sets
+    itself, which are refused. ``settings`` says which it refused and which
     kat has not seen work. DSN, SES and the router log go to ``out`` (default:
     history/<stamp>_route/). Also returns ``stages`` (seconds) and ``unrouted`` per pass."""
     pcb = Path(pcb)
@@ -168,7 +179,9 @@ def route(pcb: Path | str, passes: int = 20, nets: list[str] | None = None, time
     with open(log_file, "w", encoding="utf-8") as logf:
         # streamed: the log grows while it runs, and each pass is echoed on stderr
         proc = subprocess.Popen([exe, "-Djava.awt.headless=true", "-jar", str(jar), "--gui.enabled=false", NO_ANALYTICS,
-                                 "-de", str(dsn.resolve()), "-do", str(ses.resolve()), "-mp", str(passes),
+                                 *([] if any("automatic_neckdown=" in a for a in extra) else [NO_NECKDOWN]),
+                                 "-de", str(dsn.resolve()), "-do", str(ses.resolve()),
+                                 f"--router.autorouter.max_passes={passes}",
                                  f"--router.job_timeout={timeout // 3600:02d}:{timeout % 3600 // 60:02d}:{timeout % 60:02d}",
                                  *extra],
                                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -182,7 +195,9 @@ def route(pcb: Path | str, passes: int = 20, nets: list[str] | None = None, time
                 lines.append(line)
                 logf.write(line)
                 logf.flush()
-                m = re.search(r"(Auto-routing pass #\d+.*?\(\d+ unrouted and \d+ violations\))", line)
+                # the optimizer can take minutes a pass: say so rather than look stuck
+                m = re.search(r"(Auto-routing pass #\d+.*?\(\d+ unrouted and \d+ violations\)"
+                              r"|Optimizer pass #\d+: optimizer score [\d.]+ -> [\d.]+)", line)
                 if m:
                     print(f"route: {m.group(1)}", file=sys.stderr, flush=True)
             proc.wait()

@@ -631,20 +631,42 @@ def test_a_part_past_a_rounded_corner_counts_as_outside(pcb):
     assert "R1" in c["outside_outline"] + c["overhang"], c["outside_outline"]
 
 
+def _parts_either_side_of_a_cutout(b):
+    b.outline(rect=(0, 0, 60, 30))
+    b.move_many({"J1": {"to": (6, 12)}, "Q1": {"to": (12, 22)}, "C1": {"to": (12, 6)},
+                 "R1": {"to": (48, 15)}, "D1": {"to": (53, 8)}, "R2": {"to": (48, 22)}, "D2": {"to": (53, 22)}})
+
+
+def _wall(b, x0, y0, x1, y1):
+    for a, c in (((x0, y0), (x1, y0)), ((x1, y0), (x1, y1)), ((x1, y1), (x0, y1)), ((x0, y1), (x0, y0))):
+        b._insert(_edge("gr_line", start=a, end=c))
+
+
+@needs_router
+def test_a_tall_cutout_routes_only_with_necks(pcb):
+    """A net stays open here with Freerouting's necks off, kat's default, as on 2.4.1 with them on or off.
+    If an upgrade routes it, the default costs nothing and this test can go."""
+    with kat.pcb.edit(pcb) as b:
+        _parts_either_side_of_a_cutout(b)
+        _wall(b, 27, 7, 33, 23)
+    assert kat.pcb.route(pcb, passes=20, timeout=300, optimize=False)["check"]["unconnected"] == 1
+    with kat.pcb.edit(pcb) as b:
+        b.remove_tracks()
+    c = kat.pcb.route(pcb, passes=20, timeout=300, optimize=False, options={"automatic_neckdown": True})["check"]
+    assert c["unconnected"] == 0 and c["drc_errors"] == 0, c
+
+
 @needs_router
 @pytest.mark.parametrize("shape", ["wall", "round"])
 def test_the_router_goes_around_a_cutout(pcb, shape):
     """Parts on both sides of a cut-out. KiCad's DRC judges it, with its default edge clearance:
     the DSN has to keep that even when the board sets none."""
     with kat.pcb.edit(pcb) as b:
-        b.outline(rect=(0, 0, 60, 30))
+        _parts_either_side_of_a_cutout(b)
         if shape == "round":
             b._insert(mechanics._outline_nodes([("circle", (30, 15), 9)], (0, 0))[0])
         else:
-            for a, c in (((28, 5), (32, 5)), ((32, 5), (32, 25)), ((32, 25), (28, 25)), ((28, 25), (28, 5))):
-                b._insert(_edge("gr_line", start=a, end=c))
-        b.move_many({"J1": {"to": (6, 12)}, "Q1": {"to": (12, 22)}, "C1": {"to": (12, 6)},
-                     "R1": {"to": (48, 15)}, "D1": {"to": (53, 8)}, "R2": {"to": (48, 22)}, "D2": {"to": (53, 22)}})
+            _wall(b, 28, 5, 32, 25)
     kat.pcb.route(pcb, passes=20, timeout=300)
     c = kat.pcb.check(pcb)
     assert c["by_type"] == {} and c["unconnected"] == 0, c["by_type"]

@@ -140,7 +140,8 @@ def test_reading_a_router_log():
 
 
 @pytest.mark.parametrize("key, match", [("ignore_net_classes", "skip_classes"), ("router.ignore_net_classes", "skip_classes"),
-                                        ("automatic_neckdown", "narrow"), ("max_passes", "passes"), ("job_timeout", "timeout"),
+                                        ("autorouter.ignore_net_classes", "skip_classes"),
+                                        ("max_passes", "passes"), ("autorouter.max_passes", "passes"), ("job_timeout", "timeout"),
                                         ("enabled", "batch"), ("no spaces", "not a setting")])
 def test_settings_that_cannot_work_are_refused_before_anything_runs(tmp_path, key, match):
     with pytest.raises(kat.KatError, match=match):
@@ -154,16 +155,32 @@ def test_option_words():
 
 
 @needs_routing
-def test_freerouting_still_ignores_its_ignore_net_classes(bench, tmp_path):
+def test_freerouting_still_leaves_copper_on_its_ignored_net_classes(bench, tmp_path):
     """Why kat refuses that setting: if an upgrade makes this fail, it can be offered instead."""
     b = Board(bench)
     dsn, ses = tmp_path / "x.dsn", tmp_path / "x.ses"
     specctra.write_dsn(b, dsn)
     slow = set(re.search(r"\(class SLOW ([^()]*)", dsn.read_text())[1].split())
     subprocess.run([router.java(), "-Djava.awt.headless=true", "-jar", str(router.jar_path()), "--gui.enabled=false",
-                    router.NO_ANALYTICS, "-de", str(dsn), "-do", str(ses), "-mp", "10", "--router.ignore_net_classes=SLOW"],
+                    router.NO_ANALYTICS, "-de", str(dsn), "-do", str(ses), "--router.autorouter.max_passes=10",
+                    "--router.autorouter.ignore_net_classes=SLOW"],
                    capture_output=True, stdin=subprocess.DEVNULL, timeout=120, check=True)
-    assert slow and slow <= {w["net"] for w in specctra.read_ses(ses)["wires"]}
+    assert slow & {w["net"] for w in specctra.read_ses(ses)["wires"]}
+
+
+def test_a_stage_that_never_ends_counts_as_cut_off():
+    """A computer that slept through the limit: the router saves what it has, with no line about a timeout."""
+    r = router.read_log("Fanout stage completed: started with 1 total SMD pins, completed in 26.34 seconds\n"
+                        "Auto-routing stage started on board 'x' with baseline score 23.39 for 770 unrouted items.\n"
+                        "Saving output file 'x.ses' (SES)...\n")
+    assert r["timed_out"] and r["stages"] == {"fanout": 26.34}
+
+
+@needs_routing
+def test_passes_limit_the_router(bench):
+    """The setting kat uses for passes takes effect: the deprecated -mp would be gone in a later release."""
+    r = kat.pcb.route(bench, passes=1, timeout=120, optimize=False)
+    assert len(r["unrouted"]) == 1 and "settings" not in r, r
 
 
 @needs_routing

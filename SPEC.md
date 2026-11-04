@@ -364,7 +364,8 @@ runs `kat pcb check`. No pcbnew involved.
 - Freerouting (Java 25+, GPL-3) is an external program: `kat pcb route --install`
   downloads the pinned release once into kat's cache, checked by SHA-256
   (`KAT_FREEROUTING=/path/to.jar` uses another copy). Freerouting's analytics are on by default;
-  kat turns them off on every run.
+  kat turns them off on every run. kat pins 2.5.0. Where this document names 2.4.1, that is what was
+  seen on that version; kat keeps the workaround, and it has not been rechecked on 2.5.0.
 - Tracks the router narrowed at fine-pitch pads are widened to the net-class width where
   the clearance allows (`widened`; the rest in `narrow`), checked against all the router's
   new copper. A track in `narrow` still under the board's minimum goes up to that minimum unless it
@@ -391,9 +392,11 @@ Loop: structure (§4.9) → route → check and snapshot → adjust structure, k
 classes → `remove_tracks()` (locked copper stays) → route again.
 
 **Router settings.** `--skip-class NAME` leaves a net class out, with its pads as obstacles; kat does
-this itself because Freerouting 2.4.1 accepts `router.ignore_net_classes` in every form and routes those
-nets anyway. `--no-optimize` skips its optimizer stage, and `--timeout S` is the router's own limit:
-it stops there, what it has is kept, and the result says `timed_out`. `--router-option KEY=VALUE` passes
+this itself because Freerouting 2.5.0's `ignore_net_classes` does nothing given a list and still leaves
+copper on some of those nets otherwise. `--no-optimize` skips its optimizer stage, and `--timeout S` is the router's own limit:
+it stops there, what it has is kept, and the result says `timed_out`, also when a computer sleeps through the limit.
+kat turns the router's necks off, as they can break the board's minimum track. A net left open can route with
+`--router-option automatic_neckdown=true`; check the board's DRC afterwards. `--router-option KEY=VALUE` passes
 any other setting, because Freerouting exits 0 whatever it makes of one: kat refuses those known to do
 nothing or that it sets itself, lists what the router refused in `settings.refused_by_router`, and what
 it has not seen work in `settings.unverified`. The result also gives `stages` (seconds of fanout,
@@ -1105,7 +1108,7 @@ column in place of the net.
 | kicad-python 0.8: `kipy.schematic` does not import (`PageSettings` missing); KiCad 10.0.6 answers schematic requests with "no handler" | schematic verification = the editor opens the file (lock file) and keeps running |
 | Quitting the editor through the API (`common.Control.quit`) does nothing; SIGTERM closes it but leaves `~NAME.*.lck` behind | kat terminates only the editor it started and removes the lock files that appeared during the run |
 | KiCad's lock file holds hostname and user, no process id | a lock counts as live when it is from another host or a KiCad process of this user runs; otherwise stale |
-| Freerouting narrows tracks at fine-pitch pads below the net-class width (DRC `track_width`); `--router.automatic_neckdown=false` is not applied | on import kat widens them to the class width where the clearance allows, or else to the board's minimum, and reports the rest (`narrow`) |
+| Freerouting narrows tracks at fine-pitch pads below the net-class width (DRC `track_width`); `--router.automatic_neckdown=false` is not applied on 2.4.1 | kat passes that setting on every run, which kept 2.5.0's test boards free of such errors; 2.5.0 still narrows some tracks, and on import kat widens them to the class width where the clearance allows, or else to the board's minimum, and reports the rest (`narrow`) |
 | A reference without a number (`ROUT`) passes ERC and parity, but KiCad treats it as unannotated: the BOM prints `ROUT?` | `kat ready` error `reference_without_number` |
 | No `rsvg-convert` on Windows; `kicad-cli` not on PATH there | PyMuPDF fallback (`[render]` extra, AGPL-3.0); discover KiCad 10 from HKCU/HKLM installer registration (32/64-bit views, custom folders), then standard folders; explicit `KICAD_CLI` and PATH take precedence |
 | A child process cannot update the calling shell's environment | cache the discovered executable as `KICAD_CLI` inside the kat process and pass it to children; each independent CLI invocation discovers again. README shows how PowerShell can explicitly capture the path for tests/SKiDL |
@@ -1149,7 +1152,7 @@ column in place of the net.
 | Stamping on the other side of a connector's guide holes was refused: its through-hole pads counted as one box spanning all of them | one box per pad or hole, slots included; DRC agrees (`pth_inside_courtyard` looks at the holes) |
 | A part locked in KiCad was still moved by `Board.move` and `stamp`; only `make_room` honoured the flag | `Footprint.lock()` / `unlock()` / `locked`; moves refuse unless `force=True`, `stamp` refuses unless unlocked |
 | `pcb view --layers In9.Cu` on a board without that layer: kicad-cli exits 0 and writes nothing, kat failed with a raw file error | layer names are checked against the board first |
-| Freerouting 2.4.1 can leave a net unrouted around a board cut-out, in passes of 0.02 s with no violation, however many passes it gets. A solid keep-out polygon does so more often than a ring along the same edge, and which shapes fail is hard to predict | a cut-out is a ring in the DSN. A rule area (`keepout`, `keepout_around`) stays a solid polygon. Check `unconnected`, and finish such a net by hand or move a part |
+| Freerouting 2.4.1 can leave a net unrouted around a board cut-out, in passes of 0.02 s with no violation, however many passes it gets. On 2.5.0 the known case routes only with `--router-option automatic_neckdown=true`. A solid keep-out polygon does so more often than a ring along the same edge, and which shapes fail is hard to predict | a cut-out is a ring in the DSN. A rule area (`keepout`, `keepout_around`) stays a solid polygon. Check `unconnected`, and finish such a net by hand or move a part |
 | With no edge clearance set on the board, the DSN had no edge bands, while KiCad's DRC applies its default 0.5 mm: tracks along an edge or a cut-out failed DRC | the DSN uses the same default |
 | Non-rectangular outlines counted as their bounding box, so `pcb check` missed parts past a rounded corner and the router ran through cut-outs; DRC found the rest afterwards | `Board.outline_loops`: largest closed loop is the edge, others are cut-outs |
 | Renaming a block instance in the design removed its sheet box and added a new one: new uuid, so the board's footprint paths broke, and its place and wiring were lost | `kat sync --rename-sheet OLD=NEW` keeps the box; `possible_renames` warns on a sync without it; `kat pcb sync` sees the same uuid under a new name and carries over groups and stamp records |
@@ -1157,8 +1160,8 @@ column in place of the net.
 | ERC and DRC load every library in the table to compare parts with them: 5 to 7 s of CPU per check, even on a two-part sheet, which took the test suite to half an hour | the tests use a private `KICAD_CONFIG_HOME` listing only the libraries they need (`tests/kat_test_support.py`), and run in parallel; `KAT_TEST_ALL_LIBS=1` uses the full tables. kat honours `KICAD_CONFIG_HOME` as KiCad does |
 | A router via between a connector's pins can cut a GND pin's thermal off the plane (`starved_thermal`, 1 island), and any small change to the DSN can move vias there, so a board that routed clean may not any more | judge by `islands` in the board check, and keep vias out of a dense pin field with `keepout(layers, rect=..., tracks=True, vias=False)` |
 | kat's docs and check asked for Java 21, but Freerouting 2.4.1 is compiled for Java 25 (class file version 69) | `JAVA_MIN` is 25; a test compares it with the pinned jar |
-| Freerouting accepts `router.ignore_net_classes` in every form and routes those nets anyway, and exits 0 on a setting it does not know, with only a log line | `route` refuses the first and offers `skip_classes`, which kat applies itself; `settings` reports what the router refused and what kat has not seen work |
-| Freerouting's optimizer normally ends at once on a finished board, but can start from a wrong score ("5 unrouted" after a routing stage with none) and spend 6 minutes on one pass | `stages` shows it; `--no-optimize` skips it |
+| Freerouting 2.4.1 accepts `router.ignore_net_classes` in every form and routes those nets anyway (2.5.0 only partly honours it), and exits 0 on a setting it does not know, with only a log line | `route` refuses the first and offers `skip_classes`, which kat applies itself; `settings` reports what the router refused and what kat has not seen work |
+| Freerouting 2.5.0's optimizer does real work and can spend minutes on a finished board (350 s of 862 s on a board of 798 nets). 2.4.1's could spend 6 minutes on a pass that changed nothing | `stages` shows it, each pass is echoed on stderr, and `--no-optimize` skips it |
 | Freerouting sends analytics to `api.freerouting.app` by default | `route` always passes `usage_and_diagnostic_data.disable_analytics=true`; a test with no network checks that the router then tries to send nothing |
 | `route --timeout` killed the router and lost all its work | the limit is now the router's own (`job_timeout`): it stops, what it has is kept, and `timed_out` says so |
 | Pins that could be swapped were routed in the order the design happened to give, with crossings and vias a different assignment does not need | `kat pcb escape` chooses assignment and tracks together, then `kat back-annotate` carries the assignment through the design |

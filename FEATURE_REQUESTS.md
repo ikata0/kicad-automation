@@ -261,29 +261,30 @@ DRC found no errors on any of them, so what limits dense boards is time and laye
 the time goes to the routing stage, in its first passes. Two more layers help far more than more passes.
 
 No grid router was built: nothing here shows it would do better, and `kat pcb escape` covers planar escape.
-Two limits remain. The cut-out at (27, 7)-(33, 23) on a 60 x 30 mm board still leaves a net unrouted, while the
+On 2.4.1 two limits remain. The cut-out at (27, 7)-(33, 23) on a 60 x 30 mm board leaves a net unrouted, while the
 larger (28, 5)-(32, 25) routes. The optimizer's slow case is not cured, only avoidable: on the LED matrix with a
 1.5 mm connector keep-out, the optimizer reports 5 unrouted right after a routing stage with none and spends 351 s
 on one pass. That board took 483 s with it and 128 s with `--no-optimize`, with byte-identical sessions, so the pass changed
 nothing. The optimizer stays on by default, as it took under 0.4 s on every benchmark board that finished, and `stages`
 shows when it did not.
 
-Freerouting 2.5.0 compared, kat still pinned to 2.4.1. Same benchmark, seconds and unconnected nets, DRC errors in brackets
+kat now pins Freerouting 2.5.0 and passes `router.automatic_neckdown=false` on every run, on this comparison. Same benchmark, seconds and unconnected nets, DRC errors in brackets
 where there are any; "no neck" is `router.automatic_neckdown=false`, which works on 2.5.0 and not on 2.4.1:
 
 | Board | 2.4.1 | 2.5.0 | 2.5.0, no neck |
 |---|---|---|---|
-| 287 nets, 2 layers | 275 s, 2 | 348 s, 0 | not run |
+| 287 nets, 2 layers | 275 s, 2 | 348 s, 0 | 363 s, 0 |
 | 287 nets, 4 layers | 105 s, 0 | 94 s, 0 | 98 s, 0 |
 | 510 nets, 4 layers | 281 s, 0 | 172 s, 0 (2 clearance) | 226 s, 0 |
 | 798 nets, 4 layers | 915 s (limit), 37 | 463 s, 0 (2 clearance) | 471 s, 0 |
-| 798 nets, 6 layers | 752 s, 0 | 862 s, 0 | not run |
+| 798 nets, 6 layers | 752 s, 0 | 862 s, 0 | 573 s, 0 |
 
-Also on 2.5.0: the cut-out at (27, 7)-(33, 23) routes, and the board of the optimizer's slow case takes 143 s, not 483 s.
+Also on 2.5.0: the board of the optimizer's slow case takes 143 s, not 483 s. The cut-out at (27, 7)-(33, 23) routes only
+with necks on, so kat's default leaves that net open, as 2.4.1 did: `--router-option automatic_neckdown=true` routes it, with DRC clean.
 Its optimizer does real work now, which costs time: 350 s of the 862 s above, and 178 s of 307 s on the LED matrix. Its
 narrow tracks broke the board minimum on the LED matrix (24 errors) and in one more test; with no neck, the LED matrix has none.
 `ignore_net_classes` works there only as plain `SLOW`, still leaves copper on some of the class's nets, and does nothing as `["SLOW"]`.
-`-mp` still works but is deprecated. One seed only, and the full suite has not been run with no neck.
+kat moved off the deprecated `-mp`. One seed only.
 
 Both versions send analytics by default; kat turns them off on every run. A laptop that sleeps during a run
-ended it at the 900 s limit on waking, on 2.5.0 with no log line, so kat did not report `timed_out`; DRC still showed the open nets.
+ended it on waking, on 2.5.0 with no log line about it; kat now reports `timed_out` for a stage that never finished.
