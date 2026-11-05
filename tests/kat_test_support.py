@@ -106,7 +106,7 @@ def routing(strict: bool) -> Capability:
         if override:
             raise SetupError(f"KAT_FREEROUTING points to a missing jar: {jar}")
         return Capability(False, "Freerouting not installed; run `kat pcb route --install`"
-                          + ("; Java 21+ also missing" if not java else ""))
+                          + ("; Java 25+ also missing" if not java else ""))
     try:
         with zipfile.ZipFile(jar) as archive:
             manifest = archive.read("META-INF/MANIFEST.MF")
@@ -124,7 +124,7 @@ def routing(strict: bool) -> Capability:
     except (OSError, UnicodeError, zipfile.BadZipFile, KeyError) as e:
         raise SetupError(f"cannot read Freerouting jar {jar}: {e}") from e
     if not java:
-        return Capability(False, "Java 21+ not on PATH")
+        return Capability(False, "Java 25+ not on PATH")
     return Capability(True, f"Java {match[1]}; {jar}")
 
 
@@ -182,6 +182,31 @@ def discover(strict: bool = False, gui: bool = False) -> dict[str, Capability]:
     else:
         capabilities["gui"] = Capability(False, "GUI tests are opt-in (-m kicad_gui)")
     return capabilities
+
+
+# The stock libraries the tests use. ERC and DRC compare parts with their libraries and load every
+# library in the table first: all 223 symbol libraries take 3 s of CPU per check on a two-part sheet,
+# and these take almost none. A test needing another one fails with "unknown ... library": add it here.
+SYMBOL_LIBS = ("Amplifier_Operational", "Analog_Switch", "Connector", "Connector_Generic", "Device", "LED",
+               "Transistor_BJT", "power")
+FOOTPRINT_LIBS = ("Capacitor_SMD", "Connector_Coaxial", "Connector_IDC", "Connector_PinHeader_2.54mm", "Fiducial",
+                  "LED_SMD", "MountingHole", "Package_DFN_QFN", "Package_SO", "Package_TO_SOT_SMD", "Resistor_SMD")
+
+
+def small_library_tables(root: Path) -> Path:
+    """A private KiCad configuration under ``root`` whose library tables hold only what the tests
+    use, for ``KICAD_CONFIG_HOME``. Returns the folder to set it to."""
+    config = root / "config"
+    folder = config / env.KICAD_MAJOR
+    folder.mkdir(parents=True)
+    tables = (("symbols", "sym-lib-table", "sym_lib_table", SYMBOL_LIBS, "{}.kicad_sym"),
+              ("footprints", "fp-lib-table", "fp_lib_table", FOOTPRINT_LIBS, "{}.pretty"))
+    for kind, file, head, names, pattern in tables:
+        stock = env.stock_dir(kind)
+        rows = [f'  (lib (name "{n}") (type "KiCad") (uri "{(stock / pattern.format(n)).as_posix()}") (options "") (descr ""))'
+                for n in names if stock is not None and (stock / pattern.format(n)).exists()]
+        (folder / file).write_text("\n".join([f"({head}", "  (version 7)", *rows, ")"]) + "\n", encoding="utf-8")
+    return config
 
 
 def missing(capabilities: dict[str, Capability], names=REQUIRED) -> list[str]:

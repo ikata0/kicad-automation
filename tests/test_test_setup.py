@@ -150,7 +150,7 @@ def route_installation(tmp_path, monkeypatch):
     monkeypatch.delenv("KAT_FREEROUTING", raising=False)
     monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
     monkeypatch.setattr(support.shutil, "which", lambda name: "java")
-    monkeypatch.setattr(support, "probe", lambda argv: 'openjdk version "21.0.8"')
+    monkeypatch.setattr(support, "probe", lambda argv: 'openjdk version "25.0.1"')
     return tmp_path / "kat" / f"freerouting-{support.router.VERSION}.jar"
 
 
@@ -187,7 +187,7 @@ def test_router_version_checksum_and_java(route_installation, monkeypatch):
 @pytest.mark.parametrize("version", ['version "17.0.1"', "unparseable"])
 def test_wrong_java_version_fails(route_installation, monkeypatch, version):
     monkeypatch.setattr(support, "probe", lambda argv: version)
-    with pytest.raises(support.SetupError, match="Java 21"):
+    with pytest.raises(support.SetupError, match="Java 25"):
         support.routing(False)
 
 
@@ -350,7 +350,7 @@ def test_repository_runs_independent_tests_without_optional_dependencies():
         "support.discover = lambda *args: {name: support.Capability(False, 'not installed') "
         "for name in (*support.REQUIRED, 'pymupdf', 'gui')}\n"
         "import pytest\n"
-        "raise SystemExit(pytest.main(['tests', '-q', "
+        "raise SystemExit(pytest.main(['tests', '-q', '-o', 'addopts=', "
         "'--ignore=tests/test_test_setup.py']))\n"
     )
     result = subprocess.run([sys.executable, "-c", script], cwd=root,

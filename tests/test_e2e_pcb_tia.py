@@ -5,7 +5,7 @@ layout (v4: R1 in 0805, extra capacitor C4) back through the same gates.
 Driven like an agent: kat commands, passes through `kat batch-exec` (tests/e2e/tia_passes/),
 comments - so tia/tia_REPORT.md is a complete design journal, checked at the end.
 
-Needs kicad-cli, SKiDL, Java 21+ and Freerouting (`kat pcb route --install`).
+Needs kicad-cli, SKiDL, Java 25+ and Freerouting (`kat pcb route --install`).
 Set KAT_E2E_OUT=/some/dir to keep the project, snapshots, report and fabrication files.
 With -m kicad_gui the finished board and schematic are also opened in KiCad (--verify).
 """

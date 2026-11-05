@@ -1,10 +1,14 @@
 from collections import Counter
+import os
+from pathlib import Path
+import shutil
+import tempfile
 import warnings
 
 import pytest
 
 from kat_test_support import (
-    Capability, SetupError, configure_windows_temp, discover, gui_capability, missing,
+    Capability, SetupError, configure_windows_temp, discover, gui_capability, missing, small_library_tables,
 )
 
 pytest_plugins = ["pytester"]
@@ -24,10 +28,23 @@ def pytest_configure(config):
     except SetupError as e:
         raise pytest.UsageError(f"test dependency setup failed: {e}") from e
     config.stash[DEPENDENCIES] = capabilities
+    # KAT_TEST_ALL_LIBS=1 runs with the user's own tables; the GUI tests open real editors
+    if (capabilities["kicad"].available and not os.environ.get("KAT_TEST_ALL_LIBS")
+            and "kicad_gui" not in (config.option.markexpr or "")):
+        root = Path(tempfile.mkdtemp(prefix="kat-test-config-"))
+        os.environ["KICAD_CONFIG_HOME"] = str(small_library_tables(root))
+        config.add_cleanup(lambda: shutil.rmtree(root, ignore_errors=True))
     unavailable = missing(capabilities)
     if unavailable and config.getoption("--strict-deps"):
         message = "Unavailable test dependencies:\n  " + "\n  ".join(unavailable)
         raise pytest.UsageError(message)
+
+
+@pytest.hookimpl(optionalhook=True)
+def pytest_xdist_auto_num_workers(config):
+    """Half the hardware threads: on 8 cores with 16 threads, 8 workers took as long as 16 (6:45 and
+    6:48) for about 20 % less CPU."""
+    return max(1, (os.cpu_count() or 2) // 2)
 
 
 def pytest_report_header(config):

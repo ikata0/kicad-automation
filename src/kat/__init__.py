@@ -22,7 +22,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from . import blocks, checks, gate, hierarchy, library, netlist, pcb, report, skidl_blocks, syncer
+from . import blocks, checks, gate, hierarchy, libmake, library, mapping, netlist, pcb, report, skidl_blocks, syncer
 from .env import KatError, tidy
 from .bootstrap import init
 from .history import restore as _restore
@@ -33,7 +33,7 @@ from .sheet import Sheet
 from .views import view as _view
 
 __all__ = ["KatError", "Sheet", "batch_exec", "blocks", "check", "comment", "edit", "hierarchy", "lib_search", "lib_show",
-           "init", "load", "nets", "new", "open_kicad", "pcb", "ready", "restore", "skidl_blocks", "snapshot", "stamp", "sync",
+           "init", "libmake", "load", "mapping", "nets", "new", "open_kicad", "pcb", "ready", "restore", "skidl_blocks", "snapshot", "stamp", "sync",
            "view"]
 
 
@@ -55,16 +55,22 @@ def edit(path: Path | str, dry_run: bool = False) -> Iterator[Sheet]:
 
 
 def sync(sch: Path | str, design: Path | str, dry_run: bool = False,
-         sheets: list[str] | None = None) -> dict:
+         sheets: list[str] | None = None, rename_sheets: dict[str, str] | None = None) -> dict:
     """Bring a design netlist (e.g. from SKiDL) into the schematic, keeping the arrangement.
     ``sheets``: SKiDL block types (function names) drawn as hierarchical sheets from the
     block library; remembered for later syncs. Without it the sheet is flat. The design's
-    path is remembered too (``<sheet>.kat.json``): ``kat pcb sync`` compares with it."""
+    path is remembered too (``<sheet>.kat.json``): ``kat pcb sync`` compares with it.
+    ``rename_sheets``: {old instance: new instance}, for a design whose instance was renamed:
+    that box keeps its uuid, place and wiring, instead of being removed and added anew;
+    ``possible_renames`` in the result names boxes that look like one. ``kat pcb sync`` then
+    sees the same uuid under a new name and carries over stamped groups and records."""
     from . import syncer_hier
     report.touch(sch)
     sch = Path(sch)
     if sheets or syncer_hier.remembered_sheets(sch):
-        out = syncer_hier.run(sch, Path(design), sheets, dry_run)
+        out = syncer_hier.run(sch, Path(design), sheets, dry_run, rename_sheets=rename_sheets)
+    elif rename_sheets:
+        raise KatError("rename_sheets is for hierarchical sheets; this sheet is flat")
     else:
         out = syncer.run(sch, Path(design), dry_run)
     if not dry_run:       # the board sync's gate compares with it (kat pcb sync)
@@ -156,12 +162,15 @@ def stamp(sch: Path | str, block: str, instances: str | list[str],
                                                               "overlaps": len(c["overlaps"])}})
 
 
-def check(sch: Path | str, expect: Path | str | None = None, full: bool = False) -> dict:
+def check(sch: Path | str, expect: Path | str | None = None, full: bool = False,
+          mapping: Path | str | None = None, complete: bool | list[str] = True) -> dict:
     """ERC, netlist comparison with ``expect`` and drawing findings (``ok`` / ``clean``).
     Lists of the comparison are cut to 10 entries with totals in ``counts``; ``full``
-    lists them all."""
+    lists them all. ``mapping``: a pin table the sheet must also agree with, and ``complete``
+    what it must cover (``kat.mapping.check``), reported in ``mapping``."""
     report.touch(sch)
-    return tidy(checks.run(Path(sch), Path(expect) if expect else None, full))
+    return tidy(checks.run(Path(sch), Path(expect) if expect else None, full,
+                           Path(mapping) if mapping else None, complete))
 
 
 def ready(sch: Path | str, expect: Path | str | None = None,

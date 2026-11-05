@@ -18,8 +18,8 @@ from . import checks, syncer, views
 from .board import Board, Footprint, Pad
 
 __all__ = ["Board", "Footprint", "Pad", "block_environment", "block_port", "remove", "check", "clearance", "coupling_2d", "coupling_rule",
-           "drc", "edit", "fab", "instances", "layer_roles", "layer_rule", "load", "net_rules", "plane_rule",
-           "pad_geometry", "ready", "refill", "route", "snapshot", "stack", "stamp", "stamp_preview", "sync", "view"]
+           "drc", "edit", "escape", "fab", "import_mechanics", "instances", "layer_roles", "layer_rule", "load", "mate", "net_rules", "odb_pinout", "plane_rule",
+           "pad_geometry", "port_access", "ready", "refill", "route", "snapshot", "stack", "stamp", "stamp_preview", "sync", "view"]
 
 
 def load(path: Path | str) -> Board:
@@ -57,10 +57,12 @@ def drc(pcb: Path | str, parity: bool = True, refill: bool = False) -> dict:
     return tidy(checks.drc(Path(pcb), parity, refill))
 
 
-def check(pcb: Path | str) -> dict:
-    """DRC (zones refilled in memory, parity) plus kat's findings; ``ok`` / ``clean``."""
+def check(pcb: Path | str, mapping: Path | str | None = None, complete: bool | list[str] = True) -> dict:
+    """DRC (zones refilled in memory, parity) plus kat's findings; ``ok`` / ``clean``.
+    ``mapping``: a pin table the pads must also agree with, and ``complete`` what it must cover
+    (``kat.mapping.check``), reported in ``mapping``."""
     report.touch(pcb)
-    return tidy(checks.run(Path(pcb)))
+    return tidy(checks.run(Path(pcb), Path(mapping) if mapping else None, complete))
 
 
 def snapshot(pcb: Path | str, slug: str = "", note: str | None = None, out: Path | str | None = None,
@@ -96,15 +98,20 @@ def refill(pcb: Path | str) -> dict:
 
 
 def route(pcb: Path | str, passes: int = 20, nets: list[str] | None = None, timeout: int = 1800,
-          out: Path | str | None = None, install: bool = False) -> dict:
+          out: Path | str | None = None, install: bool = False, skip_classes: list[str] | None = None,
+          optimize: bool = True, options: dict | None = None) -> dict:
     """Autoroute with Freerouting (headless) through kat's Specctra DSN/SES; locked copper
-    stays, ``nets`` limits what is routed. Ends with KiCad's DRC (``check``): trust that,
-    not the router's own count. ``install`` downloads Freerouting first if missing."""
+    stays, ``nets`` limits what is routed and ``skip_classes`` leaves net classes out. Ends with
+    KiCad's DRC (``check``): trust that, not the router's own count. ``timeout`` (s): the router
+    stops there and keeps what it has (``timed_out``). ``optimize=False`` skips its optimizer.
+    ``options``: other Freerouting settings; ``settings`` reports the ones it refused or kat has not
+    seen work. Returns also ``stages`` (seconds) and ``unrouted`` per pass. ``install`` downloads
+    Freerouting first if missing."""
     report.touch(pcb)
     from . import router as _route
     if install:
         _route.install()
-    return tidy(_route.route(Path(pcb), passes, nets, timeout, out))
+    return tidy(_route.route(Path(pcb), passes, nets, timeout, out, skip_classes, optimize, options))
 
 
 def stamp(pcb: Path | str, block_pcb: Path | str, instances: str | list[str],
@@ -187,6 +194,150 @@ def pad_geometry(pcb: Path | str, refs: list[str] | None = None) -> dict:
                 raise KatError(f"{ref} has no pad {number!r}")
             pads += got
     return tidy({"board": str(pcb), "pads": [p.geometry() for p in pads]})
+
+
+def odb_pinout(job: Path | str, step: str | None = None, refs: list[str] | None = None,
+               out: Path | str | None = None) -> dict:
+    """Pin-to-net mapping of a legacy board, from an ODB++ job (a directory or archive, never
+    unpacked; ``odb.pinout``): per component part, package, side, x, y (mm, y down) and pins, and
+    the nets. ``step``: which one, if several have EDA data; ``refs``: only these components.
+    ``out``: also write it as a ``ref,pin,net`` table (.csv), which ``kat.mapping.check`` and
+    ``kat.skidl_blocks.pin_map`` read, or as JSON (.json); adds ``out`` to the result."""
+    from . import odb
+    from ..mapping import write
+    res = odb.pinout(job, step, refs)
+    if out is not None:
+        out = Path(out)
+        if out.suffix.lower() == ".json":
+            import json
+            out.parent.mkdir(parents=True, exist_ok=True)
+            out.write_text(json.dumps(res, indent=1) + "\n", encoding="utf-8")
+        else:
+            write(out, {f"{r}.{pin}": net for r, c in res["components"].items() for pin, net in c["pins"].items()})
+        res["out"] = str(out)
+    return res
+
+
+def import_mechanics(pcb: Path | str, odb: Path | str | None = None, gerber: Path | str | None = None,
+                     drills: list[Path | str] | None = None, step: str | None = None,
+                     at: tuple[float, float] | None = None, offset: tuple[float, float] | None = None,
+                     vias: bool = False, min_drill: float = 0.0, annular: float = 0.25,
+                     assume: str | None = None, tolerance: float = 0.01, dry_run: bool = False) -> dict:
+    """Board edge, cut-outs and holes from fabrication data: an ODB++ job ``odb`` (``step`` if
+    several), an outline ``gerber`` and Excellon ``drills`` (G85 and M15 slots). The outline
+    replaces Edge.Cuts and the holes replace those of an earlier import, as board-only footprints
+    MH1, ...; the board is created if missing. Coordinates stay as the files give them (y down);
+    ``at`` puts the outline's top-left corner there, or ``offset`` shifts all (mm). Holes marked as
+    vias or smaller than ``min_drill`` (mm) are left out unless ``vias``; a hole on an existing pad
+    is left out. ``annular``: ring of a plated hole (mm). ``assume``: "plated" or "non_plated" for
+    holes whose file does not say (default non_plated, with a warning). ``tolerance``: mm between
+    stroke ends that still join. ``dry_run``: report, save nothing. Returns board, loops, cutouts,
+    outline, offset, holes {plated, non_plated, slots, skipped}, open (chains that did not close),
+    widths, warnings and the board check."""
+    from . import mechanics
+    report.touch(pcb)
+    if not (odb or gerber or drills):
+        raise KatError("name an ODB++ job, an outline Gerber or drill files")
+    if odb and (gerber or drills):
+        raise KatError("an ODB++ job has outline and holes: give it alone")
+    loops, holes, opened, widths, warnings = [], [], [], [], []
+    if odb:
+        got = mechanics.read_odb(odb, step)
+        loops, holes, warnings = got["loops"], got["holes"], got["warnings"]
+    if gerber:
+        got = mechanics.read_gerber(gerber, tolerance)
+        loops, opened, widths = got["loops"], got["open"], got["widths"]
+        warnings += got["warnings"]
+        if not loops:
+            raise KatError(f"{Path(gerber).name} has no closed outline: {len(opened)} open chains "
+                           "(tolerance= joins ends further apart)")
+    for d in drills or []:
+        got = mechanics.read_excellon(d)
+        holes += got["holes"]
+        warnings += got["warnings"]
+    if Path(pcb).exists():
+        b = Board(pcb)
+    elif dry_run:
+        raise KatError(f"{pcb} does not exist: a dry run has no board to report on")
+    else:
+        Path(pcb).parent.mkdir(parents=True, exist_ok=True)
+        b = Board.create(pcb)
+    res = mechanics.apply(b, loops, holes, at, offset, vias, min_drill, annular, assume)
+    res["warnings"] = warnings + res["warnings"]
+    res["open"] = [{"from": list(c[0][1]), "to": list(c[-1][-1]), "segments": len(c)} for c in opened]
+    if res["open"]:
+        res["warnings"].append(f"{len(opened)} open chains left out")
+    if widths:
+        res["widths"] = widths
+    if not dry_run:
+        b.save()
+    out = {"board": str(pcb), "dry_run": dry_run, **res}
+    if not dry_run:
+        c = checks.run(Path(pcb))
+        out["check"] = {k: c[k] for k in ("ok", "drc_errors", "unconnected", "parity", "by_type")}
+    return tidy(out)
+
+
+def mate(a: Path | str, b: Path | str, pairs: list[tuple[str, str]], at: tuple[float, float] = (0.0, 0.0),
+         rot: float = 0.0, flip: bool = False, nets: dict[str, str] | None = None, holes="auto",
+         above: bool = True, tolerance: float = 0.05, hole_tolerance: float = 0.1) -> dict:
+    """Check two boards as they mate, in board A's frame. Board B is mirrored about its y axis if
+    ``flip`` (its top then faces A), turned by ``rot`` degrees and moved by ``at`` (mm). ``pairs``:
+    mating connectors [(ref on A, ref on B), ...]; ``above``: B lies over A's top side, else under
+    its bottom, which sets the side each connector must be on.
+
+    Pads and guide holes of a pair mate by position within ``tolerance`` and ``hole_tolerance``
+    (mm), not by pin number. Nets of mated pins must have the same name, or the name in ``nets``
+    ({net on A: net on B}); generated names only count for ``shorts``. ``holes``: "auto" compares
+    hole-only footprints, each of which needs a partner if it lies inside the other board's
+    outline; a list of (ref on A, ref on B) names them; None skips them.
+
+    Returns ok, pairs (pins with nets and offsets), holes, misaligned, wrong_side, net_mismatch,
+    shorts (nets joined through the connectors), holes_unmatched, open (a pin connected on one board
+    only, which does not fail ok) and counts."""
+    from .mating import mate as _mate
+    return _mate(a, b, pairs, at, rot, flip, nets, holes, above, tolerance, hole_tolerance)
+
+
+def escape(pcb: Path | str, spec: dict | Path | str, apply: bool = False, out: Path | str | None = None) -> dict:
+    """Route a group of permutable pins and choose their assignment with the tracks: a min-cost flow
+    on a grid gives the most vertex-disjoint paths possible at the least total length. On one layer
+    they cannot cross, so a planar escape needs no vias, which Freerouting cannot offer because it
+    takes nets as given. ``spec``, a dictionary or JSON file: ``sources`` and ``targets`` (pads ``J1.3``
+    or ``J1.*``), ``layers`` (default F.Cu), ``vias`` (default false, true needs exactly two layers),
+    ``track``, ``clearance``, ``via``, ``via_drill`` (mm, default the board's Default class), ``grid``
+    (mm, default the tightest legal), ``region`` [x0, y0, x1, y1] or ``margin`` (mm around the pins).
+    ``pairs``, fixed pairs, are reported in ``not_handled``: they are for ``route``.
+
+    Returns assignment {source: target's net}, routes, unrouted_sources, unrouted_targets, max_paths,
+    total_length (mm) and via_count. It changes nothing unless ``apply``, which adds the tracks and
+    checks the board. That needs the pads to have the nets already, because connectivity belongs to the
+    design: run ``kat.mapping.back_annotate`` with ``assignment`` first. ``out``: also write the
+    result as JSON. Tracks follow the grid at right angles; KiCad's DRC judges them."""
+    from . import flowroute
+    return flowroute.escape(pcb, spec, apply, out)
+
+
+def port_access(spec: dict | Path | str) -> dict:
+    """Can the ports of candidate cells reach a source, before detailed routing? A coarse maze on a
+    grid per layer: fitting by area cannot see a port walled in by its neighbours. ``spec`` is a
+    dictionary or a JSON file with: ``board`` (a .kicad_pcb, giving edge, cut-outs, keep-outs and
+    parts; ``parts`` false leaves parts out) or ``outline`` ([x0, y0, x1, y1] mm, with ``board_layers``
+    and ``edge_clearance``); ``layers`` routing may use; ``cells`` [{name, outline [x0, y0, x1, y1] or
+    polygon, blocked_layers (default all), ports [{name, at [x, y] or x and y, layers}]}], or for a
+    library block {block, at, rot, side, instance, anchor}, placed as ``stamp`` would with its port
+    points; ``keepouts`` [{name, box or polygon, layers}]; ``source`` {box, layers}. Options: ``grid``
+    (0.5 mm), ``track`` and ``clearance`` (0.2 mm), ``via`` (0.6 mm), ``vias`` (true), ``escape`` (how
+    far a port may be from free space, mm), ``path`` (true: corner points of each route).
+
+    Returns ok, ports [{cell, port, status reachable with length (mm) and vias, blocked with
+    walled_by, or sealed with why}], counts, overlaps (cells sharing a layer), outside (cells past
+    the edge) and warnings. Each port is judged alone: all of them may still not fit through one
+    gap, so routing and DRC stay the judges."""
+    from . import floorplan
+    if not isinstance(spec, dict):
+        spec = {**floorplan._read(spec), "_base": str(Path(spec).resolve().parent)}
+    return floorplan.access(spec)
 
 
 def instances(pcb: Path | str, block_pcb: Path | str) -> dict:

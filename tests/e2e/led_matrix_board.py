@@ -31,7 +31,13 @@ def place(b: kat.pcb.Board) -> None:
 
 
 def structure(b: kat.pcb.Board) -> None:
-    """structure 1: every cathode reaches the plane; R-LED links laid and locked."""
+    """structure 1: no router vias between the connector pins, where one can cut a GND pin's
+    thermal off the plane; every cathode reaches the plane; R-LED links laid and locked."""
+    for ref in ("J1", "J2"):
+        pads = b.footprint(ref).pads()
+        x0, x1 = min(p.x for p in pads) - 1.0, max(p.x for p in pads) + 1.0
+        y0, y1 = min(p.y for p in pads) - 1.0, max(p.y for p in pads) + 1.0
+        b.keepout(b.copper_layers(), rect=(x0, y0, x1 - x0, y1 - y0), tracks=True, vias=False, name=f"no vias {ref}")
     res = b.fanout([f"D{n}" for n in range(1, 101)], nets=["GND"])
     assert not res["failed"], res["failed"]
     for n in range(1, 101):

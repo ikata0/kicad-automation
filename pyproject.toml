@@ -14,7 +14,7 @@ dependencies = ["pillow>=10"]
 [project.optional-dependencies]
 # SVG rasteriser for systems without rsvg-convert (e.g. Windows). AGPL-3.0 licensed.
 render = ["pymupdf>=1.24"]
-dev = ["pytest>=8", "skidl>=2.3"]
+dev = ["pytest>=8", "pytest-xdist>=3", "skidl>=2.3"]
 # `kat open --verify` for boards: talks to the running editor through KiCad's IPC API. MIT.
 gui = ["kicad-python>=0.8"]
 # `kat pcb netrule coupling --estimate 2d`: the cross-section Laplace solver. BSD.
@@ -31,5 +31,6 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-n auto"       # in parallel; -n0 to run in one process, e.g. with -s or --pdb
 markers = ["slow: large end-to-end designs (LED matrix); deselect with -m 'not slow'",
            "kicad_gui: opens KiCad's editors (needs a display and kicad-python); only with -m kicad_gui"]

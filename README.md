@@ -121,8 +121,8 @@ behavior; kat does not change their defaults.
 The `render` extra supplies PyMuPDF for PNG snapshots on
 Windows, where `rsvg-convert` is usually unavailable. The `field` extra (numpy, scipy)
 enables the 2D coupling estimate (`kat pcb netrule PCB coupling A B --estimate 2d`). To run the optional autorouting
-tests, install Java 21+ (for example,
-`winget install --id EclipseAdoptium.Temurin.21.JDK --exact --source winget`),
+tests, install Java 25+ (for example,
+`winget install --id EclipseAdoptium.Temurin.25.JDK --exact --source winget`),
 open a new terminal, then run `.\.venv\Scripts\kat.exe pcb route --install`.
 
 The editable installation above is ready to use; activation is optional because
@@ -166,7 +166,7 @@ be installed alongside kat. After the dependencies in `pyproject.toml` change, r
 Requirements: KiCad 10 (auto-discovered on Windows/macOS, or `kicad-cli` on PATH,
 or `KICAD_CLI` pointing to the executable), Python ≥ 3.10.
 PNG snapshots use `rsvg-convert` if present, otherwise PyMuPDF (`[render]` extra; AGPL-3.0).
-Autorouting needs Java 21+ and Freerouting: `kat pcb route --install` downloads the pinned
+Autorouting needs Java 25+ and Freerouting: `kat pcb route --install` downloads the pinned
 release (GPL-3, run as a separate program) once into kat's cache; routing tests are skipped
 without it. `kat open --verify` for boards needs kicad-python (`[gui]` extra, MIT) and a
 display; its tests run only with `pytest -m kicad_gui` (they open KiCad windows).
@@ -203,13 +203,14 @@ that extra even when rsvg-convert is available.
 For a shorter run, a single test, or strict CI coverage:
 
 ```powershell
+.\.venv\Scripts\python.exe -m pytest -n0 tests\test_env.py     # one process, e.g. with -s or --pdb
 .\.venv\Scripts\python.exe -m pytest -m 'not slow'
 .\.venv\Scripts\python.exe -m pytest tests\test_env.py
 .\.venv\Scripts\python.exe -m pytest --strict-deps
 ```
 
 `--strict-deps` fails at startup unless KiCad 10 and its symbol/footprint
-libraries, SKiDL, a rendering backend, Java 21+ and the pinned Freerouting jar
+libraries, SKiDL, a rendering backend, Java 25+ and the pinned Freerouting jar
 are available. Install routing prerequisites explicitly as described above;
 strict mode verifies the pinned jar's checksum, including any
 `KAT_FREEROUTING` override. Ordinary mode permits a custom valid jar.

@@ -63,12 +63,12 @@ def test_led_matrix(root, test_dependencies):
     assert len(report["added"]) == 202 and report["check"]["ok"]
     kat.snapshot(sch, slug="import", expect=net)
 
-    t0 = time.time()
+    t0 = time.monotonic()
     with kat.edit(sch) as s:
         arrange.pass1(s)
     with kat.edit(sch) as s:
         arrange.pass2(s)
-    elapsed = time.time() - t0
+    elapsed = time.monotonic() - t0
     assert elapsed < 60, f"arrangement took {elapsed:.0f} s"
     with kat.edit(sch) as s:
         s.title(title="LED matrix 10x10", rev="A", date="2026-09-25",
@@ -114,7 +114,8 @@ def test_led_matrix(root, test_dependencies):
         assert res["ok"], res["error"]
     kat.pcb.snapshot(pcb, slug="structure", note="4 layers, In1 GND plane, cathode vias", three_d=False)
     t0 = time.time()
-    routed = kat.pcb.route(pcb, passes=25, timeout=1500)
+    # the optimizer took 3 of this test's 7 minutes; the smaller routing tests still run it
+    routed = kat.pcb.route(pcb, passes=25, timeout=1500, optimize=False)
     c = routed["check"]
     assert c["unconnected"] == 0 and c["drc_errors"] == 0 and c["islands"] == 0, routed
     with kat.pcb.edit(pcb) as b:

@@ -179,6 +179,11 @@ class BoardSync:
                 f = self._replace(board, f, p)
                 matched[ref] = f
             self._update(f, p, pin_net)
+        names = self._renamed_sheets(board)
+        if names:
+            self.report["renamed_instances"] = [{"from": k, "to": v} for k, v in sorted(names.items())]
+            self.report["renamed_instances_items"] = board.rename_instances(names)
+            self.changed = True
         new = [parts[r] for r in sorted(parts, key=natural_key) if r not in matched]
         self._place_new(board, new, pin_net)
         self._copper(board, before, rip_stale)
@@ -192,6 +197,29 @@ class BoardSync:
                                "drc_errors": d["errors"], "drc_warnings": d["warnings"],
                                "parity_items": [v["description"] for v in d["parity"][:20]]}
         return report
+
+    def _renamed_sheets(self, board: Board) -> dict[str, str]:
+        """Stamped instances whose sheet is the same but has a new name: the group is named after
+        an instance the schematic no longer has, and its parts' paths give that sheet's uuids."""
+        from .. import hierarchy
+        tree = hierarchy.tree(self.sch)
+        names = {i["path"] for i in tree}
+        by_uuid = {i["uuids"]: i["path"] for i in tree}
+        fps_ = {f.uuid: f for f in board.footprints()}
+        out: dict[str, str] = {}
+        for g in board._groups():
+            text = str(g[1])
+            instance = text.split(" ")[0]
+            if not text.startswith("/") or instance in names or instance in out:
+                continue
+            for member in (find(g, "members") or [])[1:]:
+                f = fps_.get(str(member))
+                parts = f.path.strip("/").split("/") if f is not None and f.path else []
+                new = by_uuid.get("/" + "/".join(parts[:instance.count("/")]))
+                if new and new != "/":
+                    out[instance] = new
+                    break
+        return out
 
     # --- parts -----------------------------------------------------------------------
 

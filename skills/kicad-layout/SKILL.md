@@ -196,6 +196,25 @@ with kat.pcb.edit(PCB) as b:
 - The route result's `fine_pitch` names classes too wide to leave a fine-pitch pin; give
   those nets a narrower class instead of letting the router neck them.
 
+- A board that must fit an old one: `kat pcb import-mech PCB --odb JOB`, or `--gerber FILE
+  --drill FILE...`, takes edge, cut-outs and holes from fabrication data, and ends with a board
+  check. Look at `warnings` and `open`: a drawing frame on the outline layer has to be removed
+  first, and holes whose file does not say are non-plated unless `--assume-plated`.
+- Two boards that mate: `kat pcb mate A B --pair J1=P1 --at X,Y [--rot R] [--flip]` compares pins by
+  position, net names, guide holes and mounting holes. It does not see stack height or bodies.
+- A pin table from a datasheet or a legacy board (`kat pcb odb-pinout JOB --out pins.csv`):
+  `kat pcb check PCB --map pins.csv`; it says `mismatched`, `missing`, `extra` and more.
+- Around a board cut-out Freerouting can leave a net unrouted however many passes it gets:
+  check `unconnected`, and finish that net by hand or move a part.
+- Before routing a floorplan: `kat pcb access floorplan.json` says whether each candidate cell's port
+  can reach a source, and what walls it in. Each port is judged alone, so the capacity of a gap is not.
+- Pins that may be swapped, as on a connector: `kat pcb escape PCB pins.json` chooses the assignment
+  and tracks together, without vias on one layer. Give its `assignment` to `kat back-annotate`, then run
+  it again with `--apply`.
+- A route that stopped converging shows in `unrouted` per pass, a slow stage in `stages`.
+  `--skip-class NAME` leaves a class out; `--no-optimize` skips the optimizer. Look at `settings`
+  after `--router-option`: Freerouting exits 0 even on settings it ignores.
+
 ## Review sub-loop
 
 1. `check.json` / `kat pcb check`: `drc_errors`, `unconnected`, `islands`, `parity`,
@@ -230,6 +249,11 @@ routing; `kat pcb check` reports them in `net_rules` and is not `clean` while an
 
 ## Design change during layout
 
+A pin swap computed for the layout goes through the design without editing the script, when the
+script reads a table (`kat.skidl_blocks.connect_pins(j, "j1.csv")`): `kat back-annotate j1.csv
+--assign J1.1=CH2 J1.2=CH1 --run design.py --sch SCH --pcb PCB`. Everything is put back if a step
+fails. Route again after it; `board.stale_tracks` names the copper that no longer fits.
+
 SKiDL → `kat sync SCH design.net` (+ schematic snapshot/arrangement) → `kat ready` →
 `kat pcb sync PCB`. The board keeps placement and copper; a changed footprint is replaced
 in place; `stale_tracks` lists copper that no longer fits (`--rip-stale` removes it).
@@ -253,6 +277,6 @@ empty section, and don't change kat's own code unless asked. Template: kicad-des
 
 ## Setup
 
-As for the schematic skill, plus Freerouting for routing: Java 21+, then
+As for the schematic skill, plus Freerouting for routing: Java 25+, then
 `kat pcb route --install` (downloads the pinned release once into kat's cache). For
 `kat open --verify` on boards: `pip install 'kat[gui]'` (kicad-python) and a display.

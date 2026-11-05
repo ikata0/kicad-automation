@@ -54,7 +54,7 @@ On Linux with stock libraries, SKiDL commonly uses
 `KICAD10_SYMBOL_DIR=/usr/share/kicad/symbols`; adjust for the actual installation.
 Use English diagnostics and initialize the library tables there too.
 
-Routing needs Java 21+ and Freerouting: `kat pcb route --install` downloads the
+Routing needs Java 25+ and Freerouting: `kat pcb route --install` downloads the
 pinned release into kat's cache. Board `kat open --verify` needs the gui extra
 and a display. An unavailable verification result is not a passed verification.
 For API details, use `kat api`; for the workflow, return to

@@ -216,3 +216,103 @@ def poly_seg(poly: list[Point], a: Point, b: Point) -> float:
     if inside(poly, a) or inside(poly, b):
         return 0.0
     return min(seg_seg(a, b, p, q) for p, q in zip(poly, poly[1:] + poly[:1]))
+
+
+def arc_center(a, m, b) -> tuple[tuple[float, float], float] | None:
+    """Centre and radius of the circle through three points; None if they lie in a line."""
+    ax, ay, bx, by, cx, cy = *a, *m, *b
+    d = 2 * (ax * (by - cy) + bx * (cy - ay) + cx * (ay - by))
+    if abs(d) < 1e-12:
+        return None
+    ux = ((ax * ax + ay * ay) * (by - cy) + (bx * bx + by * by) * (cy - ay) + (cx * cx + cy * cy) * (ay - by)) / d
+    uy = ((ax * ax + ay * ay) * (cx - bx) + (bx * bx + by * by) * (ax - cx) + (cx * cx + cy * cy) * (bx - ax)) / d
+    return (ux, uy), math.hypot(ax - ux, ay - uy)
+
+
+def arc_points(a, m, b, max_error: float = 0.01) -> list[tuple[float, float]]:
+    """An arc from a through m to b as points, a and b included, leaving it by at most
+    ``max_error`` mm."""
+    found = arc_center(a, m, b)
+    if found is None:
+        return [tuple(a), tuple(b)]
+    (cx, cy), r = found
+    a0 = math.atan2(a[1] - cy, a[0] - cx)
+    am = (math.atan2(m[1] - cy, m[0] - cx) - a0) % (2 * math.pi)
+    ab = (math.atan2(b[1] - cy, b[0] - cx) - a0) % (2 * math.pi)
+    sweep = ab if am <= ab else ab - 2 * math.pi
+    step = 2 * math.acos(max(0.0, 1 - max_error / r)) if r > max_error else math.pi / 2
+    n = max(2, math.ceil(abs(sweep) / max(step, 1e-3)))
+    return [tuple(a)] + [(cx + r * math.cos(a0 + sweep * k / n), cy + r * math.sin(a0 + sweep * k / n))
+                         for k in range(1, n)] + [tuple(b)]
+
+
+def chain(segments: list, tolerance: float = 0.01) -> tuple[list[list], list[list]]:
+    """Join ("line", a, b), ("arc", a, mid, b) and ("circle", centre, radius) segments into
+    loops by their ends, within ``tolerance`` mm, and snap the ends together. A segment drawn
+    twice counts once. Returns the closed loops and the chains that stay open, each a list of
+    segments in order."""
+    nodes: list[tuple[float, float]] = []
+    grid: dict[tuple[int, int], list[int]] = defaultdict(list)
+    size = max(tolerance, 1e-6)
+
+    def node(p) -> int:
+        gx, gy = math.floor(p[0] / size), math.floor(p[1] / size)
+        for ix in (gx - 1, gx, gx + 1):
+            for iy in (gy - 1, gy, gy + 1):
+                for k in grid[(ix, iy)]:
+                    if math.hypot(nodes[k][0] - p[0], nodes[k][1] - p[1]) <= tolerance:
+                        return k
+        nodes.append(tuple(p))
+        grid[(gx, gy)].append(len(nodes) - 1)
+        return len(nodes) - 1
+
+    loops: list[list] = []
+    items = []
+    seen = set()
+    for s in segments:
+        if s[0] == "circle":
+            key = ("circle", round(s[1][0], 3), round(s[1][1], 3), round(s[2], 3))
+            if key not in seen:
+                seen.add(key)
+                loops.append([s])
+            continue
+        a, b = node(s[1]), node(s[-1])
+        mid = (round(s[2][0], 3), round(s[2][1], 3)) if s[0] == "arc" else None
+        key = (s[0], min(a, b), max(a, b), mid)
+        if key in seen or (a == b and s[0] == "line"):
+            continue
+        seen.add(key)
+        items.append((s, a, b))
+    at: dict[int, list[int]] = defaultdict(list)
+    for i, (_, a, b) in enumerate(items):
+        at[a].append(i)
+        at[b].append(i)
+    used = [False] * len(items)
+
+    def walk(first: int, start: int) -> tuple[list, bool]:
+        path, here, i = [], start, first
+        while True:
+            used[i] = True
+            s, a, b = items[i]
+            forward = a == here
+            there = b if forward else a
+            if s[0] == "arc":
+                path.append(("arc", nodes[here], s[2], nodes[there]))
+            else:
+                path.append(("line", nodes[here], nodes[there]))
+            here = there
+            if here == start:
+                return path, True
+            i = next((j for j in at[here] if not used[j]), None)
+            if i is None:
+                return path, False
+
+    opened: list[list] = []
+    for k, ids in sorted(at.items()):                # chains first, so a loop is not entered midway
+        if len(ids) == 1 and not used[ids[0]]:
+            opened.append(walk(ids[0], k)[0])
+    for i, (_, a, _b) in enumerate(items):
+        if not used[i]:
+            path, closed = walk(i, a)
+            (loops if closed else opened).append(path)
+    return loops, opened

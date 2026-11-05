@@ -121,6 +121,8 @@ def run_cli(*args: str, check: bool = True) -> subprocess.CompletedProcess:
 
 
 def _config_dir() -> Path:
+    if os.environ.get("KICAD_CONFIG_HOME"):      # KiCad's own override, on every platform
+        return Path(os.environ["KICAD_CONFIG_HOME"]) / KICAD_MAJOR
     if sys.platform == "win32":
         return Path(os.environ.get("APPDATA", "")) / "kicad" / KICAD_MAJOR
     if sys.platform == "darwin":

@@ -134,6 +134,11 @@ def cmd_pins(a):
 def cmd_lib(a):
     if a.lib_cmd == "search":
         return kat.lib_search(" ".join(a.query), a.limit)
+    if a.lib_cmd == "make":
+        pair = lambda v: _xy(v) if v and "," in v else ((float(v), float(v)) if v else None)  # noqa: E731
+        return kat.libmake.make(a.pins, a.name, a.lib, a.out, not a.no_symbol, not a.no_footprint, a.view, a.y_up,
+                                a.origin, a.drill, pair(a.pad), a.shape, pair(a.pitch),
+                                None if a.marker == "none" else a.marker, a.reference, a.force)
     return kat.lib_show(a.lib_id)
 
 
@@ -142,7 +147,7 @@ def cmd_pcb(a):
         return kat.pcb.sync(a.pcb, a.sch, a.dry_run, a.force, a.rip_stale,
                             () if a.no_require else (a.require_field or ["MPN"]))
     if a.pcb_cmd == "check":
-        return kat.pcb.check(a.pcb)
+        return kat.pcb.check(a.pcb, a.map, _complete(a))
     if a.pcb_cmd == "refill":
         return kat.pcb.refill(a.pcb)
     if a.pcb_cmd == "fab":
@@ -158,7 +163,12 @@ def cmd_pcb(a):
             return _route.install()
         if not a.pcb:
             raise env.KatError("give the board (or only --install)")
-        return kat.pcb.route(a.pcb, a.passes, a.net or None, a.timeout, install=a.install)
+        bad = [x for x in a.router_option or [] if "=" not in x]
+        if bad:
+            raise env.KatError(f"--router-option {bad[0]!r}: give KEY=VALUE")
+        return kat.pcb.route(a.pcb, a.passes, a.net or None, a.timeout, install=a.install, skip_classes=a.skip_class,
+                             optimize=not a.no_optimize,
+                             options=dict(x.split("=", 1) for x in a.router_option or []) or None)
     if a.pcb_cmd == "stamp":
         names = "all" if a.instance == ["all"] else a.instance
         if a.preview:
@@ -204,6 +214,26 @@ def cmd_pcb(a):
         if a.args:
             raise env.KatError(f"{a.kind} takes no further arguments")
         return kat.pcb.net_rules(a.pcb, a.kind == "clear")
+    if a.pcb_cmd == "escape":
+        return kat.pcb.escape(a.pcb, a.spec, a.apply, a.out)
+    if a.pcb_cmd == "access":
+        return kat.pcb.port_access(a.spec)
+    if a.pcb_cmd == "mate":
+        def pairs(items, what):
+            bad = [x for x in items if "=" not in x]
+            if bad:
+                raise env.KatError(f"{what} {bad[0]!r}: give A=B")
+            return [tuple(x.split("=", 1)) for x in items]
+        holes = "auto" if a.holes == ["auto"] else None if a.holes == ["none"] else pairs(a.holes, "--holes")
+        return kat.pcb.mate(a.pcb, a.other, pairs(a.pair or [], "--pair"), xy(a.at), a.rot, a.flip,
+                            dict(pairs(a.net or [], "--net")), holes, not a.below, a.tolerance, a.hole_tolerance)
+    if a.pcb_cmd == "import-mech":
+        assume = "plated" if a.assume_plated else "non_plated" if a.assume_non_plated else None
+        return kat.pcb.import_mechanics(a.pcb, a.odb, a.gerber, a.drill or None, a.step, xy(a.at) if a.at else None,
+                                        xy(a.offset) if a.offset else None, a.vias, a.min_drill, a.annular,
+                                        assume, a.tolerance, a.dry_run)
+    if a.pcb_cmd == "odb-pinout":
+        return kat.pcb.odb_pinout(a.job, a.step, a.ref or None, a.out)
     if a.pcb_cmd == "clearance":
         return kat.pcb.clearance(a.pcb, a.a, a.b, a.layer)
     if a.pcb_cmd == "pads":
@@ -268,8 +298,32 @@ def cmd_netlist(a):
     return kat.nets(a.sch)
 
 
+def _complete(a):
+    """What a mapping table must cover, from --partial and --complete."""
+    if a.partial and a.complete:
+        raise env.KatError("--partial and --complete exclude each other")
+    return False if a.partial else (a.complete or True)
+
+
 def cmd_check(a):
-    return kat.check(a.sch, a.expect, a.full)
+    return kat.check(a.sch, a.expect, a.full, a.map, _complete(a))
+
+
+def cmd_back_annotate(a):
+    if bool(a.assign) == bool(a.from_table):
+        raise env.KatError("give the assignment: --assign PIN=NET... or --from TABLE")
+    assignment = a.from_table
+    if a.assign:
+        bad = [x for x in a.assign if "=" not in x]
+        if bad:
+            raise env.KatError(f"--assign {bad[0]!r}: give PIN=NET (an empty NET: unconnected)")
+        assignment = dict(x.split("=", 1) for x in a.assign)
+    return kat.mapping.back_annotate(a.mapping, assignment, a.run, a.sch, a.netlist, a.pcb, None, a.dry_run, a.force,
+                                     a.rip_stale, () if a.no_require else (a.require_field or ["MPN"]))
+
+
+def cmd_map(a):
+    return kat.mapping.check(a.file, a.mapping, _complete(a), a.pins.split(",") if a.pins else None)
 
 
 def cmd_ready(a):
@@ -292,7 +346,11 @@ def cmd_view(a):
 
 
 def cmd_sync(a):
-    return kat.sync(a.sch, a.netlist, a.dry_run, a.sheets.split(",") if a.sheets else None)
+    bad = [x for x in a.rename_sheet or [] if "=" not in x]
+    if bad:
+        raise env.KatError(f"--rename-sheet {bad[0]!r}: give OLD=NEW")
+    return kat.sync(a.sch, a.netlist, a.dry_run, a.sheets.split(",") if a.sheets else None,
+                    dict(x.split("=", 1) for x in a.rename_sheet or []) or None)
 
 
 # --- parser -------------------------------------------------------------------
@@ -342,6 +400,13 @@ Every command prints one JSON document. Exit code 0 = fine, 1 = checks failed,
 class _Fmt(argparse.RawDescriptionHelpFormatter):
     def __init__(self, prog):
         super().__init__(prog, max_help_position=30, width=100)
+
+
+def _map_options(q) -> None:
+    """--partial and --complete, for every command that reads a mapping table."""
+    q.add_argument("--complete", action="append", metavar="REF",
+                   help="connected pins of this part must be in the table (repeatable; default: every part in it)")
+    q.add_argument("--partial", action="store_true", help="the table need not list all connected pins")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -396,6 +461,39 @@ def build_parser() -> argparse.ArgumentParser:
     s1.add_argument("--limit", type=int, default=30, help="max results (default 30)")
     s2 = lsp.add_parser("show", help="units, pins and fields of one symbol")
     s2.add_argument("lib_id", help="Library:Symbol")
+    s3 = lsp.add_parser("make", formatter_class=_Fmt, help="generate a symbol and a footprint from a pin table",
+                        description="One row per pad, CSV or JSON. Columns (case does not matter):\n"
+                                    "  pin, name             pad number, name on the symbol\n"
+                                    "  x, y  or  row, col    position in mm, or a grid position times --pitch\n"
+                                    "  drill                 mm or WxH (slot); empty: a surface pad unless --drill\n"
+                                    "  pad  or  pad_w, pad_h mm or WxH; default drill + 0.5 mm\n"
+                                    "  shape                 circle, rect, oval, roundrect\n"
+                                    "  type                  electrical type of the symbol pin (default passive)\n"
+                                    "  side                  left, right, top, bottom on the symbol\n"
+                                    "  kind                  tht, smd, npth; a row with a drill but no pin is a hole\n"
+                                    "--view pin: positions are seen from the pin side, which mirrors x. The marker\n"
+                                    "pin (pin 1 by default) gets a triangle on silk and fab and a rectangular pad.\n"
+                                    "Writes OUT/LIB.kicad_sym and OUT/LIB.pretty/NAME.kicad_mod, read back through\n"
+                                    "KiCad, and adds them to the library tables if OUT holds a .kicad_pro.\n"
+                                    "Check a new part with kat pcb view and against its datasheet.")
+    s3.add_argument("--pins", required=True, metavar="TABLE", help="CSV or JSON pin table")
+    s3.add_argument("--name", required=True, help="part name")
+    s3.add_argument("--lib", help="library name (default: the part's)")
+    s3.add_argument("--out", metavar="DIR", help="where the libraries go (default: here)")
+    s3.add_argument("--no-symbol", action="store_true", help="only the footprint")
+    s3.add_argument("--no-footprint", action="store_true", help="only the symbol")
+    s3.add_argument("--view", choices=("component", "pin"), default="component",
+                    help="the side the table's positions are seen from (default component)")
+    s3.add_argument("--y-up", action="store_true", help="y grows upwards in the table (default downwards)")
+    s3.add_argument("--origin", choices=("table", "pin1", "center"), default="table",
+                    help="footprint origin: the table's (default), the marker pin or the centre")
+    s3.add_argument("--drill", type=float, metavar="MM", help="drill of rows that give none")
+    s3.add_argument("--pad", metavar="W[,H]", help="pad size of rows that give none (mm)")
+    s3.add_argument("--shape", choices=("circle", "rect", "oval", "roundrect"), help="shape of rows that give none")
+    s3.add_argument("--pitch", metavar="DX[,DY]", help="mm per col and row")
+    s3.add_argument("--marker", default="auto", metavar="PIN", help="marked pin: auto (pin 1, else the first), a number, none")
+    s3.add_argument("--reference", default="J", help="reference prefix (default J)")
+    s3.add_argument("--force", action="store_true", help="replace a part of that name")
 
     q = cmd("api", cmd_api, "Look up kat's Python API: signatures and docstrings from the code.",
             "Without NAME: the functions of kat and kat.pcb and their classes. NAME may be\n"
@@ -467,11 +565,35 @@ def build_parser() -> argparse.ArgumentParser:
             "  ok    = ERC has no errors and the netlist matches\n"
             "  clean = ok and no drawing findings\n"
             "The overlap estimate ignores pin names/numbers: always look at the snapshot too.\n"
-            "Netlist differences are listed up to 10 per kind (totals in counts); --full lists all.",
-            ["kat check tia.kicad_sch", "kat check tia.kicad_sch --expect tia_design.net"])
+            "Netlist differences are listed up to 10 per kind (totals in counts); --full lists all.\n"
+            "--map also holds the sheet against an external pin table (see kat map).",
+            ["kat check tia.kicad_sch", "kat check tia.kicad_sch --expect tia_design.net",
+             "kat check tia.kicad_sch --map j1_pinout.csv --complete J1"])
     q.add_argument("--full", action="store_true", help="list every netlist difference")
     q.add_argument("--expect", metavar="NETLIST",
                    help="KiCad s-expression netlist (e.g. from SKiDL) the drawing must match")
+    q.add_argument("--map", metavar="TABLE", help="pin table the sheet must agree with (CSV or JSON)")
+    _map_options(q)
+
+    q = cmd("map", cmd_map, "Check a schematic, board or netlist against an external pin table.",
+            "The table is specified independently of the design: a datasheet, a mating board, a\n"
+            "legacy product (kat pcb odb-pinout writes one). CSV (`,` `;` or tab, # starts a comment line) or JSON. Its columns:\n"
+            "  ref,pin,net or pin,net        J1,3,CH1 / J1.3,CH1: pin on that net; an empty net or\n"
+            "                                NC: unconnected. CH1 matches /CH_A/CH1; /CH_A/CH1 in full\n"
+            "  channel                       a logical name: its pins share a net, channels never do\n"
+            "  source, destination, dest,    several pins in a row share a net, and rows do not\n"
+            "  from, to                      unless one channel or net says so\n"
+            "Reports missing (pins or parts the design lacks), mismatched (expected, actual), split\n"
+            "(should share a net), merged (should not), extra (connected pins of the table's parts\n"
+            "that it lacks; --complete, --partial). Other columns are listed in ignored.\n"
+            "Exit code 1 when it does not agree.",
+            ["kat map tia.kicad_sch j1_pinout.csv",
+             "kat map board.kicad_pcb channels.csv --complete J1 --complete J2",
+             "kat map design.net pins.json --partial"], sch=False)
+    q.add_argument("file", metavar="SOURCE", help=".kicad_sch, .kicad_pcb, a netlist (.net) or an ODB++ job")
+    q.add_argument("mapping", metavar="TABLE", help="CSV or JSON pin table")
+    q.add_argument("--pins", metavar="COL,...", help="the columns that hold pins (REF.NUMBER)")
+    _map_options(q)
 
     q = cmd("ready", cmd_ready, "Gate before the PCB layout: is the schematic finished?",
             "Checks the parts KiCad will put on the board (symbols marked 'not on board' are\n"
@@ -548,12 +670,40 @@ def build_parser() -> argparse.ArgumentParser:
             "Running it twice changes nothing. Review the reported spots afterwards.\n"
             "--sheets TYPE,...: instances of these SKiDL block types become hierarchical sheets\n"
             "that use the block library's own drawing (kat block build); references follow the\n"
-            "design. The choice is remembered in NAME.kat.json.",
+            "design. The choice is remembered in NAME.kat.json.\n"
+            "--rename-sheet OLD=NEW: after renaming an instance in the design, its box keeps its\n"
+            "uuid, place and wiring instead of being removed and added anew; possible_renames in\n"
+            "the result names boxes that look like one. Check with --dry-run first.",
             ["kat sync tia.kicad_sch tia_design.net", "kat sync tia.kicad_sch tia_design.net --dry-run",
              "kat sync top.kicad_sch design.net --sheets ch,rc"])
     q.add_argument("netlist", metavar="NETLIST", help="KiCad s-expression netlist, e.g. SKiDL generate_netlist()")
     q.add_argument("--dry-run", action="store_true", help="report what would change, save nothing")
     q.add_argument("--sheets", metavar="TYPE,...", help="block types drawn as hierarchical sheets")
+    q.add_argument("--rename-sheet", action="append", metavar="OLD=NEW",
+                   help="an instance renamed in the design (repeatable)")
+
+    q = cmd("back-annotate", cmd_back_annotate, "Apply a computed pin assignment through the design.",
+            "Connectivity belongs to the design, and the SKiDL script stays as it is: it reads the\n"
+            "pin table (kat.skidl_blocks.connect_pins). This sets the assignment in TABLE, keeping its\n"
+            "comments and other columns, runs the script, syncs the sheet and --pcb, keeping\n"
+            "placement, and verifies netlist, sheet and board against the table and each other. If a\n"
+            "step fails, table, netlist, sheet and board are put back. moved names nets that left a\n"
+            "part (a pure swap has none); copper that no longer fits is in board.stale_tracks\n"
+            "(--rip-stale removes it): route again after it.",
+            ["kat back-annotate j1.csv --assign J1.1=CH2 J1.2=CH1 --run design.py --sch top.kicad_sch --pcb top.kicad_pcb",
+             "kat back-annotate j1.csv --from computed.csv --run design.py --sch top.kicad_sch --dry-run"], sch=False)
+    q.add_argument("mapping", metavar="TABLE", help="the pin table the SKiDL script reads (CSV or JSON)")
+    q.add_argument("--assign", nargs="+", metavar="PIN=NET", help="new assignments, e.g. J1.3=CH1")
+    q.add_argument("--from", dest="from_table", metavar="FILE", help="new assignments as a table")
+    q.add_argument("--run", required=True, metavar="SCRIPT", help="the SKiDL script")
+    q.add_argument("--netlist", metavar="NETLIST", help="what it writes (default: its name with .net)")
+    q.add_argument("--sch", required=True, metavar="SCH", help="the schematic")
+    q.add_argument("--pcb", metavar="PCB", help="the board, if there is one yet")
+    q.add_argument("--dry-run", action="store_true", help="only report the changes")
+    q.add_argument("--force", action="store_true", help="sync the board even if `kat ready` fails")
+    q.add_argument("--rip-stale", action="store_true", help="remove copper that no longer fits")
+    q.add_argument("--require-field", action="append", metavar="NAME", help="as for pcb sync")
+    q.add_argument("--no-require", action="store_true", help="the gate requires no fields")
 
     # --- editing ---
     q = cmd("add", cmd_add, "Place a library symbol.",
@@ -772,8 +922,11 @@ def build_parser() -> argparse.ArgumentParser:
                                     "  ok    = no DRC errors, parity 0, nothing unconnected, outline\n"
                                     "  clean = ok, no DRC warnings, no kat findings\n"
                                     "islands counts copper cut off from its net (starved thermals,\n"
-                                    "isolated copper): the router's own \"all routed\" does not see them.")
+                                    "isolated copper): the router's own \"all routed\" does not see them.\n"
+                                    "--map also holds the pads against an external pin table (see kat map).")
     s2.add_argument("pcb", metavar="PCB")
+    s2.add_argument("--map", metavar="TABLE", help="pin table the pads must agree with (CSV or JSON)")
+    _map_options(s2)
     s8 = psp.add_parser("refill", formatter_class=_Fmt, help="fill all pours and save them",
                         description="KiCad's zone filler (through DRC) fills every pour and the result\n"
                                     "is saved into the board. Run it after the finish pass.")
@@ -796,12 +949,19 @@ def build_parser() -> argparse.ArgumentParser:
                                     "Locked copper stays as it is (lock the structure first). DSN, SES and\n"
                                     "log go to history/<stamp>_route/. Judge the result by check.unconnected\n"
                                     "and check.islands, not by router.unrouted.\n"
-                                    "Freerouting (Java 21+, GPL-3) is downloaded once by --install into kat's\n"
+                                    "Freerouting (Java 25+, GPL-3) is downloaded once by --install into kat's\n"
                                     "cache; KAT_FREEROUTING=/path/to.jar uses another copy.")
     s5.add_argument("pcb", metavar="PCB", nargs="?")
     s5.add_argument("--passes", type=int, default=20, help="router passes (default 20)")
     s5.add_argument("--net", action="append", metavar="NAME", help="route only this net (repeatable)")
-    s5.add_argument("--timeout", type=int, default=1800, help="seconds (default 1800)")
+    s5.add_argument("--skip-class", action="append", metavar="NAME",
+                    help="leave this net class out; its pads stay obstacles (repeatable)")
+    s5.add_argument("--no-optimize", action="store_true", help="skip the router's optimizer stage")
+    s5.add_argument("--router-option", action="append", metavar="KEY=VALUE",
+                    help="another Freerouting setting (repeatable); settings reports what it refused\n"
+                         "and what kat has not seen work")
+    s5.add_argument("--timeout", type=int, default=1800,
+                    help="seconds (default 1800): the router stops there and what it has is kept (timed_out)")
     s5.add_argument("--install", action="store_true", help="download Freerouting first if missing")
     s6 = psp.add_parser("fab", formatter_class=_Fmt, help="fabrication files",
                         description="fab/<name>-<rev>/: gerbers/ (copper, paste, silk, mask, outline, drill\n"
@@ -949,6 +1109,89 @@ def build_parser() -> argparse.ArgumentParser:
                      help="plane: the same for every zone / rule area whose name matches (repeatable)")
     s16.add_argument("--except-area", action="append", metavar="X0,Y0,X1,Y1",
                      help="plane: no pour needed inside this rectangle, mm (repeatable)")
+    s25 = psp.add_parser("escape", formatter_class=_Fmt, help="route permutable pins, choosing the assignment",
+                         description="Freerouting takes each net as given. Where pins may be swapped, as on a\n"
+                                     "connector, a min-cost flow on a grid chooses assignment and tracks together, as\n"
+                                     "many paths as can exist, of the least total length. On one layer they cannot\n"
+                                     "cross, so no vias are needed. SPEC is a JSON file:\n"
+                                     '  {"sources": ["J1.*"], "targets": ["U1.1", "U1.2"], "layers": ["F.Cu"]}\n'
+                                     'Also: "vias": true (exactly two layers), "track", "clearance", "via", "via_drill",\n'
+                                     '"grid", "region" [x0, y0, x1, y1], "margin". "pairs" are reported as not_handled.\n'
+                                     "Connectivity belongs to the design, so: plan with this, give the assignment to\n"
+                                     "kat back-annotate, then run this again with --apply. Tracks go at right angles.")
+    s25.add_argument("pcb", metavar="PCB")
+    s25.add_argument("spec", metavar="SPEC", help="JSON file")
+    s25.add_argument("--apply", action="store_true", help="add the tracks, once the pads have the nets; then check")
+    s25.add_argument("--out", metavar="FILE", help="also write the result as JSON")
+    s24 = psp.add_parser("access", formatter_class=_Fmt, help="can candidate cells' ports reach a source?",
+                         description="Before detailed routing: a coarse maze on a grid per layer, from the source\n"
+                                     "outwards. Fitting by area cannot see a port walled in by its neighbours. SPEC is\n"
+                                     "a JSON file:\n"
+                                     '  {"board": "top.kicad_pcb", "layers": ["F.Cu", "In2.Cu"],\n'
+                                     '   "cells": [{"name": "A", "outline": [10, 10, 20, 20], "blocked_layers": ["F.Cu"],\n'
+                                     '              "ports": [{"name": "in", "at": [10, 15], "layers": ["F.Cu"]}]},\n'
+                                     '             {"block": "RC", "at": [30, 10], "instance": "/CH_A"}],\n'
+                                     '   "keepouts": [{"box": [0, 0, 5, 5], "layers": ["F.Cu"]}],\n'
+                                     '   "source": {"box": [0, 40, 60, 50]}, "grid": 0.5}\n'
+                                     'Without "board": "outline": [x0, y0, x1, y1], "board_layers": [...]. A port is\n'
+                                     "reachable (with length and vias), blocked (with walled_by) or sealed (no free\n"
+                                     "space near it). overlaps and outside name cells that do not fit. Each port is\n"
+                                     "judged alone: all may still not fit through one gap. Exit code 1 if any fails.")
+    s24.add_argument("spec", metavar="SPEC", help="JSON file")
+    s23 = psp.add_parser("mate", formatter_class=_Fmt, help="check two boards as they mate",
+                         description="Board B over board A, in A's frame: mirrored about its y axis with --flip (its\n"
+                                     "top then faces A), turned by --rot, moved by --at. For each --pair, pads and\n"
+                                     "guide holes must coincide (by position, not by pin number), the connectors must\n"
+                                     "be on the sides that face each other, and mated pins must carry the same net\n"
+                                     "name, or the one given by --net. Nets joined through the connectors are listed\n"
+                                     "in shorts; a pin connected on one board only in open, which does not fail.\n"
+                                     "Hole-only footprints need a partner if inside the other board's outline\n"
+                                     "(--holes auto), or name them with --holes A=B, or --holes none.\n"
+                                     "Exit code 1 when it does not fit.")
+    s23.add_argument("pcb", metavar="BOARD_A"); s23.add_argument("other", metavar="BOARD_B")
+    s23.add_argument("--pair", action="append", metavar="REF_A=REF_B", help="mating connectors (repeatable)")
+    s23.add_argument("--at", default="0,0", metavar="X,Y", help="B's origin in A's frame (mm, default 0,0)")
+    s23.add_argument("--rot", type=float, default=0.0, help="degrees, counter-clockwise")
+    s23.add_argument("--flip", action="store_true", help="B lies with its top towards A")
+    s23.add_argument("--below", action="store_true", help="B lies under A's bottom side")
+    s23.add_argument("--net", action="append", metavar="NET_A=NET_B", help="nets that differ by intent (repeatable)")
+    s23.add_argument("--holes", nargs="+", default=["auto"], metavar="HOLES", help="auto (default), none or REF_A=REF_B...")
+    s23.add_argument("--tolerance", type=float, default=0.05, metavar="MM", help="pins (default 0.05)")
+    s23.add_argument("--hole-tolerance", type=float, default=0.1, metavar="MM", help="guide and mounting holes (default 0.1)")
+    s22 = psp.add_parser("import-mech", formatter_class=_Fmt, help="board edge and holes from fabrication data",
+                         description="From an ODB++ job (profile and drill layers), or an outline Gerber and\n"
+                                     "Excellon files (G85 and M15 slots), so that a new board fits an old one's\n"
+                                     "mechanics. The outline replaces Edge.Cuts; holes become board-only footprints\n"
+                                     "MH1, ... replacing those of an earlier import. Vias, holes smaller than\n"
+                                     "--min-drill and holes on existing pads are left out. Plating comes from the\n"
+                                     "files; holes that do not say are non-plated, with a warning, unless\n"
+                                     "--assume-plated. Coordinates stay as given unless --at or --offset. Stroke\n"
+                                     "ends within --tolerance join, a stroke's centre line is the edge, and chains\n"
+                                     "that do not close are reported in open. Ends with the board check.")
+    s22.add_argument("pcb", metavar="PCB", help="the .kicad_pcb file (created if missing)")
+    s22.add_argument("--odb", metavar="JOB", help="ODB++ directory or archive")
+    s22.add_argument("--step", help="ODB++ step, if several have a profile")
+    s22.add_argument("--gerber", metavar="FILE", help="outline Gerber")
+    s22.add_argument("--drill", action="append", metavar="FILE", help="Excellon file (repeatable)")
+    s22.add_argument("--at", metavar="X,Y", help="where the outline's top-left corner goes (mm)")
+    s22.add_argument("--offset", metavar="DX,DY", help="shift everything by this (mm)")
+    s22.add_argument("--vias", action="store_true", help="also import holes marked as vias")
+    s22.add_argument("--min-drill", type=float, default=0.0, metavar="MM", help="leave out smaller holes")
+    s22.add_argument("--annular", type=float, default=0.25, metavar="MM", help="ring of plated holes (default 0.25)")
+    s22.add_argument("--assume-plated", action="store_true", help="holes that do not say are plated")
+    s22.add_argument("--assume-non-plated", action="store_true", help="holes that do not say are non-plated, no warning needed")
+    s22.add_argument("--tolerance", type=float, default=0.01, metavar="MM", help="stroke ends that still join (default 0.01)")
+    s22.add_argument("--dry-run", action="store_true", help="report only, save nothing")
+    s21 = psp.add_parser("odb-pinout", formatter_class=_Fmt, help="pin-to-net mapping of a legacy board's ODB++ job",
+                         description="From the component layers and EDA data of an ODB++ job: a directory, .zip,\n"
+                                     ".tgz, .tar.gz or .tar (read in memory, never unpacked; files may be plain,\n"
+                                     ".z or .gz). Per component part, package, side, position (mm, y down) and\n"
+                                     "pins, and the nets. --out writes a ref,pin,net table that kat map checks a\n"
+                                     "new design against and a SKiDL script can read, or the whole as .json.")
+    s21.add_argument("job", metavar="JOB", help="ODB++ directory or archive")
+    s21.add_argument("--step", help="which step, if several have EDA data")
+    s21.add_argument("--ref", action="append", metavar="REF", help="only this component (repeatable)")
+    s21.add_argument("--out", metavar="FILE", help="also write .csv (ref,pin,net) or .json")
     s20 = psp.add_parser("clearance", formatter_class=_Fmt, help="effective clearance between two nets or pads",
                          description="Resolved as KiCad's DRC does: the larger of the two classes and the board\n"
                                      "minimum, or the last matching custom rule, which may also lower them. Rules\n"

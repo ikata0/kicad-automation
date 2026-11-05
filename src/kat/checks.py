@@ -149,8 +149,10 @@ def duplicates(s: Schematic) -> list[str]:
     return out
 
 
-def run(sch: Path, expect: Path | None = None, full: bool = False) -> dict:
-    """``ok``: electrically right (ERC errors 0, netlist matches ``expect``).
+def run(sch: Path, expect: Path | None = None, full: bool = False, mapping: Path | None = None,
+        complete: bool | list[str] = True) -> dict:
+    """``ok``: electrically right (ERC errors 0, netlist matches ``expect``, the pins agree with
+    the ``mapping`` table, see ``kat.mapping.check``, in ``mapping``).
     ``clean``: ``ok`` and no drawing findings (text overlaps, body overlaps, off-page items,
     duplicated items, design net names missing from or different in the drawing).
     The comparison's lists are cut to 10 entries each (``counts`` has the totals) unless
@@ -166,7 +168,11 @@ def run(sch: Path, expect: Path | None = None, full: bool = False) -> dict:
     result["body_overlaps"] = body_overlaps(s)
     result["off_page"] = off_page(s)
     result["duplicates"] = duplicates(s)
-    ok = result["erc"]["errors"] == 0 and (not expect or result["netlist_vs_expected"]["match"])
+    if mapping:
+        from .mapping import check as check_mapping
+        result["mapping"] = check_mapping(sch, mapping, complete)
+    ok = (result["erc"]["errors"] == 0 and (not expect or result["netlist_vs_expected"]["match"])
+          and (not mapping or result["mapping"]["ok"]))
     result["ok"] = ok
     names = result.get("netlist_vs_expected", {})
     result["clean"] = ok and not (result["overlaps"] or result["body_overlaps"] or result["off_page"]

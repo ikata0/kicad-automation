@@ -15,7 +15,9 @@ Freerouting's own unrouted count.
   less than the board minimum. Edge exemptions should be explicit references.
 - `fine_pitch` lists nets whose class width/clearance cannot leave a pin.
   Choose a suitable class from the electrical/fabrication requirements rather
-  than relying on automatic neckdown.
+  than relying on automatic neckdown, which kat leaves off. If a net stays open
+  with no such reason, `--router-option automatic_neckdown=true` can route it;
+  check DRC afterwards.
 - `narrow` lists imported tracks kat could not widen to their class width;
   inspect and resolve them against DRC and the design requirements.
 - `--net` routes only selected nets; other copper/pads remain obstacles.

@@ -169,6 +169,14 @@ and outward directions while computing coordinates. Try a large pass with
   (top-left corner) with its pin wiring; `s.sheet_box("CH_A", size=(w, h), right=["out"])`
   resizes it or moves pins to another edge. Re-syncs keep both. When a part and a box share
   a name, say `sheet:NAME` or `part:NAME`.
+- After renaming an instance's `tag=` in the design, run `kat sync SCH design.net --dry-run`:
+  `possible_renames` names boxes that look renamed, and `--rename-sheet OLD=NEW` keeps the box's uuid,
+  place and wiring. Without it the box is replaced.
+- A connector or pin grid missing from the libraries: `kat lib make --pins pins.csv --name NAME --out
+  PROJECT_DIR` makes symbol and footprint from one table (`--view pin` for pin-side drawings). Compare
+  it with the datasheet: the outline only goes around the pads.
+- A pin table from a datasheet, mating board or legacy product: `kat map SCH pins.csv`, or `kat check
+  SCH --map pins.csv`. Netlist comparison cannot tell that a design matches such a table.
 - A hierarchy's snapshot has one PNG per sheet file (each block page once); `--pages
   instances` renders every instance. `kat check`/`sync` list at most 10 netlist
   differences per kind with totals in `counts`; `kat check --full` lists all.

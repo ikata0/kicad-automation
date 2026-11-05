@@ -17,6 +17,9 @@ the end of the SKiDL script, after ``generate_netlist``::
   defaults of that call are then left out (it is unknown which ones were used)
 - ``no_connect``: pins joined to SKiDL's ``NC`` (``REF.PIN``). The netlist leaves them out
   entirely; sync draws a no-connect flag on each.
+
+``connect_pins`` connects a part from a pin table, so that a computed assignment can reach the
+design without editing the script (``kat.mapping.back_annotate``).
 """
 
 from __future__ import annotations
@@ -28,7 +31,7 @@ from pathlib import Path
 
 from .netlist import blocks_file
 
-__all__ = ["record", "write"]
+__all__ = ["connect_pins", "pin_map", "record", "write"]
 
 _OWN = {"func", "tag", "description", "purpose", "name", "circuit", "parent", "children",
         "parts", "nets", "buses", "skidl_trace", "fields", "pins", "__wrapped__"}
@@ -100,6 +103,33 @@ def record(circuit=None) -> dict:
     nc = sorted(f"{part.ref}.{pin.num}" for part in circuit.parts for pin in part.pins
                 if any(isinstance(n, NCNet) for n in pin.nets))
     return {"instances": instances, "warnings": warnings, "no_connect": nc}
+
+
+def pin_map(table: Path | str, ref: str | None = None) -> dict[str, str]:
+    """Read a ``pin,net`` or ``ref,pin,net`` table: {"J1.3": "CH1"}, or with ``ref`` only that
+    part's {"3": "CH1"}; "" for an unconnected pin. Such a table is what ``kat.mapping.back_annotate``
+    updates and ``kat pcb odb-pinout`` writes, so a pin assignment can change without editing the
+    script."""
+    from .mapping import pin_nets
+    return pin_nets(table, ref)
+
+
+def connect_pins(part, table: Path | str, ref: str | None = None, nets: dict | None = None) -> dict:
+    """Connect a SKiDL part's pins as a table says. ``ref``: the part's reference in the table
+    (default ``part.ref``). ``nets``: {name: Net} of nets the script already has; others are
+    fetched by name, so one name is one net. An unconnected pin is joined to SKiDL's ``NC``.
+    Returns {pin: net name}."""
+    from skidl import Net
+    assigned = pin_map(table, ref or part.ref)
+    if not assigned:
+        from .env import KatError
+        raise KatError(f"{Path(table).name} has no row for {ref or part.ref}")
+    for pin, name in assigned.items():
+        if name:
+            part[pin] += (nets or {}).get(name) or Net.fetch(name)
+        else:
+            part[pin] += builtins.NC
+    return assigned
 
 
 def write(netlist: Path | str, circuit=None) -> dict:

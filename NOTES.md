@@ -117,4 +117,5 @@ Allowing or disallowing blind vias must be configurable. The agent working on th
 
 Copper to edge clearance should be 0.5 mm by default.
 
+We must make Java 25 a minimum because Freerouting requires it.
 
