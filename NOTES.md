@@ -112,3 +112,9 @@ done
    on an inner layer after the map should be rejected by the request 6 check.
 
 ---
+
+Allowing or disallowing blind vias must be configurable. The agent working on the design should clarify it upon project specification.
+
+Copper to edge clearance should be 0.5 mm by default.
+
+
