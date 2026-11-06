@@ -283,7 +283,7 @@ def test_bottom_stamp_is_clean_mirrored_and_kept_on_restamp(hier, tmp_path):
     src = Board(b1)
     box = src.outline_box()
     with kat.pcb.edit(pcb) as b:
-        r = b.stamp(b1, "/CH_B", at=(112, 112), side="bottom")
+        r = b.stamp(b1, "/CH_B", at=(112, 112), side="B")       # FR-045: F/B as move takes them
     assert r["side"] == "bottom" and r["layer_map"] == {"F.Cu": "B.Cu", "In1.Cu": "In2.Cu",
                                                          "In2.Cu": "In1.Cu", "B.Cu": "F.Cu"}
     assert counts(pcb) == before

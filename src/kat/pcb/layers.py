@@ -32,6 +32,31 @@ TOL_MM = 0.002          # thickness tolerance of the symmetry check
 TOL_EPS = 0.05
 
 
+# --- sides --------------------------------------------------------------------------------
+
+_SIDES = {"f": "F", "top": "F", "front": "F", "b": "B", "bottom": "B", "back": "B"}
+
+
+def fp_side(side: str) -> str:
+    """A side given as ``F``/``B``, ``top``/``bottom`` or ``front``/``back`` (any case) as
+    KiCad's ``F`` or ``B``; anything else is refused (a ``KatError``)."""
+    s = _SIDES.get(str(side).strip().lower())
+    if s is None:
+        raise env.KatError(f"side {side!r}: F/top/front or B/bottom/back")
+    return s
+
+
+def stamp_side(side: str | None, extra: tuple[str, ...] = ()) -> str | None:
+    """A side in any vocabulary ``fp_side`` takes as stamping's ``top`` or ``bottom``
+    (None stays None); the words in ``extra`` (e.g. ``alternate``) pass unchanged."""
+    if side is None or side in extra:
+        return side
+    try:
+        return "top" if fp_side(side) == "F" else "bottom"
+    except env.KatError:
+        raise env.KatError(f"side {side!r}: top/F or bottom/B" + "".join(f" or {e}" for e in extra)) from None
+
+
 # --- board metadata ----------------------------------------------------------------------
 
 def meta_file(pcb: Path | str) -> Path:

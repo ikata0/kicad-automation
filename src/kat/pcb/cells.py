@@ -32,6 +32,7 @@ from .. import env
 from ..sexpr import find, head
 from .coupling import _arc_points, _node_layers, _pt, _pts, _Shape
 from .geometry import Index, rotate
+from .layers import stamp_side
 
 TOL = 1e-3                  # mm: what counts as touching
 COPPER_KINDS = ("track", "via", "pad")
@@ -277,7 +278,7 @@ def block_items(block_pcb: Path | str, side: str = "top", layer_map: str | dict 
     if box is None:
         raise env.KatError(f"{block_pcb.name} has no outline: the cell is measured from it")
     keep = _stamped_uuids(src, block_pcb, source_instance)
-    b = src if side == "top" else flip_board(block_pcb, layer_map, allow_asymmetric)["board"]
+    b = src if stamp_side(side) == "top" else flip_board(block_pcb, layer_map, allow_asymmetric)["board"]
     nodes = [n for n in b.tree if (head(n) in COPPER or head(n) == "footprint") and _uuid(n) in keep]
     its = moved(items(nodes, b.copper_layers()), lambda x, y: (x - box[0], y - box[1]))
     return {"items": its, "size": (box[2] - box[0], box[3] - box[1]), "clearance": src._clearance_fn(),
@@ -350,8 +351,7 @@ def min_pitch(block_pcb: Path | str, axis: str = "x", center: tuple[float, float
         raise env.KatError(f"axis {axis!r}: x, y or arc")
     if axis == "arc" and center is None:
         raise env.KatError("an arc needs its centre (center=(x, y), block coordinates)")
-    if side not in ("top", "bottom", "alternate"):
-        raise env.KatError(f"side {side!r}: top, bottom or alternate")
+    side = stamp_side(side, ("alternate",))
     top = block_items(block_pcb, "top", source_instance=source_instance)
     w, h = top["size"]
     sides = {"top": top["items"]}

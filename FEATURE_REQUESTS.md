@@ -148,11 +148,6 @@ from the board.
 at that priority gives `zones_intersect`, and stamp refuses overlaps of different nets at
 one priority. Request: a stamp option to offset block zone priorities.
 
-### FR-045: Accept one side vocabulary
-
-**Open.** `stamp(side="top"|"bottom")` but `move(side="F"|"B")`. Request: accept both
-everywhere.
-
 ### FR-046: Search a legal spot for loose parts
 
 **Partial.** `Board.place_near` puts a two-pad part next to a pad, stepping sideways until
@@ -487,3 +482,11 @@ ended it on waking, on 2.5.0 with no log line about it; kat now reports `timed_o
 
 `kat pcb check PCB --out FILE` and `kat.pcb.check(pcb, out=FILE)` write the result as UTF-8
 JSON and name the file in `out`, as `kat pcb escape --out` does.
+
+### FR-045: Accept one side vocabulary
+
+Every `side` argument takes `F`/`top`/`front` or `B`/`bottom`/`back` in any case
+(`kat.pcb.layers.fp_side`, `stamp_side`): `move`, `move_many`, `add_footprint`,
+`add_board_part`, `fiducials`, `stamp`, `stamp_preview`, `min_pitch`, and the CLI's
+`pcb stamp --side` and `pcb cell --side`. Anything else is refused: `move` used to flip a
+part for any value that wasn't its own side.

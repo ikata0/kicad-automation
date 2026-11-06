@@ -126,7 +126,9 @@ def turn(node: list, delta: float) -> None:
 def instantiate(lib_id: str, x: float, y: float, rot: float = 0.0, side: str = "F",
                 project_dir: Path | None = None) -> list:
     """Board footprint node for ``Lib:Name`` at (x, y), rotation ``rot`` (as KiCad shows
-    it), ``side`` "F" or "B"."""
+    it), ``side`` "F"/"top" or "B"/"bottom" (``layers.fp_side``)."""
+    from .layers import fp_side
+    side = fp_side(side)
     src = _load(str(path_of(lib_id, project_dir)))
     node = [Sym("footprint"), lib_id]
     for c in src[2:]:

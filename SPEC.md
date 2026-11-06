@@ -291,7 +291,8 @@ the router keeps out of them, and parts past a rounded corner count as outside t
 ### 4.8 Placement
 
 Methods of `kat.pcb.Board` (in `with kat.pcb.edit(PCB) as b:`); layout passes are Python,
-like arrangement passes:
+like arrangement passes. A `side` argument takes `F`/`top`/`front` or `B`/`bottom`/`back`
+everywhere (`move`, `add_board_part`, `fiducials`, `stamp`, `pcb cell`); anything else is refused.
 
 | Method | Effect |
 |---|---|

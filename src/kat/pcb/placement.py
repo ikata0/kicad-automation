@@ -8,6 +8,7 @@ import math
 
 from .. import env
 from .geometry import Box, overlap, union
+from .layers import fp_side
 
 BLOCK = "Block"
 TAG = "SKiDL Tag"
@@ -86,6 +87,7 @@ class PlacementMixin:
         """Move several footprints at once ({ref: {to, rot, side}}); collisions are checked
         on the final arrangement, so parts may swap places. Nothing moves if one of them is
         locked, unless ``force``."""
+        moves = {ref: {**m, "side": fp_side(m["side"]) if m.get("side") else None} for ref, m in moves.items()}
         self._refuse_locked(moves, force)
         undo = []
         for ref, m in moves.items():

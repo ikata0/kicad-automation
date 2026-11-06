@@ -809,9 +809,7 @@ class StampMixin:
         block_pcb, lib_instance = lib.board_of(block_pcb, near=self.path)
         source_instance = source_instance or lib_instance
         earlier = self._stamp_record(instance) if instance else {}
-        side = side or earlier.get("side", "top")
-        if side not in ("top", "bottom"):
-            raise env.KatError(f"side {side!r}: top or bottom")
+        side = lay.stamp_side(side) or earlier.get("side", "top")
         bottom = side == "bottom"
         anchor = anchor or earlier.get("anchor", "origin")
         if anchor not in ("origin", "top-left"):

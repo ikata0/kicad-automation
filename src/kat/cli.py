@@ -186,7 +186,7 @@ def cmd_pcb(a):
                 raise env.KatError("--min-pitch searches the pitch; set it with --save, not --pitch/--clear")
             return kat.pcb.min_pitch(a.block, a.min_pitch, xy(a.center) if a.center else None, a.side,
                                      a.layer_map, a.allow_asymmetric, a.shared, a.save)
-        if a.save or a.center or a.shared or a.side != "top":
+        if a.save or a.center or a.shared or a.side not in ("top", "F"):
             raise env.KatError("--save, --center, --shared and --side go with --min-pitch")
         return kat.pcb.block_cell(a.block, xy(a.pitch) if a.pitch else None, a.clear)
     if a.pcb_cmd == "roles":
@@ -1025,7 +1025,7 @@ def build_parser() -> argparse.ArgumentParser:
     s9.add_argument("--rot", type=float, default=0.0, help="degrees, a multiple of 45")
     s9.add_argument("--no-lock", action="store_true", help="leave the copied copper unlocked")
     s9.add_argument("--make-room", action="store_true", help="move design parts out of the block's way")
-    s9.add_argument("--side", choices=("top", "bottom"), help="side of the block's parts (default: as recorded, else top)")
+    s9.add_argument("--side", choices=("top", "bottom", "F", "B"), help="side of the block's parts, top/F or bottom/B (default: as recorded, else top)")
     s9.add_argument("--layer-map", metavar="MAP", help='auto (default), roles, or "F.Cu=B.Cu,In1.Cu=In2.Cu,..."')
     s9.add_argument("--allow-asymmetric", action="store_true",
                     help="flip with the auto map although the stack-up is not mirror-symmetric")
@@ -1052,7 +1052,7 @@ def build_parser() -> argparse.ArgumentParser:
     s18.add_argument("--clear", action="store_true", help="remove the block's pitch")
     s18.add_argument("--min-pitch", choices=("x", "y", "arc"), help="search the smallest collision-free pitch")
     s18.add_argument("--center", metavar="CX,CY", help="arc centre in block coordinates (mm)")
-    s18.add_argument("--side", choices=("top", "bottom", "alternate"), default="top",
+    s18.add_argument("--side", choices=("top", "bottom", "F", "B", "alternate"), default="top",
                      help="side of the copies (default top)")
     s18.add_argument("--layer-map", metavar="MAP", help='bottom copies: auto (default) or "F.Cu=B.Cu,..."')
     s18.add_argument("--allow-asymmetric", action="store_true",

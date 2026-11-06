@@ -49,9 +49,13 @@ def test_move_refuses_overlap_and_move_many_swaps(pcb):
         assert (b.footprint("R2").x, b.footprint("R2").y) == (60, 50)   # untouched after refusal
         b.move_many({"R1": {"to": (60, 50)}, "R2": {"to": (50, 50), "rot": 90}})
         assert b.footprint("R1").x == 60 and b.footprint("R2").rot == 90
-        b.flip("D1")
+        b.move("D1", side="bottom")               # FR-045: the stamping words as well
         assert b.footprint("D1").side == "B"
-        b.move("D1", to=(50, 50))                  # other side: no courtyard conflict
+        b.move("D1", to=(50, 50), side="B")        # other side: no courtyard conflict
+        assert b.footprint("D1").side == "B"
+        with pytest.raises(kat.KatError, match="side 'up'"):
+            b.move("D1", side="up")                # was taken as "the other side"
+        assert b.footprint("D1").side == "B"
     assert kat.pcb.drc(pcb)["by_type"].get("courtyards_overlap") is None
 
 
