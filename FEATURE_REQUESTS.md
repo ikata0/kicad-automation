@@ -39,13 +39,6 @@ times. The flat sync places a `PWR_FLAG` where ERC reports an undriven power net
 (`src\kat\syncer.py`); check whether hierarchical designs get one flag per net at the
 top level, and none from the block sheets.
 
-### FR-032: Grow the paper when sync places sheet boxes
-
-**Partial.** The flat sync grows the paper when symbols do not fit
-(`Syncer._grow_paper`), and `kat new --paper` / `kat page` set it by hand. Sheet boxes
-placed by a hierarchical sync (`_next_spot` in `src\kat\syncer_hier.py`) wrap at the
-page width but never check its height, so many boxes end up off the page.
-
 ### FR-033: Per-project reference prefixes
 
 **Open.** Generic connectors get `J`; some projects use another prefix (e.g. `CON`).
@@ -492,3 +485,11 @@ findings. `kat.ready` / `kat ready` without `--expect` now compare with the desi
 the sheet was last synced from (`expect` in the result), as the gate does, so the two give
 the same errors; `explain` names them in one line. The exit-code report was not reproduced
 (1 on `ok: false`, 2 on errors).
+
+### FR-032: Grow the paper when sync places sheet boxes
+
+A hierarchical sync grows the paper (one ISO size at a time) when a row of sheet boxes
+would reach the title block, and reports it in `paper` [{sheet, from, to}], which the
+hierarchical report used to drop (`syncer.grow_paper`, `syncer_hier._next_spot`). New
+parts are now placed below the sheet boxes instead of over them. Test:
+`test_many_boxes_grow_the_paper` (30 boxes from A4).

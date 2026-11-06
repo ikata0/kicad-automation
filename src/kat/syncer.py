@@ -33,6 +33,19 @@ def natural_key(ref: str) -> list:
     return [int(t) if t.isdigit() else t for t in re.split(r"(\d+)", ref)]
 
 
+def grow_paper(s: Schematic, paper: list) -> bool:
+    """Step the sheet's ISO paper up one size (A4 -> A3 ... -> A0) and keep ``paper`` (a
+    report list) at one entry {from, to}; False when it is A0, a user size or unset."""
+    p = find(s.tree, "paper")
+    sizes = ["A4", "A3", "A2", "A1", "A0"]
+    if p is None or str(p[1]) not in sizes[:-1]:
+        return False
+    old = str(p[1])
+    p[1] = sizes[sizes.index(old) + 1]
+    paper[:] = [{"from": paper[0]["from"] if paper else old, "to": str(p[1])}]
+    return True
+
+
 def paper_size(s: Schematic) -> tuple[float, float]:
     p = find(s.tree, "paper")
     if p is None:
@@ -92,6 +105,7 @@ class Syncer:
             "added", "removed", "renamed", "updated", "replaced", "detached", "attached",
             "named", "wired", "flags", "no_connect", "paper", "unresolved")}
         self.new_refs: set[str] = set()
+        self.obstacles: list = []      # boxes new parts keep clear of besides the drawing (sheet boxes)
         self._attached_at: set[tuple[str, float, float]] = set()
 
     # --- parts ----------------------------------------------------------------------
@@ -231,6 +245,7 @@ class Syncer:
         s = self.s
         boxes = [b for sym in s.symbols() if (b := s.body_box(sym))]
         boxes += [(l["x"], l["y"] - 1.3, l["x"] + text_width(l["text"]), l["y"]) for l in s.labels()]
+        boxes += self.obstacles
         x0 = 50.8 if not boxes else max(25.4, snap(min(b[0] for b in boxes)))
         y0 = 50.8 if not boxes else max(b[3] for b in boxes) + 20.32
         net_of = self._net_of()
@@ -328,15 +343,7 @@ class Syncer:
         return False
 
     def _grow_paper(self) -> bool:
-        p = find(self.s.tree, "paper")
-        sizes = ["A4", "A3", "A2", "A1", "A0"]
-        if p is None or str(p[1]) not in sizes[:-1]:
-            return False
-        old = str(p[1])
-        p[1] = sizes[sizes.index(old) + 1]
-        grown = [g for g in self.report["paper"]]
-        self.report["paper"] = [{"from": grown[0]["from"] if grown else old, "to": str(p[1])}]
-        return True
+        return grow_paper(self.s, self.report["paper"])
 
     # --- connectivity -----------------------------------------------------------------
 

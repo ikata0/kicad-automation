@@ -904,7 +904,8 @@ kat sync top/top.kicad_sch design.net --sheets ch,rc      # remembered in top.ka
   outputs right, then names (`in`/`inp` left, `out`/`*_out` right), else left. Each side
   is ordered top to bottom. So draw a block's ports at its left and right edges.
 - **New boxes** go in a row below what is drawn, spaced for their labels and fields,
-  wrapping at the page edge.
+  wrapping at the page edge. Rows that would reach the title block grow the paper, one ISO
+  size at a time (`paper`: [{sheet, from, to}]); new parts go below the boxes, not onto them.
 - **References follow the design:** every instance gets the SKiDL reference of its part
   (annotation per instance), so KiCad's netlist and `design.net` compare 1:1, and the
   block keeps its own references in its own project.
@@ -1116,6 +1117,7 @@ column in place of the net.
 | Freerouting narrows tracks at fine-pitch pads below the net-class width (DRC `track_width`); `--router.automatic_neckdown=false` is not applied on 2.4.1 | kat passes that setting on every run, which kept 2.5.0's test boards free of such errors; 2.5.0 still narrows some tracks, and on import kat widens them to the class width where the clearance allows, or else to the board's minimum, and reports the rest (`narrow`) |
 | A reference without a number (`ROUT`) passes ERC and parity, but KiCad treats it as unannotated: the BOM prints `ROUT?` | `kat ready` error `reference_without_number` |
 | No `rsvg-convert` on Windows; `kicad-cli` not on PATH there | PyMuPDF fallback (`[render]` extra, AGPL-3.0); discover KiCad 10 from HKCU/HKLM installer registration (32/64-bit views, custom folders), then standard folders; explicit `KICAD_CLI` and PATH take precedence |
+| A hierarchical sync placed 30 sheet boxes in rows down an A4 page and past its bottom; the flat sync's paper growth never saw them, and new parts were placed over the boxes | sheet boxes grow the paper too; the parts' placement counts the boxes |
 | `kat ready` without `--expect` passed while `kat pcb sync` refused: the gate compares with the remembered design netlist, `ready` compared with nothing; the refusal only counted the problems | `ready` defaults to the remembered netlist; refusals carry `gate.errors` and name the findings |
 | PowerShell's `>` writes a command's JSON as UTF-16 with a BOM, which other tools then fail to parse | `kat pcb check --out FILE` (like `pcb escape --out`) writes UTF-8 itself |
 | A child process cannot update the calling shell's environment | cache the discovered executable as `KICAD_CLI` inside the kat process and pass it to children; each independent CLI invocation discovers again. README shows how PowerShell can explicitly capture the path for tests/SKiDL |

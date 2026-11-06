@@ -273,6 +273,47 @@ def test_a_design_using_a_block_does_not_make_it_stale(lib, tmp_path):
     assert blocks.build("CH", force=True)["flat"]["restamped"] == []
 
 
+CHAIN_PY = '''from skidl import KICAD10, Net, Part, generate_netlist, set_default_tool
+import kat
+set_default_tool(KICAD10)
+rc = kat.blocks.use("RC")
+gnd = Net("GND")
+j = Part("Connector_Generic", "Conn_01x02", tag="j",
+         footprint="Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical")
+nets = [Net(f"N{i}") for i in range(%d)]
+j[1] += nets[0]
+j[2] += gnd
+for i in range(len(nets) - 1):
+    rc(inp=nets[i], out=nets[i + 1], gnd=gnd, tag=f"S{i:02d}")
+generate_netlist(file_="design.net")
+kat.skidl_blocks.write("design.net")
+'''
+
+
+def test_many_boxes_grow_the_paper(lib, tmp_path):
+    """FR-032: sheet boxes that do not fit below each other grow the paper, as parts do."""
+    from kat.syncer import paper_size
+    blocks.build("RC", force=True)
+    d = tmp_path / "design"
+    d.mkdir()
+    (d / "design.py").write_text(CHAIN_PY % 31)
+    subprocess.run([sys.executable, "design.py"], cwd=d, check=True, capture_output=True)
+    sch = d / "top" / "top.kicad_sch"
+    assert cli.main(["new", str(sch)]) == 0
+    rep = kat.sync(sch, d / "design.net", sheets=["rc"])
+    assert rep["check"]["ok"], rep["check"]
+    assert rep["paper"] and rep["paper"][0]["from"] == "A4" and rep["paper"][0]["sheet"] == "top.kicad_sch", rep["paper"]
+    s = Schematic(sch)
+    w, h = paper_size(s)
+    boxes = hierarchy.sheets(s)
+    assert len(boxes) == 30
+    assert all(b["at"][0] + b["size"][0] < w and b["at"][1] + b["size"][1] < h - 45 for b in boxes)
+    j = next(b for sym in s.symbols() if sym.ref == "J1" and (b := s.body_box(sym)))
+    assert all(b["at"][1] > j[3] for b in boxes)                     # below the parts
+    again = kat.sync(sch, d / "design.net")
+    assert not again["added"] and not again["updated"] and not again["paper"], again
+
+
 def test_boxes_are_arranged_and_keep_hand_changes(lib, tmp_path):
     blocks.build("RC", force=True)
     d = tmp_path / "design"

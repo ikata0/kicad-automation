@@ -166,11 +166,13 @@ def _without_sheets(s: Schematic):
 def _flat(s: Schematic, design: Design, parts: list, rename: dict[str, str], power_flags: bool) -> dict:
     """The flat part of one sheet: the usual sync with a netlist cut to this sheet."""
     from .syncer import Syncer
+    boxes = [b.box() for b in s.sheet_boxes()]      # new parts go below them, not onto them
     back = _without_sheets(s)
     try:
         with tempfile.TemporaryDirectory() as d:
             net = design.reduced(parts, rename, Path(d) / "scope.net")
             sync = Syncer(s, net, design.no_connect)
+            sync.obstacles = boxes
             sync.sync_parts()
             sync.reconcile()
             sync.no_connects()
@@ -257,7 +259,8 @@ def _boxes(s: Schematic, design: Design, within: str, rename: dict[str, str], ne
                 report["updated"].append(f"sheet {name} {', '.join(dict.fromkeys(changes))}")
         else:
             nets = {p: _clean(n) if isinstance(n, str) else "" for p, n in inst["ports"].items()}
-            at, size, bottom = _next_spot(s, row, left, right, nets, fields)
+            at, size, bottom = _next_spot(s, row, left, right, nets, fields,
+                                          report["paper"].setdefault(s.path.name, []))
             hierarchy.add_sheet(s, name, child, at[0], at[1], left=left, right=right, fields=fields)
             texts = [f"File: {rel}"] + [f"{k}: {v}" for k, v in fields.items()]
             reach = max(size[0] + max([text_width(nets.get(p, "")) + 5.08 for p in right] or [0]),
@@ -362,11 +365,22 @@ def _relpath(target: Path, base: Path) -> str:
 
 
 def _next_spot(s: Schematic, row: list, left: dict, right: dict, nets: dict[str, str],
-               fields: dict) -> tuple[tuple[float, float], tuple[float, float], float]:
+               fields: dict, paper: list | None = None) -> tuple[tuple[float, float], tuple[float, float], float]:
     """Where a new box goes: right of the last box placed in this run, with room for both
     boxes' labels, wrapping to a new row at the page edge; the first one below everything
     drawn. ``row``: the boxes placed so far as (right end of box, labels and fields, top,
-    bottom of the fields). Returns the corner, the box size and the bottom of its fields."""
+    bottom of the fields). A box whose fields reach the title block's height grows the
+    paper (one ISO size at a time, recorded in ``paper``) and is placed again. Returns the
+    corner, the box size and the bottom of its fields."""
+    from .syncer import grow_paper, paper_size
+    spot = _spot(s, row, left, right, nets, fields)
+    while paper is not None and spot[2] > paper_size(s)[1] - 45 and grow_paper(s, paper):
+        spot = _spot(s, row, left, right, nets, fields)
+    return spot
+
+
+def _spot(s: Schematic, row: list, left: dict, right: dict, nets: dict[str, str],
+          fields: dict) -> tuple[tuple[float, float], tuple[float, float], float]:
     from .syncer import paper_size
     widest = max([text_width(p) for p in (*left, *right)] or [0])
     w = snap(max(15.24, 2 * widest + 7.62))
@@ -455,7 +469,7 @@ def run(root: Path, design_path: Path, sheets: list[str] | None = None, dry_run:
     near = root.parent
     sheet_names = _sheet_names(root, design, rename_sheets, generate)
     report = {"added": [], "removed": [], "updated": [], "renamed": [], "renamed_sheets": [], "possible_renames": [],
-              "attached": [], "unresolved": [], "files": [], "parameters": {}}
+              "attached": [], "unresolved": [], "files": [], "parameters": {}, "paper": {}}
     files: dict[Path, Schematic] = {}
 
     def draw(file: Path, within: str, rename: dict[str, str], is_root: bool) -> None:
@@ -464,6 +478,8 @@ def run(root: Path, design_path: Path, sheets: list[str] | None = None, dry_run:
         for k in ("added", "removed", "updated", "renamed", "attached", "unresolved"):
             report[k] += [dict(x, sheet=file.name) if isinstance(x, dict) else f"{file.name}: {x}"
                           for x in rep.get(k, [])]
+        if rep.get("paper"):
+            report["paper"][file.name] = rep["paper"]
         for child in design.children(within):     # generated sheets first: their ports are the pins
             if child in generate:
                 inst = design.rec[child]
@@ -484,6 +500,7 @@ def run(root: Path, design_path: Path, sheets: list[str] | None = None, dry_run:
         report["files"].append(str(file))
 
     draw(root, "", {}, True)
+    report["paper"] = [dict(e, sheet=name) for name, es in report["paper"].items() for e in es]
     if dry_run:
         return dict(report, dry_run=True)
     for s in files.values():
