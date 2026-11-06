@@ -602,13 +602,15 @@ def build_parser() -> argparse.ArgumentParser:
             "           value, no footprint, footprint library or file not found, symbol pin\n"
             "           without a pad, missing required field (default MPN; parts excluded\n"
             "           from the BOM are exempt)\n"
-            "  warnings no --expect, numbered pad without a symbol pin (often fine: mounting\n"
+            "  warnings no design netlist, numbered pad without a symbol pin (often fine: mounting\n"
             "           or shield pads), footprint outside the symbol's filters, no 3D model\n"
-            "ready = no errors. Footprints come from fp-lib-table (global + project).",
+            "ready = no errors; explain names them. Without --expect the design netlist the sheet\n"
+            "was last synced from is used, as kat pcb sync's gate does.\n"
+            "Footprints come from fp-lib-table (global + project).",
             ["kat ready tia.kicad_sch --expect tia_design.net",
              "kat ready tia.kicad_sch --expect tia_design.net --require-field MPN "
              "--require-field Manufacturer"])
-    q.add_argument("--expect", metavar="NETLIST", help="design netlist, as for kat check")
+    q.add_argument("--expect", metavar="NETLIST", help="design netlist (default: the one last synced from)")
     q.add_argument("--require-field", action="append", metavar="NAME",
                    help="field every BOM part must fill (repeatable; default MPN)")
     q.add_argument("--no-require", action="store_true", help="require no fields")

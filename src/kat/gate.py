@@ -30,6 +30,48 @@ def _filters_match(filters: str, fp_id: str) -> bool:
                for f in filters.split())
 
 
+def _not_ok(res: dict, expect: Path | None) -> str:
+    """What makes the schematic not ``ok``, by name (ERC types, netlist differences)."""
+    why = []
+    if res["erc"]["errors"]:
+        types = sorted({v["type"] for v in res["erc"]["violations"] if v["severity"] == "error"})
+        why.append(f"{res['erc']['errors']} ERC errors ({', '.join(types)})")
+    nl = res.get("netlist_vs_expected")
+    if nl and not nl["match"]:
+        n = nl["counts"]
+        eg = [f"{d['net']}: " + ", ".join(".".join(map(str, p)) for p in d["pins"][:4])
+              for d in (nl["missing"] + nl["extra"])[:2]]
+        why.append(f"schematic differs from the design netlist {Path(expect).name}: {n['missing']} design "
+                   f"nets not drawn as such, {n['extra']} drawn nets not in the design (e.g. {'; '.join(eg)})")
+    if res.get("mapping") and not res["mapping"]["ok"]:
+        why.append("pins disagree with the pin table")
+    return "; ".join(why) + "; run kat check"
+
+
+def _not_clean(res: dict, findings: dict) -> str:
+    """The drawing findings that make the schematic not ``clean``, counted by kind."""
+    nl = res.get("netlist_vs_expected") or {}
+    counts = {**findings, "name_differences": len(nl.get("name_differences") or []),
+              "unnamed": len(nl.get("unnamed") or [])}
+    return ("drawing findings: " + ", ".join(f"{n} {k}" for k, n in counts.items() if n)
+            + "; run kat check / look at the snapshot")
+
+
+def explain(ready: dict, limit: int = 6) -> str:
+    """One line naming what a ``run`` result's errors are: each problem with its count, the
+    details of the schematic-wide ones and up to ``limit`` references for the rest."""
+    parts, by = [], {}
+    for e in ready["errors"]:
+        by.setdefault(e["problem"], []).append(e)
+    for problem, items in by.items():
+        if items[0]["ref"] is None:
+            parts.append(f"{problem}: {items[0]['detail']}")
+            continue
+        refs = [e["ref"] + (f" ({e['detail']})" if e["detail"] else "") for e in items[:limit]]
+        parts.append(f"{len(items)} {problem}: {', '.join(refs)}" + (", ..." if len(items) > limit else ""))
+    return "; ".join(parts)
+
+
 def run(sch: Path, expect: Path | None = None, require: tuple[str, ...] = ("MPN",)) -> dict:
     """Errors block the layout; warnings are for a human look.
 
@@ -59,10 +101,12 @@ def run(sch: Path, expect: Path | None = None, require: tuple[str, ...] = ("MPN"
     summary = {"ok": res["ok"], "clean": res["clean"], "erc_errors": res["erc"]["errors"],
                "erc_warnings": res["erc"]["warnings"],
                "netlist_match": nl["match"] if nl else None, "findings": findings}
+    if nl:
+        summary["netlist_differences"] = {k: nl["counts"][k] for k in ("missing", "extra")}
     if not res["ok"]:
-        err(None, "schematic_not_ok", "ERC errors or netlist differs from the design; run kat check")
+        err(None, "schematic_not_ok", _not_ok(res, expect))
     elif not res["clean"]:
-        err(None, "schematic_not_clean", "drawing findings; run kat check / look at the snapshot")
+        err(None, "schematic_not_clean", _not_clean(res, findings))
     if not expect:
         warn(None, "no_expect", "netlist not compared with the design netlist")
 
@@ -126,5 +170,6 @@ def run(sch: Path, expect: Path | None = None, require: tuple[str, ...] = ("MPN"
     by_problem: dict[str, int] = {}
     for item in errors + warnings:
         by_problem[item["problem"]] = by_problem.get(item["problem"], 0) + 1
-    return {"file": str(sch), "ready": not errors, "parts": len(comps), "check": summary,
+    return {"file": str(sch), "expect": str(expect) if expect else None, "ready": not errors,
+            "parts": len(comps), "check": summary,
             "by_problem": by_problem, "errors": errors, "warnings": warnings}

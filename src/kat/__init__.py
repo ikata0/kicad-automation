@@ -178,9 +178,16 @@ def ready(sch: Path | str, expect: Path | str | None = None,
     """Ready-for-layout gate: ``ready`` is true when the schematic is clean and every board
     part has a value, a footprint that exists and has a pad for every symbol pin, and the
     ``require`` fields (parts excluded from the BOM are exempt). ``errors`` block the
-    layout; ``warnings`` (extra pads, footprint filters, 3D models) want a human look."""
+    layout; ``warnings`` (extra pads, footprint filters, 3D models) want a human look.
+    ``expect`` defaults to the design netlist the sheet was last synced from, as the board
+    sync's gate uses it (named in ``expect``); ``explain`` names the errors in one line."""
     report.touch(sch)
-    return tidy(gate.run(Path(sch), Path(expect) if expect else None, tuple(require)))
+    from .syncer_hier import remembered_design
+    expect = Path(expect) if expect else remembered_design(Path(sch))
+    res = tidy(gate.run(Path(sch), expect, tuple(require)))
+    if res["errors"]:
+        res["explain"] = gate.explain(res)
+    return res
 
 
 def snapshot(sch: Path | str, slug: str = "", note: str | None = None,

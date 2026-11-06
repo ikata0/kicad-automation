@@ -118,3 +118,8 @@ def test_gate_compares_with_the_remembered_design(project, tmp_path):
     write_netlist(net, BASE_PARTS, changed, GOOD_FP, MPN)       # same file, not synced
     r = kat.pcb.sync(board_of(project))
     assert not r["ok"] and r["gate"]["by_problem"].get("schematic_not_clean") == 1, r["gate"]
+    # FR-036: the refusal names the findings, and kat ready (no --expect) agrees with it
+    assert "schematic_not_clean: drawing findings: 1 name_differences" in r["error"], r["error"]
+    assert r["gate"]["errors"][0]["problem"] == "schematic_not_clean"
+    ready = kat.ready(project)
+    assert not ready["ready"] and ready["errors"] == r["gate"]["errors"]

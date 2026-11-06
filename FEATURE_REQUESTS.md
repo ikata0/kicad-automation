@@ -64,16 +64,6 @@ sync gate. Expected: refuse with a list of the hand edits, or merge them.
 `NO_LIB` warnings and left its by-products (`.erc`, `.log`, `_sklib.py`) in the project
 root.
 
-### FR-036: Explain sync-gate refusals
-
-**Partial.** The CLI exits 2 on a `KatError` and 1 on `ok: false`, so the reported exit
-code 0 after a failed `kat sync` was not reproduced from the code. Remaining:
-`kat pcb sync` refuses with only `gate.by_problem` counts (`src\kat\pcb\syncer.py`), while
-`gate.run` has the `errors` themselves. The gate also judges the schematic against the
-remembered design netlist, which `kat ready` did not report, so `kat ready` passed while
-the gate refused. Request: name each failing finding in the refusal (e.g. "schematic
-differs from the netlist: N pins"), and make `kat ready` and the gate agree.
-
 ## Electrical checks
 
 ### FR-006: Estimate coupling across repeated blocks in 3D
@@ -491,3 +481,14 @@ part for any value that wasn't its own side.
 with a bare reference, set KiCad's footprint-level `zone_connect`. Pads without an override
 of their own follow it, and KiCad's fill does too (`tests/test_pcb_zones.py`). Stamping
 copies it, as it does the pad overrides.
+
+### FR-036: Explain sync-gate refusals
+
+A refused `kat pcb sync` carries the gate's `errors` (`gate.errors`) and names them in
+`error`, e.g. "schematic_not_ok: schematic differs from the design netlist d.net: 1 design
+nets not drawn as such, 1 drawn nets not in the design (e.g. ...)". The schematic-wide
+findings name the ERC types, netlist differences (`check.netlist_differences`) or drawing
+findings. `kat.ready` / `kat ready` without `--expect` now compare with the design netlist
+the sheet was last synced from (`expect` in the result), as the gate does, so the two give
+the same errors; `explain` names them in one line. The exit-code report was not reproduced
+(1 on `ok: false`, 2 on errors).

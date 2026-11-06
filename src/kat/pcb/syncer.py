@@ -384,9 +384,11 @@ def run(pcb: Path, sch: Path | None = None, dry_run: bool = False, force: bool =
     from ..syncer_hier import remembered_design
     ready = gate.run(sch, remembered_design(sch), require)
     summary = {"ready": ready["ready"], "by_problem": ready["by_problem"]}
+    if not ready["ready"]:
+        summary["errors"] = ready["errors"][:20]
     if not ready["ready"] and not force:
         return {"board": str(pcb), "gate": summary, "changed": False, "ok": False,
-                "error": "schematic not ready for layout (kat ready); fix it or use force"}
+                "error": f"schematic not ready for layout (kat ready): {gate.explain(ready)}; fix it or use force"}
     report = BoardSync(pcb, sch).run(dry_run, rip_stale)
     report["gate"] = summary
     if "check" in report:

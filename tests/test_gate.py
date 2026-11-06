@@ -65,10 +65,10 @@ def test_warnings_do_not_block(project, tmp_path):
     fps = {**GOOD_FP, "J1": "Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical",
            "R1": "Capacitor_SMD:C_0603_1608Metric"}    # pads fit, but not an R footprint
     prepare(project, tmp_path, fps)
-    r = kat.ready(project)                             # no expect -> warning only
+    r = kat.ready(project)                     # FR-036: compared with the design it was synced from
     assert r["ready"], r["errors"]
-    assert problems(r, "warnings") >= {(None, "no_expect"), ("J1", "pad_without_pin"),
-                                       ("R1", "footprint_filter")}
+    assert r["expect"] == str((tmp_path / "design.net").resolve()) and (None, "no_expect") not in problems(r, "warnings")
+    assert problems(r, "warnings") >= {("J1", "pad_without_pin"), ("R1", "footprint_filter")}
 
 
 def test_board_and_bom_flags(project, tmp_path):
@@ -82,9 +82,11 @@ def test_board_and_bom_flags(project, tmp_path):
     s.save()
     r = kat.ready(project)
     assert r["parts"] == 2                            # D1 is not on the board
-    assert r["ready"], r["errors"]                    # R1 needs no MPN
-    # the design netlist still has D1: a part left off the board is a netlist difference
-    assert (None, "schematic_not_ok") in problems(kat.ready(project, expect=net))
+    assert ("R1", "missing_field") not in problems(r)  # R1 needs no MPN
+    # the design netlist still has D1: a part left off the board is a netlist difference,
+    # also without --expect (the netlist the sheet was synced from, as the board sync's gate)
+    assert problems(r) == {(None, "schematic_not_ok")}, r["errors"]
+    assert problems(kat.ready(project, expect=net)) == {(None, "schematic_not_ok")}
 
 
 def test_unclean_schematic_blocks(project, tmp_path):
@@ -94,6 +96,11 @@ def test_unclean_schematic_blocks(project, tmp_path):
     assert kat.ready(project, expect=net)["ready"]
     r = kat.ready(project, expect=other)
     assert not r["ready"] and (None, "schematic_not_ok") in problems(r)
+    # FR-036: named, not only counted
+    detail = next(e["detail"] for e in r["errors"] if e["problem"] == "schematic_not_ok")
+    assert "differs from the design netlist other.net: 1 design nets" in detail, detail
+    assert r["check"]["netlist_differences"] == {"missing": 1, "extra": 1}
+    assert r["explain"].startswith("schematic_not_ok: schematic differs")
 
 
 def test_cli_exit_code(project, tmp_path, capsys):

@@ -216,7 +216,8 @@ kicad-cli nor kicad-python offers.
   SKiDL netlist: DRC schematic parity compares KiCad's own net names (`/LED_1_1`,
   `Net-(D1-A)`) and every symbol field.
 - **Gate**: refuses unless `kat ready` passes (`--force` overrides; the report carries the
-  gate result either way).
+  gate result either way). The refusal names each finding (`gate.errors`, and in `error`
+  e.g. "schematic differs from the design netlist d.net: 2 design nets not drawn as such").
 - **Identity**: symbol path `/<uuid>` (KiCad's link) → SKiDL tag → reference. A footprint
   still linked to another design symbol is never taken over by a fallback.
 - **Add**: footprint from `fp-lib-table` with reference, value, all symbol fields (hidden),
@@ -1003,17 +1004,19 @@ pin names/numbers or wires running through text, so the image review is mandator
 `kat ready SCH --expect design.net` is the gate between schematic and PCB. It reads the
 netlist KiCad exports from the schematic — the data the board is built from — so symbols
 marked "not on board" are not board parts (and, if the design has them, show up as a
-netlist difference).
+netlist difference). Without `--expect` it compares with the design netlist the sheet was
+last synced from (`expect` in the result), as the board sync's gate does, so the two agree.
 
 | Errors (block the layout) | Warnings (look, then decide) |
 |---|---|
-| schematic not `ok` / not `clean` (as `kat check`) | no `--expect` given |
+| schematic not `ok` / not `clean` (as `kat check`), with the ERC types, netlist differences or drawing findings named | no design netlist (`--expect`, or the one last synced from) |
 | reference not annotated (`R?`) or without a number (`ROUT`: KiCad's BOM prints `ROUT?`), empty value | numbered pad without a symbol pin (mounting, shield or thermal pads are often fine) |
 | no footprint; footprint library not in `fp-lib-table` (global + project); footprint file missing | footprint outside the symbol's footprint filters (`ki_fp_filters`) |
 | a symbol pin without a pad of that number (the part cannot be connected) | footprint has no 3D model file |
 | a required field empty (default `MPN`, `--require-field` repeatable, `--no-require`); parts excluded from the BOM are exempt, and so are a library block's harness parts (`ready`, `pcb sync` and `block check` on the block's own schematic) | |
 
-`ready` is true when there are no errors; `by_problem` counts both lists. Footprints and
+`ready` is true when there are no errors; `by_problem` counts both lists, `explain` names
+the errors in one line. Footprints and
 part numbers are chosen in SKiDL (`footprint=`, `part.fields["MPN"]`) and reach the
 schematic through `sync`, so fixing the gate is a design change (§4.3), not a drawing edit.
 
@@ -1113,6 +1116,7 @@ column in place of the net.
 | Freerouting narrows tracks at fine-pitch pads below the net-class width (DRC `track_width`); `--router.automatic_neckdown=false` is not applied on 2.4.1 | kat passes that setting on every run, which kept 2.5.0's test boards free of such errors; 2.5.0 still narrows some tracks, and on import kat widens them to the class width where the clearance allows, or else to the board's minimum, and reports the rest (`narrow`) |
 | A reference without a number (`ROUT`) passes ERC and parity, but KiCad treats it as unannotated: the BOM prints `ROUT?` | `kat ready` error `reference_without_number` |
 | No `rsvg-convert` on Windows; `kicad-cli` not on PATH there | PyMuPDF fallback (`[render]` extra, AGPL-3.0); discover KiCad 10 from HKCU/HKLM installer registration (32/64-bit views, custom folders), then standard folders; explicit `KICAD_CLI` and PATH take precedence |
+| `kat ready` without `--expect` passed while `kat pcb sync` refused: the gate compares with the remembered design netlist, `ready` compared with nothing; the refusal only counted the problems | `ready` defaults to the remembered netlist; refusals carry `gate.errors` and name the findings |
 | PowerShell's `>` writes a command's JSON as UTF-16 with a BOM, which other tools then fail to parse | `kat pcb check --out FILE` (like `pcb escape --out`) writes UTF-8 itself |
 | A child process cannot update the calling shell's environment | cache the discovered executable as `KICAD_CLI` inside the kat process and pass it to children; each independent CLI invocation discovers again. README shows how PowerShell can explicitly capture the path for tests/SKiDL |
 | `from skidl import NC` fails: `NC` is a builtin SKiDL puts into the namespace; NC pins do not appear in the netlist at all | use `NC` without importing it; `kat.skidl_blocks.write` records NC pins, sync draws the flags |
