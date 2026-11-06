@@ -187,5 +187,9 @@ def test_a_chain_table_on_a_real_board_and_the_board_cli(pcb, tmp_path, capsys):
     assert r["extra"] == [{"pin": "J1.2", "net": next(e["net"] for e in r["extra"])}] and not r["split"], r
     assert r["ignored"] == ["meaning"]
     assert kat.mapping.check(board_of(pcb.with_suffix(".kicad_sch")), good, complete=False)["ok"]
-    assert cli.main(["pcb", "check", str(pcb), "--map", str(good), "--partial"]) in (0, 1)
-    assert json.loads(capsys.readouterr().out)["mapping"]["ok"]
+    out = tmp_path / "check.json"
+    assert cli.main(["pcb", "check", str(pcb), "--map", str(good), "--partial", "--out", str(out)]) in (0, 1)
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["mapping"]["ok"] and printed["out"] == str(out)
+    written = json.loads(out.read_bytes().decode("utf-8"))           # UTF-8, no BOM
+    assert written["mapping"] == printed["mapping"] and "out" not in written

@@ -147,7 +147,7 @@ def cmd_pcb(a):
         return kat.pcb.sync(a.pcb, a.sch, a.dry_run, a.force, a.rip_stale,
                             () if a.no_require else (a.require_field or ["MPN"]))
     if a.pcb_cmd == "check":
-        return kat.pcb.check(a.pcb, a.map, _complete(a))
+        return kat.pcb.check(a.pcb, a.map, _complete(a), a.out)
     if a.pcb_cmd == "refill":
         return kat.pcb.refill(a.pcb)
     if a.pcb_cmd == "fab":
@@ -927,6 +927,7 @@ def build_parser() -> argparse.ArgumentParser:
     s2.add_argument("pcb", metavar="PCB")
     s2.add_argument("--map", metavar="TABLE", help="pin table the pads must agree with (CSV or JSON)")
     _map_options(s2)
+    s2.add_argument("--out", metavar="FILE", help="also write the result as JSON (UTF-8)")
     s8 = psp.add_parser("refill", formatter_class=_Fmt, help="fill all pours and save them",
                         description="KiCad's zone filler (through DRC) fills every pour and the result\n"
                                     "is saved into the board. Run it after the finish pass.")

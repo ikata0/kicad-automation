@@ -438,6 +438,7 @@ that no more fit on this grid, on these layers; a finer `grid` cannot go below t
 plus kat's findings (outline missing, parts outside the outline, net rules). `ok` = no DRC
 errors, parity 0, nothing unconnected, outline present; `clean` = `ok` and no DRC warnings or kat
 findings. `islands` counts copper cut off from its net (starved thermals, isolated copper).
+`--out FILE` also writes the result as UTF-8 JSON (PowerShell's `>` writes UTF-16).
 
 **Net rules** (`kat pcb netrule`, stored in `<board>.kat.json`) check what DRC does not
 know; their findings are in `net_rules.findings` (with positions, so `--finding-crops`
@@ -946,7 +947,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `pcb refill PCB` | fill all pours and save them (after finishing) |
 | `pcb fab PCB` / `pcb ready PCB [--accept KIND=REASON] [--overhang REF]` | fabrication set / release gate (§4.11) |
 | `pcb route PCB [--passes] [--net NAME] [--skip-class NAME] [--no-optimize] [--timeout S] [--router-option KEY=VALUE] [--install]` | Freerouting through kat's DSN/SES, then the board check (§4.10) |
-| `pcb check PCB [--map TABLE]` / `pcb snapshot PCB` / `pcb view PCB ...` | board DRC + findings, history step with pictures, zoomed view (§4.12) |
+| `pcb check PCB [--map TABLE] [--out FILE]` / `pcb snapshot PCB` / `pcb view PCB ...` | board DRC + findings, history step with pictures, zoomed view (§4.12) |
 | `pcb stamp PCB BLOCK_PCB INSTANCE... --at X,Y [--step DX,DY] [--rot R] [--anchor origin/top-left] [--no-lock] [--make-room] [--side bottom] [--layer-map auto/roles/MAP] [--allow-asymmetric]` | copy a checked block layout onto instances (`all`), flipped on the bottom side, then the board check (§4.18) |
 | `pcb stamp PCB BLOCK_PCB [INSTANCE...] --at X,Y --preview [...]` | origin, turned bounds and ports of a proposed stamp, board unchanged (§4.18) |
 | `pcb escape PCB SPEC.json [--apply] [--out FILE]` | route permutable pins, choosing the assignment with the tracks (§4.10) |
@@ -1111,6 +1112,7 @@ column in place of the net.
 | Freerouting narrows tracks at fine-pitch pads below the net-class width (DRC `track_width`); `--router.automatic_neckdown=false` is not applied on 2.4.1 | kat passes that setting on every run, which kept 2.5.0's test boards free of such errors; 2.5.0 still narrows some tracks, and on import kat widens them to the class width where the clearance allows, or else to the board's minimum, and reports the rest (`narrow`) |
 | A reference without a number (`ROUT`) passes ERC and parity, but KiCad treats it as unannotated: the BOM prints `ROUT?` | `kat ready` error `reference_without_number` |
 | No `rsvg-convert` on Windows; `kicad-cli` not on PATH there | PyMuPDF fallback (`[render]` extra, AGPL-3.0); discover KiCad 10 from HKCU/HKLM installer registration (32/64-bit views, custom folders), then standard folders; explicit `KICAD_CLI` and PATH take precedence |
+| PowerShell's `>` writes a command's JSON as UTF-16 with a BOM, which other tools then fail to parse | `kat pcb check --out FILE` (like `pcb escape --out`) writes UTF-8 itself |
 | A child process cannot update the calling shell's environment | cache the discovered executable as `KICAD_CLI` inside the kat process and pass it to children; each independent CLI invocation discovers again. README shows how PowerShell can explicitly capture the path for tests/SKiDL |
 | `from skidl import NC` fails: `NC` is a builtin SKiDL puts into the namespace; NC pins do not appear in the netlist at all | use `NC` without importing it; `kat.skidl_blocks.write` records NC pins, sync draws the flags |
 | SKiDL numbers a named net inside a block per instance (`LED_A1..A99`); kat compared the name after the sheet path, so every such net was a `name_difference` and no gate passed | the comparison accepts the instance numbering under a sheet path (`/ROW0/CELL1/LED_A` = `LED_A7`) |

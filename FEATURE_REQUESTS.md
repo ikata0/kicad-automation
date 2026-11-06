@@ -118,11 +118,6 @@ ignored. Changing the minimum width, clearance or priority made it disappear. Re
 `kat pcb refill` checks the fill against foreign-net items and retries with a slightly
 changed minimum width, reporting it; report the bug to KiCad with a reduced board.
 
-### FR-040: Write `kat pcb check` results to a file
-
-**Open.** The JSON goes to stdout only; shell redirection may re-encode it (PowerShell's
-`>` writes UTF-16 with BOM). Request: `--out FILE`, as `kat pcb escape` has.
-
 ## Routing and board-editing APIs
 
 ### FR-041: Keep track-type port stubs when stamping
@@ -487,3 +482,8 @@ kat moved off the deprecated `-mp`. One seed only.
 
 Both versions send analytics by default; kat turns them off on every run. A laptop that sleeps during a run
 ended it on waking, on 2.5.0 with no log line about it; kat now reports `timed_out` for a stage that never finished.
+
+### FR-040: Write `kat pcb check` results to a file
+
+`kat pcb check PCB --out FILE` and `kat.pcb.check(pcb, out=FILE)` write the result as UTF-8
+JSON and name the file in `out`, as `kat pcb escape --out` does.

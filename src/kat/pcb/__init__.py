@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import json
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
@@ -57,12 +58,18 @@ def drc(pcb: Path | str, parity: bool = True, refill: bool = False) -> dict:
     return tidy(checks.drc(Path(pcb), parity, refill))
 
 
-def check(pcb: Path | str, mapping: Path | str | None = None, complete: bool | list[str] = True) -> dict:
+def check(pcb: Path | str, mapping: Path | str | None = None, complete: bool | list[str] = True,
+          out: Path | str | None = None) -> dict:
     """DRC (zones refilled in memory, parity) plus kat's findings; ``ok`` / ``clean``.
     ``mapping``: a pin table the pads must also agree with, and ``complete`` what it must cover
-    (``kat.mapping.check``), reported in ``mapping``."""
+    (``kat.mapping.check``), reported in ``mapping``. ``out``: also write the result as UTF-8
+    JSON to that file (shell redirection may re-encode stdout), named in ``out``."""
     report.touch(pcb)
-    return tidy(checks.run(Path(pcb), Path(mapping) if mapping else None, complete))
+    res = tidy(checks.run(Path(pcb), Path(mapping) if mapping else None, complete))
+    if out is not None:
+        Path(out).write_text(json.dumps(res, indent=1, default=list) + "\n", encoding="utf-8")
+        res["out"] = str(out)
+    return res
 
 
 def snapshot(pcb: Path | str, slug: str = "", note: str | None = None, out: Path | str | None = None,
