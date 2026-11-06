@@ -16,6 +16,64 @@ file or its eventual tests.
 
 ## Import and library generation
 
+### FR-029: Non-rectangular courtyards in generated footprints
+
+**Open.** `kat lib make` (`src\kat\libmake.py`) always draws a rectangular courtyard
+around all pads. A slot-shaped part next to a pin row needed a stadium-shaped courtyard
+to avoid a false collision. Request: a courtyard polygon or stadium option, also used
+by the collision checks of `move` and `stamp`.
+
+## Schematic sync and blocks
+
+### FR-030: Keep power symbols idempotent across syncs
+
+**Needs reproduction.** Reported: every `kat sync` added another power symbol stacked
+on an existing one of the same net, which a post-pass had to remove each time. Expected:
+a repeated sync adds nothing.
+
+### FR-031: Add one PWR_FLAG per label-driven power net at the top level
+
+**Needs reproduction.** Reported: nets driven only through labels into blocks needed
+manually placed flags, and flags inside a block conflict when the block is used many
+times. The flat sync places a `PWR_FLAG` where ERC reports an undriven power net
+(`src\kat\syncer.py`); check whether hierarchical designs get one flag per net at the
+top level, and none from the block sheets.
+
+### FR-032: Grow the paper when sync places sheet boxes
+
+**Partial.** The flat sync grows the paper when symbols do not fit
+(`Syncer._grow_paper`), and `kat new --paper` / `kat page` set it by hand. Sheet boxes
+placed by a hierarchical sync (`_next_spot` in `src\kat\syncer_hier.py`) wrap at the
+page width but never check its height, so many boxes end up off the page.
+
+### FR-033: Per-project reference prefixes
+
+**Open.** Generic connectors get `J`; some projects use another prefix (e.g. `CON`).
+Request: a project-wide prefix map applied by sync and `kat lib make`, whose
+`--reference` only sets it for one part.
+
+### FR-034: Protect hand-edited block sheets in a forced block build
+
+**Needs reproduction.** Reported: `kat block build --force` damaged a block sheet that
+had been edited by hand. `blocks.build(force=True)` is documented to pass only the board
+sync gate. Expected: refuse with a list of the hand edits, or merge them.
+
+### FR-035: Run SKiDL designs from a sub-folder
+
+**Needs reproduction.** Reported: a SKiDL script in a sub-folder of the project gave
+`NO_LIB` warnings and left its by-products (`.erc`, `.log`, `_sklib.py`) in the project
+root.
+
+### FR-036: Explain sync-gate refusals
+
+**Partial.** The CLI exits 2 on a `KatError` and 1 on `ok: false`, so the reported exit
+code 0 after a failed `kat sync` was not reproduced from the code. Remaining:
+`kat pcb sync` refuses with only `gate.by_problem` counts (`src\kat\pcb\syncer.py`), while
+`gate.run` has the `errors` themselves. The gate also judges the schematic against the
+remembered design netlist, which `kat ready` did not report, so `kat ready` passed while
+the gate refused. Request: name each failing finding in the refusal (e.g. "schematic
+differs from the netlist: N pins"), and make `kat ready` and the gate agree.
+
 ## Electrical checks
 
 ### FR-006: Estimate coupling across repeated blocks in 3D
@@ -26,7 +84,148 @@ mutual capacitance per net pair. The existing parallel-plate and 2D cross-sectio
 estimates in `src\kat\pcb\coupling.py` and `src\kat\pcb\field2d.py` do not provide
 a tiled 3D field solution.
 
+### FR-037: Fabrication profile: via types and minimum clearance
+
+**Open.** `b.constraints(min_clearance=...)` sets the board minimum, but nothing holds
+a supplier's limits for the whole flow, and the layout skill's example uses 0.1 mm.
+Request: a profile stored with the board, e.g. `b.fab_profile(via_types=["through"],
+min_clearance=0.125)` or `kat pcb constraints`, written to KiCad's rules where possible
+(`(constraint disallow blind_via buried_via micro_via)`), and honoured by:
+- `b.via()` and the routers: no other via type, the profile's clearance;
+- stamping and `kat block check`: report a block's via types and clearances below the
+  profile before it is stamped;
+- `kat pcb check` (warning) and `ready` (error): every forbidden via, and every net
+  class or custom rule below the profile minimum, besides what DRC finds;
+- `kat pcb fab`: refuse to export forbidden vias;
+- `kat new`, `kat pcb netclass`, block import and stamping: classes start at the
+  profile minimum (suggested default 0.125 mm); a lower value is an explicit, recorded
+  decision.
+
+The profile could later carry minimum drill, annular ring, track and layer count.
+
+### FR-038: Name pads on isolated pour fragments
+
+**Partial.** `kat pcb check` counts DRC's isolated copper and starved thermals as
+`islands`. A pad that sits on a sliver cut off from the rest of its pour shows only as
+one unconnected item. Request: name such pads and the fragment they sit on.
+
+### FR-039: Verify zone fills against foreign-net copper
+
+**Needs reproduction.** Reported on KiCad 10: after routing, pours with a minimum width of
+0.2 mm covered vias, tracks and through-hole pads of other nets (many DRC errors), also
+through pcbnew's `ZONE_FILLER` directly, and keep-out areas around those items were
+ignored. Changing the minimum width, clearance or priority made it disappear. Request:
+`kat pcb refill` checks the fill against foreign-net items and retries with a slightly
+changed minimum width, reporting it; report the bug to KiCad with a reduced board.
+
+### FR-040: Write `kat pcb check` results to a file
+
+**Open.** The JSON goes to stdout only; shell redirection may re-encode it (PowerShell's
+`>` writes UTF-16 with BOM). Request: `--out FILE`, as `kat pcb escape` has.
+
 ## Routing and board-editing APIs
+
+### FR-041: Keep track-type port stubs when stamping
+
+**Open.** `_harness_copper` in `src\kat\pcb\stamping.py` drops, on port nets, every
+segment with an end that reaches no block pad, via or kept segment. Its `keep` points
+protect only vias, so a track port that ends on the outline is dropped, with the copper
+leading to it, while the stamp still reports the port. Request: hold every point of
+`port_points` like a pad, prune only copper leading to harness pads, report the number
+of pruned port-net segments, and warn when a port point has no copper.
+
+### FR-042: Stamp mirrored twins and site lists
+
+**Open.** A cell holding a top copy and a mirrored bottom copy of a block is stamped as
+two instances. Request: `stamp(..., twin=True)` and stamping sites read from a
+floorplan CSV.
+
+### FR-043: Keep stamp records with the board
+
+**Open.** Stamps are recorded in a separate `<board>.stamps.json`, and stamping needs the
+schematic next to the board. A lost record forced a full restamp. Request: store the
+record in the board (e.g. group or footprint properties), or `kat pcb stamps --rebuild`
+from the board.
+
+### FR-044: Offset zone priorities when stamping
+
+**Open.** Stamped block zones keep their priority, so a board-wide pour on the same layer
+at that priority gives `zones_intersect`, and stamp refuses overlaps of different nets at
+one priority. Request: a stamp option to offset block zone priorities.
+
+### FR-045: Accept one side vocabulary
+
+**Open.** `stamp(side="top"|"bottom")` but `move(side="F"|"B")`. Request: accept both
+everywhere.
+
+### FR-046: Search a legal spot for loose parts
+
+**Partial.** `Board.place_near` puts a two-pad part next to a pad, stepping sideways until
+no courtyard overlaps. Request: any part near an anchor part or point, on a chosen side,
+with keep-outs, searching outward for the nearest legal spot.
+
+### FR-047: Set a footprint's zone connection
+
+**Partial.** `b.pad_connection(pads, mode)` sets it per pad (FR-024). Remaining: the
+footprint-level default (`zone_connect` in the footprint node), e.g. `fp.zone_connect =
+"solid"`.
+
+### FR-048: Plane-access helpers
+
+**Partial.** `b.stitch` places a stitching-via lattice in the library. Remaining: a
+`kat pcb stitch` command and a plane-stub helper (`kat pcb plane-stub`) that joins SMD
+plane pads to the nearest legal via.
+
+### FR-049: Post-route clean-up (`kat pcb tidy`)
+
+**Open.** Router output is electrically fine but untidy: 90° and acute corners,
+doubled-back segments, staircases of short segments, small kinks, and long parallel runs
+at minimum clearance where space is free. KiCad has no batch equivalent of its
+interactive optimizer. Proposal: `kat pcb tidy PCB [--nets GLOB] [--layers L,..]
+[--region X,Y,W,H] [--corners 45|arc|keep] [--spread GAP] [--dry-run]`, also as
+`b.tidy(...)`, with optional steps:
+1. normalise: merge (near-)collinear segments, drop zero-length ones, doubled-back
+   overlaps and dangling stubs;
+2. de-staircase: replace runs of short segments with one straight or 45° segment;
+3. corners: 90° to two 45° bends or arcs; no acute corner except at a pad entry;
+4. pull tight within the homotopy class (vias fixed unless `--move-vias`);
+5. spread neighbouring tracks towards a target gap where space allows.
+
+Constraints: effective clearances (FR-021), exact pads (FR-020), keep-outs and foreign
+zone fills; locked tracks stay unless `--include-locked`; no net gets longer in steps 1-4,
+at most by a set percentage in step 5, not at all for `--freeze-length NETS`; net rules
+and DRC re-run, and a violating change is rolled back per net; deterministic, idempotent
+and journalled. Report (also `--dry-run`) per layer: corner-angle histogram, short
+segments, reversals, length change per net, gap histogram before and after. The same
+metrics as `kat pcb check` warnings would let a review find untidy routing without images.
+
+### FR-050: Guide routing in chunks
+
+**Partial.** `kat pcb route --net NAME` (repeatable), `--skip-class` and
+`route(pcb, nets=[...])` exist. Remaining, in the kicad-layout skill and the `route`
+help: Freerouting time grows steeply with nets, layers and pad density (give a rule of
+thumb); route constrained nets first, then groups by region or connector, `lock` each
+accepted chunk and run `kat pcb check` after it; the timeout and pass knobs; the
+router's "all routed" is not the verdict. Optionally `--nets GLOB` / `--netclass NAME`.
+
+### FR-051: Grid-router capabilities
+
+**Open.** FR-018 built no grid router, as nothing then showed it would beat Freerouting.
+Downstream grid routers since needed, on dense multi-layer boards:
+- speed: a native A* core or a coarse global stage (pure Python took minutes per
+  rip-up iteration);
+- targeted rip-up and reroute when negotiated routing plateaus;
+- via spacing checked in all directions, not only orthogonally (FR-023 covers the rule);
+- zone fills rasterised per net as obstacles or targets;
+- failed nets retried with a permuted order automatically.
+
+Single tracks and vias can already be removed with `kat pcb remove --uuid / --at`.
+
+### FR-052: Faster `kat batch-exec` on large boards
+
+**Needs reproduction.** Reported: each pass on a board of several MB took minutes,
+spent in loading, saving and the report. Request: measure where the time goes; a lighter
+report mode and incremental save.
 
 ## Resolved
 
