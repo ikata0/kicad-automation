@@ -71,6 +71,11 @@ def test_a_pad_overrides_its_zone(tmp_path):
     assert Board(solid).footprint("R1").pad("1").zone_connection == "solid"     # through KiCad's save
     assert Board(solid).footprint("R1").pad("1").geometry()["zone_connection"] == "solid"
     assert copper_area(solid) > thermal
+    # FR-047: the footprint's default; its pads follow it, their own override wins
+    whole = design(tmp_path, overrides=[("R1", "solid"), ("R1.2", "thermal")])
+    f = Board(whole).footprint("R1")                                            # through KiCad's save
+    assert f.zone_connection == "solid" and f.pad("1").zone_connection is None
+    assert copper_area(whole) == pytest.approx(copper_area(solid), rel=1e-3)
     # cut one pad off a solid zone: DRC finds it unconnected
     cut = design(tmp_path, "solid", overrides=[("R1.1", "none"), ("R1.2", "none")])
     assert kat.pcb.drc(cut, parity=False, refill=True)["unconnected"]

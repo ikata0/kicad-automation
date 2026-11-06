@@ -665,7 +665,8 @@ class StampMixin:
                 tf.flip(f.layer if bottom else None)
             x, y = f(sf.x, sf.y)
             tf.place(x, y, f.fp_angle(sf.rot))
-            for sp, tp in zip(sf.pads(), tf.pads()):        # the block's own pad connections
+            tf.set_zone_connection(sf.zone_connection)      # the block's own pad connections
+            for sp, tp in zip(sf.pads(), tf.pads()):
                 if sp.number == tp.number:
                     tp.set_zone_connection(sp.zone_connection)
             placed[sf.ref] = tf.ref

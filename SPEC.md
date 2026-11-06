@@ -242,7 +242,7 @@ Methods of `kat.pcb.Board`, used inside `with kat.pcb.edit(PCB) as b:` (saved on
 | `plane(net, "In1.Cu")`, `set_layer_type(layer, "power")` | a whole-board plane on its own layer; layer type power = the router lays no tracks there |
 | `mounting_hole(at, "M3")`, `add_board_part(lib_id, ref, at)` | footprints without a symbol, marked board-only: sync and parity leave them alone |
 | `kat.pcb.import_mechanics(pcb, odb= / gerber=, drills=[...])` | a board edge, cut-outs and holes taken from fabrication data; see below |
-| `zone(net, layers, polygon=None)` | copper pour (default: outline minus 0.5 mm); filled by KiCad on check; `pads` thermal, solid, none or thru_hole_only, and `pad_connection("U1.8", mode)` per pad |
+| `zone(net, layers, polygon=None)` | copper pour (default: outline minus 0.5 mm); filled by KiCad on check; `pads` thermal, solid, none or thru_hole_only, `pad_connection("U1.8", mode)` per pad and `pad_connection("U1", mode)` for a footprint's default (`Footprint.zone_connection`), which its pads without their own follow |
 | `keepout(layers, rect/polygon, tracks=False, vias=True, ...)` | rule area; `False` forbids that item kind |
 | `netclass(name, track, clearance, via, via_drill, nets=[patterns], layers=[...])` | `.kicad_pro` net class + pattern assignment; `layers`: the copper the router may use for it (`<board>.kat.json`; DRC does not check it) |
 | `class_clearance(a, b, mm)` | two classes kept apart: a generated DRC rule `kat class A B` and the router's class-to-class rule |

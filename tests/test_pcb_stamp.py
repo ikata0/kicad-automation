@@ -759,17 +759,19 @@ def test_stamp_carries_pad_connections(hier, tmp_path):
     c = copy_of(hier, tmp_path)
     rc, b1 = c["rc"], c["b1"]
     with kat.pcb.edit(rc) as e:
-        e.pad_connection("R1.2", "solid")
+        e.pad_connection(["R1.2", "R1"], "solid")
     with kat.pcb.edit(b1) as e:
         r = e.stamp(rc, "/RC1", at=(100.5, 100.5))
     target = r["pairs"]["R1"]
     assert Board(b1).footprint(target).pad("2").zone_connection == "solid"
+    assert Board(b1).footprint(target).zone_connection == "solid"               # FR-047
     assert Board(b1).footprint(target).pad("1").zone_connection is None
     with kat.pcb.edit(rc) as e:
-        e.pad_connection("R1.2", None)
+        e.pad_connection(["R1.2", "R1"], None)
     with kat.pcb.edit(b1) as e:
         e.stamp(rc, "/RC1", at=(100.5, 100.5))
     assert Board(b1).footprint(target).pad("2").zone_connection is None
+    assert Board(b1).footprint(target).zone_connection is None
 
 
 def test_stamp_refuses_to_move_a_locked_part(hier, tmp_path):

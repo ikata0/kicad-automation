@@ -154,12 +154,6 @@ one priority. Request: a stamp option to offset block zone priorities.
 no courtyard overlaps. Request: any part near an anchor part or point, on a chosen side,
 with keep-outs, searching outward for the nearest legal spot.
 
-### FR-047: Set a footprint's zone connection
-
-**Partial.** `b.pad_connection(pads, mode)` sets it per pad (FR-024). Remaining: the
-footprint-level default (`zone_connect` in the footprint node), e.g. `fp.zone_connect =
-"solid"`.
-
 ### FR-048: Plane-access helpers
 
 **Partial.** `b.stitch` places a stitching-via lattice in the library. Remaining: a
@@ -490,3 +484,10 @@ Every `side` argument takes `F`/`top`/`front` or `B`/`bottom`/`back` in any case
 `add_board_part`, `fiducials`, `stamp`, `stamp_preview`, `min_pitch`, and the CLI's
 `pcb stamp --side` and `pcb cell --side`. Anything else is refused: `move` used to flip a
 part for any value that wasn't its own side.
+
+### FR-047: Set a footprint's zone connection
+
+`Footprint.zone_connection` / `set_zone_connection(mode)`, or `b.pad_connection("U1", mode)`
+with a bare reference, set KiCad's footprint-level `zone_connect`. Pads without an override
+of their own follow it, and KiCad's fill does too (`tests/test_pcb_zones.py`). Stamping
+copies it, as it does the pad overrides.

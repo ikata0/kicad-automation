@@ -25,6 +25,27 @@ FORMAT = "20260206"
 ZONE_CONNECT = {"0": "none", "1": "thermal", "2": "solid", "3": "thru_hole_only"}
 
 
+def _zone_connection(node: list) -> str | None:
+    n = find(node, "zone_connect")
+    return ZONE_CONNECT.get(str(n[1])) if n is not None else None
+
+
+def _set_zone_connection(node: list, mode: str | None, before: str) -> None:
+    """Set or remove a pad's or footprint's own ``(zone_connect N)``, new ones before ``before``."""
+    code = {v: k for k, v in ZONE_CONNECT.items()}
+    if mode is not None and mode not in code:
+        raise env.KatError(f"zone connection {mode!r}: {', '.join(code)} or None")
+    n = find(node, "zone_connect")
+    if mode is None:
+        if n is not None:
+            node.remove(n)
+    elif n is not None:
+        n[1] = Sym(code[mode])
+    else:
+        ref = find(node, before)
+        node.insert(node.index(ref) if ref is not None else len(node), [Sym("zone_connect"), Sym(code[mode])])
+
+
 def _f(node, key, i=1, default=0.0) -> float:
     n = find(node, key)
     return float(n[i]) if n is not None and len(n) > i else default
@@ -60,25 +81,13 @@ class Pad:
     @property
     def zone_connection(self) -> str | None:
         """This pad's own way of joining a zone of its net: ``thermal``, ``solid``, ``none`` or
-        ``thru_hole_only``; None if it follows the zone."""
-        n = find(self.node, "zone_connect")
-        return ZONE_CONNECT.get(str(n[1])) if n is not None else None
+        ``thru_hole_only``; None if it follows its footprint's (``Footprint.zone_connection``)
+        or else the zone."""
+        return _zone_connection(self.node)
 
     def set_zone_connection(self, mode: str | None) -> None:
-        """Set ``zone_connection``; None follows the zone again."""
-        code = {v: k for k, v in ZONE_CONNECT.items()}
-        if mode is not None and mode not in code:
-            raise env.KatError(f"zone connection {mode!r}: {', '.join(code)} or None")
-        n = find(self.node, "zone_connect")
-        if mode is None:
-            if n is not None:
-                self.node.remove(n)
-        elif n is not None:
-            n[1] = Sym(code[mode])
-        else:
-            uuid = find(self.node, "uuid")
-            at = self.node.index(uuid) if uuid is not None else len(self.node)
-            self.node.insert(at, [Sym("zone_connect"), Sym(code[mode])])
+        """Set ``zone_connection``; None follows the footprint or zone again."""
+        _set_zone_connection(self.node, mode, "uuid")
 
     def _value(self, key: str, default: float = 0.0) -> float:
         n = find(self.node, key)
@@ -327,6 +336,17 @@ class Footprint:
         n = find(self.node, "locked")
         if n is not None:
             self.node.remove(n)
+
+    @property
+    def zone_connection(self) -> str | None:
+        """The footprint's default way for its pads to join a zone of their net (KiCad's
+        footprint-level ``zone_connect``): ``thermal``, ``solid``, ``none`` or ``thru_hole_only``;
+        None if they follow the zone. A pad's own ``Pad.zone_connection`` wins over it."""
+        return _zone_connection(self.node)
+
+    def set_zone_connection(self, mode: str | None) -> None:
+        """Set ``zone_connection``; None lets the pads follow the zone again."""
+        _set_zone_connection(self.node, mode, "attr")
 
     @property
     def path(self) -> str:

@@ -274,12 +274,17 @@ class SetupMixin:
 
     def pad_connection(self, pads: str | list[str], mode: str | None) -> dict:
         """How pads join a zone of their net, whatever the zone says: ``pads`` ``"U1.8"`` (all
-        pads of that number) or a list, ``mode`` ``thermal``, ``solid``, ``none``,
-        ``thru_hole_only``, or None to follow the zone again. Stamps carry a block's overrides.
-        Returns ``pads`` (those set) and ``mode``."""
+        pads of that number), ``"U1"`` (the footprint's default, which its pads without an
+        override of their own follow) or a list, ``mode`` ``thermal``, ``solid``, ``none``,
+        ``thru_hole_only``, or None to follow the zone again. Stamps carry a block's
+        overrides. Returns ``pads`` (those set) and ``mode``."""
         done = []
         for name in [pads] if isinstance(pads, str) else pads:
-            ref, _, number = name.partition(".")
+            ref, dot, number = name.partition(".")
+            if not dot:
+                self.footprint(ref).set_zone_connection(mode)
+                done.append(name)
+                continue
             hit = [p for p in self.footprint(ref).pads() if p.number == number]
             if not hit:
                 raise env.KatError(f"{ref} has no pad {number!r}")
