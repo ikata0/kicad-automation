@@ -71,15 +71,6 @@ changed minimum width, reporting it; report the bug to KiCad with a reduced boar
 
 ## Routing and board-editing APIs
 
-### FR-041: Keep track-type port stubs when stamping
-
-**Open.** `_harness_copper` in `src\kat\pcb\stamping.py` drops, on port nets, every
-segment with an end that reaches no block pad, via or kept segment. Its `keep` points
-protect only vias, so a track port that ends on the outline is dropped, with the copper
-leading to it, while the stamp still reports the port. Request: hold every point of
-`port_points` like a pad, prune only copper leading to harness pads, report the number
-of pruned port-net segments, and warn when a port point has no copper.
-
 ### FR-042: Stamp mirrored twins and site lists
 
 **Open.** A cell holding a top copy and a mirrored bottom copy of a block is stamped as
@@ -519,3 +510,12 @@ prefixes in `<project>.kat.json`. `kat lib make` uses the project's prefix for `
 from its netlist, and renaming them would break every netlist comparison. Instead
 `kat check` lists references off the map in `prefix_warnings` (changing neither `ok` nor
 `clean`), and the schematic skill shows SKiDL's `ref_prefix=`.
+
+### FR-041: Keep track-type port stubs when stamping
+
+`_harness_copper` holds every port point like a pad (on its layer for a track port), so a
+track port's stub to the outline is kept, and only copper leading to harness pads is pruned.
+The stamp result counts that copper in `harness_copper` (no longer in
+`skipped_environment`), and warns about each port point that no block copper reaches.
+Test: `test_port_points_are_checked_and_stamped` (an edge track port with a harness route
+beyond it; the stub survives at the transformed point).

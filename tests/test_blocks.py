@@ -219,7 +219,7 @@ def test_design_uses_the_block_and_stamps_it_by_name(lib, tmp_path, capsys):
         b.track(["J1.1", (j.x, 99.6), (r.x, 99.6), "R1.1"], layer="F.Cu")
     with kat.pcb.edit(pcb) as b:
         routed = b.stamp("RC", "/CH_A", at=(110, 103))
-    assert routed["tracks"] == tracks and routed["skipped_environment"] >= 3, routed
+    assert routed["tracks"] == tracks and routed["harness_copper"] >= 3, routed
 
 
 @pytest.mark.requires("kicad", "symbols", "footprints", "skidl")
@@ -264,7 +264,7 @@ def test_port_points_are_checked_and_stamped(lib, tmp_path, capsys):
     with pytest.raises(kat.KatError, match="leaves at the edge"):
         kat.pcb.block_port(rc_pcb, "inp", (104.0, 108.0))
     with kat.pcb.edit(rc_pcb) as b:
-        b.remove([edge, inner])
+        b.remove([inner])
     kat.pcb.block_port(rc_pcb, "inp", (100.8, 101.5))
     res = blocks.check("RC", require=("MPN",))
     assert "port_problems" not in res and not any(e["ref"] == "J1" for e in res["gate_errors"]), res
@@ -303,6 +303,17 @@ def test_port_points_are_checked_and_stamped(lib, tmp_path, capsys):
     # 180 deg about the block origin (100, 100) -> (110, 111): (100.8, 101.5) -> (109.2, 109.5)
     assert (got["ports"]["inp"]["x"], got["ports"]["inp"]["y"]) == (109.2, 109.5)
     assert kat.pcb.Board(pcb).ports("/CH_B") == got["ports"]
+    # FR-041: a track port at the edge keeps its stub (nothing beyond it is a block item), and
+    # a harness route to it is dropped and counted; the edge point maps to (109.9, 109.5)
+    with kat.pcb.edit(rc_pcb) as b:
+        b.track([(100.1, 101.5), (100.1, 99.6), "J1.1"], layer="F.Cu")
+    kat.pcb.block_port(rc_pcb, "inp", (100.1, 101.5))
+    with kat.pcb.edit(pcb) as b:
+        got = b.stamp("RC", "/CH_B", at=(110, 111), rot=180)
+    assert (got["ports"]["inp"]["x"], got["ports"]["inp"]["y"]) == (109.9, 109.5)
+    ends = {tuple(round(v, 3) for v in e) for t in kat.pcb.Board(pcb).tracks() for e in (t["start"], t["end"])}
+    assert (109.9, 109.5) in ends and got["harness_copper"] >= 2, got
+    assert not any("no copper" in w for w in got.get("warnings", [])), got
 
 
 @pytest.mark.requires("kicad", "symbols", "footprints", "skidl")

@@ -366,12 +366,14 @@ def _group_name(instance: str, name: str) -> str:
 
 
 def _harness_copper(src, block_pads: list, env_pads: list, nets: set[str],
-                    keep: set[tuple[float, float]] = frozenset()) -> set[int]:
+                    keep: dict[tuple[float, float], str | None] | None = None) -> set[int]:
     """Copper of the block board that serves only its harness: on ``nets`` (port nets),
     the segments touching a harness pad, then every segment or arc with an end that
-    reaches nothing (no block pad, via or other kept segment), until none is left; then
-    the vias left with no copper (``keep``: points of port vias, kept anyway). Returns
-    the ids of the nodes not to stamp."""
+    reaches nothing (no block pad, via, port point or other kept segment), until none is
+    left; then the vias left with no copper. ``keep``: the port points {(x, y): layer or
+    None}, held like a pad (a track port ends at the outline with nothing beyond it) and
+    their vias kept anyway. Returns the ids of the nodes not to stamp."""
+    keep = keep or {}
     def pt(n, key):
         v = find(n, key)
         return (round(float(v[1]), 4), round(float(v[2]), 4))
@@ -386,6 +388,8 @@ def _harness_copper(src, block_pads: list, env_pads: list, nets: set[str],
     drop = {id(n) for n in segs if any(inside(p.outline, pt(n, k)) for p in env_pads for k in ("start", "end"))}
 
     def held(q, n, lay) -> bool:
+        if q in keep and keep[q] in (None, lay):
+            return True
         if any(pn == net(n) and inside(p.outline, q) for pn, p in pads):
             return True
         if any(id(v) not in drop and pt(v, "at") == q for v in vias):
@@ -412,6 +416,22 @@ def _harness_copper(src, block_pads: list, env_pads: list, nets: set[str],
                 drop.add(id(v))
                 changed = True
     return drop
+
+
+def _bare_ports(src, info: dict, harness: set[int], block_pads: list) -> list[str]:
+    """Port points left without copper once the harness's copper is dropped: a warning each."""
+    out = []
+    kept = [n for n in src.tree if head(n) in ("segment", "arc", "via") and id(n) not in harness]
+    for q in info.get("port_points", []):
+        at = (q["x"], q["y"])
+        near = lambda v: v is not None and abs(float(v[1]) - at[0]) < 0.01 and abs(float(v[2]) - at[1]) < 0.01  # noqa: E731
+        if any(inside(p.outline, at) for p in block_pads) or any(
+                near(find(n, "at")) if head(n) == "via" else (near(find(n, "start")) or near(find(n, "end")))
+                for n in kept):
+            continue
+        out.append(f"port {q['port']} at {q['x']:g},{q['y']:g}: no copper of the block reaches it "
+                   "(only the harness's did); the stamp reports the point anyway")
+    return out
 
 
 def _item_layers(node: list) -> set[str]:
@@ -705,11 +725,12 @@ class StampMixin:
         # the harness's routes (the block routed with its test connector): not stamped,
         # not even the part of them that ends at a block pad (a stub)
         block_pads = [p for sf in src.footprints() if sf.uuid in pairs for p in sf.pads()]
-        port_points = {(round(v["x"], 4), round(v["y"], 4)) for v in info.get("port_points", [])}
+        port_points = {(round(v["x"], 4), round(v["y"], 4)): v.get("layer") for v in info.get("port_points", [])}
         harness = _harness_copper(src, block_pads, env_pads, env_nets & set(netmap), port_points)
+        warnings += _bare_ports(src, info, harness, block_pads)
 
         counts = {"footprints": len(placed), "tracks": 0, "vias": 0, "zones": 0, "keepouts": 0,
-                  "graphics": 0, "board_parts": 0, "skipped_environment": 0}
+                  "graphics": 0, "board_parts": 0, "skipped_environment": 0, "harness_copper": 0}
         copies = []
         for n in list(src.tree):
             h = head(n)
@@ -728,7 +749,7 @@ class StampMixin:
                         continue
                     net[1] = mapped
                 if id(n) in harness:
-                    counts["skipped_environment"] += 1
+                    counts["harness_copper"] += 1
                     continue
                 if h == "zone":
                     c[:] = [x for x in c if head(x) != "filled_polygon"]

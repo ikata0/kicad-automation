@@ -646,7 +646,9 @@ with kat.pcb.edit("top/top.kicad_pcb") as b:
 - **Environment:** parts on the block board outside the block instance (a SKiDL test
   harness) are not copied, nor is any copper that only serves them: a route from a block
   pad to a harness pad is left out as a whole, not cut at the harness pad (a stub would
-  remain). Nor are the zones and keep-outs named with `block_environment`
+  remain); a port point holds its copper like a pad, so a track port's stub to the outline
+  stays. The result counts the dropped copper in `harness_copper` and warns about a port
+  point no block copper reaches. Nor are the zones and keep-outs named with `block_environment`
   (`NAME.block.json`): name the test plane there, and keep-outs that model the
   neighbouring blocks (the next row, the rows above) so the block is routed as it will
   sit in the design; they are not stamped.
@@ -1128,6 +1130,7 @@ column in place of the net.
 | Freerouting narrows tracks at fine-pitch pads below the net-class width (DRC `track_width`); `--router.automatic_neckdown=false` is not applied on 2.4.1 | kat passes that setting on every run, which kept 2.5.0's test boards free of such errors; 2.5.0 still narrows some tracks, and on import kat widens them to the class width where the clearance allows, or else to the board's minimum, and reports the rest (`narrow`) |
 | A reference without a number (`ROUT`) passes ERC and parity, but KiCad treats it as unannotated: the BOM prints `ROUT?` | `kat ready` error `reference_without_number` |
 | No `rsvg-convert` on Windows; `kicad-cli` not on PATH there | PyMuPDF fallback (`[render]` extra, AGPL-3.0); discover KiCad 10 from HKCU/HKLM installer registration (32/64-bit views, custom folders), then standard folders; explicit `KICAD_CLI` and PATH take precedence |
+| A track port ending at the outline was dropped with the copper leading to it (its end reached nothing on the block board), while the stamp still reported the port | port points hold copper like pads; `harness_copper` counts what is dropped; a bare port point is a warning |
 | A SKiDL script in a project sub-folder: `NO_LIB` for the project's own library when run from there, by-products in the project root when run from the root (SKiDL reads no `sym-lib-table` and uses the working directory for both) | `kat.skidl_blocks.project_libraries()` adds the project's libraries; run scripts from their own folder |
 | `kat block build --force` silently undid hand changes to the block's sheet (an added part removed, a value set back): `force` was only meant for the board gate | `build` compares the drawing with the last build's design (dry run) and refuses with the list; `--overwrite` to let the design win |
 | A supply reaching blocks only through their ports stayed undriven (ERC `power_pin_not_driven`): the root's own sync runs ERC without the sheets; a flag in the block sheet would drive the net once per instance | after the hierarchical sync, the whole hierarchy's ERC; one PWR_FLAG per such net on the root sheet |
