@@ -154,6 +154,19 @@ def stamp(pcb: Path | str, block_pcb: Path | str, instances: str | list[str],
                  "check": {k: c[k] for k in ("ok", "drc_errors", "unconnected", "parity")}})
 
 
+def stamps(pcb: Path | str, rebuild: bool | list[str] = False) -> dict:
+    """The board's stamp records ({instance: {block, at, rot, side, origin, outline, layer_map,
+    ports, ...}}), kept in the board file. ``rebuild``: recover lost ones from the stamped
+    groups and footprints (``Board.rebuild_stamps``; a list names instances to redo) and save
+    them; the result then also has rebuilt, kept and failed."""
+    report.touch(pcb)
+    if not rebuild:
+        return tidy({"board": str(pcb), "stamps": Board(pcb).stamps()})
+    with edit(pcb) as b:
+        res = b.rebuild_stamps(None if rebuild is True else list(rebuild))
+    return tidy({"board": str(pcb), **res, "stamps": Board(pcb).stamps()})
+
+
 def _step_of(pcb: Path | str, block_pcb: Path | str) -> tuple[float, float]:
     from .. import blocks as lib
     from .stamping import block_info

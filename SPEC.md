@@ -657,7 +657,7 @@ with kat.pcb.edit("top/top.kicad_pcb") as b:
   that the block's own routing reaches. A track end is an edge port: a track that leaves the
   block on its layer without a via; it must end on the outline (within the edge band). `kat block check` checks every port point (there, on its
   net, at most 2.5 mm inside the edge); `stamp` returns them transformed (`ports`) and
-  `b.ports(instance)` reads them back (`<board>.stamps.json`). The design's top level
+  `b.ports(instance)` reads them back (the stamp records, below). The design's top level
   then connects known points instead of pins deep inside a dense block.
 - **Net classes:** the block was routed and checked with its board's classes. A design
   class on one of its nets that asks more clearance than the block's is refused (the
@@ -755,8 +755,15 @@ with kat.pcb.edit("top/top.kicad_pcb") as b:
   blind via reaches an outer layer); drill and annular ring are DRC's. Padstack
   front/back definitions and tenting/covering/plugging/capping swap sides. Stamping
   again without `side`/`layer_map` keeps what the instance was stamped with
-  (`<board>.stamps.json`), so `stamp all` does not flip blocks back. A library block
+  (its stamp record), so `stamp all` does not flip blocks back. A library block
   warns unless `kat block check NAME --sides both` passed with the same map.
+- **Stamp records** (block, at, rot, side, origin, outline, layer map, ports, zone priority
+  offset) are kept in the board file, one `kat.stamp.<instance>` board property each, so they
+  survive KiCad's save and travel with the board (`b.stamps()`, `kat pcb stamps PCB`). An
+  older `<board>.stamps.json` is read and moved in on the next save. `kat pcb stamps PCB
+  --rebuild [INSTANCE...]` (`b.rebuild_stamps`) recovers lost records: block and side from
+  the group name, rotation and position fitted to the footprints with the stamp's own
+  placement (refused when parts were moved by hand).
 - **Refused:** unpaired parts on either side, another footprint, an instance wired
   differently from the block (a net mapping to two nets), copper layers the design lacks,
   copper that breaks the design's layer rules (§4.12), a collision with a stamped
@@ -1133,6 +1140,7 @@ column in place of the net.
 | Freerouting narrows tracks at fine-pitch pads below the net-class width (DRC `track_width`); `--router.automatic_neckdown=false` is not applied on 2.4.1 | kat passes that setting on every run, which kept 2.5.0's test boards free of such errors; 2.5.0 still narrows some tracks, and on import kat widens them to the class width where the clearance allows, or else to the board's minimum, and reports the rest (`narrow`) |
 | A reference without a number (`ROUT`) passes ERC and parity, but KiCad treats it as unannotated: the BOM prints `ROUT?` | `kat ready` error `reference_without_number` |
 | No `rsvg-convert` on Windows; `kicad-cli` not on PATH there | PyMuPDF fallback (`[render]` extra, AGPL-3.0); discover KiCad 10 from HKCU/HKLM installer registration (32/64-bit views, custom folders), then standard folders; explicit `KICAD_CLI` and PATH take precedence |
+| The stamp records lived in `<board>.stamps.json` beside the board; a board copied without it needed a full restamp | records are board properties (`kat.stamp.<instance>`, kept by KiCad's save); `kat pcb stamps --rebuild` fits lost ones from the board |
 | Stamped block pours kept their priority, so a board-wide pour of another net at that priority met them; KiCad 10.0.6's DRC reported nothing (no `zones_intersect`), the fill order decided | the stamp warns; `zone_priority` lifts the block's pours |
 | A track port ending at the outline was dropped with the copper leading to it (its end reached nothing on the block board), while the stamp still reported the port | port points hold copper like pads; `harness_copper` counts what is dropped; a bare port point is a warning |
 | A SKiDL script in a project sub-folder: `NO_LIB` for the project's own library when run from there, by-products in the project root when run from the root (SKiDL reads no `sym-lib-table` and uses the working directory for both) | `kat.skidl_blocks.project_libraries()` adds the project's libraries; run scripts from their own folder |

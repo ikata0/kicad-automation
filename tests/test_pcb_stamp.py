@@ -1,6 +1,7 @@
 """Stamping checked block layouts: hierarchical (nested RC -> BLOCK1 -> top) and flat (SKiDL
 blocks), judged by KiCad's DRC with schematic parity."""
 
+import json
 import shutil
 import subprocess
 import sys
@@ -13,7 +14,7 @@ from kat import cli, hierarchy
 from kat.pcb import stamping as stamp_mod
 from kat.pcb.board import Board
 from kat.pcb.syncer import _set_child
-from kat.sexpr import find, find_all, head
+from kat.sexpr import dumps, find, find_all, head
 
 sys.path.insert(0, str(Path(__file__).parent))
 from test_hierarchy import build  # noqa: E402
@@ -421,10 +422,10 @@ def test_preview_tells_ports_without_changing_the_board(hier, tmp_path, capsys):
     stamp_mod.set_port(rc, "gnd", via["at"])
     stamp_mod.set_port(rc, "inp", (pad.x, pad.y))
     box = Board(rc).outline_box()
-    before = pcb.read_bytes(), stamp_mod.stamps_file(pcb).read_bytes()
+    before = pcb.read_bytes()
     assert cli.main(["pcb", "stamp", str(pcb), str(rc), "/CH_A/RC1", "--at", "120,110", "--preview"]) == 0
     top = json.loads(capsys.readouterr().out)["instances"][0]
-    assert (pcb.read_bytes(), stamp_mod.stamps_file(pcb).read_bytes()) == before
+    assert pcb.read_bytes() == before
     assert top["ports"]["inp"]["x"] == pytest.approx(120 + pad.x - box[0])
     assert top["ports"]["inp"]["net"] == "/IN_A"                # the instance's net
     assert top["ports"]["gnd"]["net"] == "GND"
@@ -1028,3 +1029,34 @@ def test_zone_priority_lifts_block_pours_over_a_board_pour(hier, tmp_path):
     with kat.pcb.edit(pcb) as b:                                    # restamped: the offset is kept
         b.stamp(b1, "/CH_A", at=tuple(rec["at"]), rot=rec["rot"])
     assert Board(pcb)._stamp_record("/CH_A")["zone_priority"] == 2
+
+
+def test_stamp_records_live_in_the_board_and_can_be_rebuilt(hier, tmp_path, capsys):
+    """FR-043: the records are board properties (they survive KiCad's save and travel with
+    the file); an older stamps.json is moved in; lost records are fitted from the board."""
+    c = copy_of(hier, tmp_path)
+    pcb = c["top"]
+    records = Board(pcb).stamps()
+    assert set(records) == {"/CH_A", "/CH_B"} and not stamp_mod.stamps_file(pcb).exists()
+    assert '(property "kat.stamp./CH_A"' in pcb.read_text()
+    # an older board: the records in stamps.json, none in the board -> moved in on save
+    b = Board(pcb)
+    b.tree[:] = [x for x in b.tree if not (str(x[0]) == "property" and str(x[1]).startswith("kat.stamp."))]
+    pcb.write_text(dumps(b.tree) + "\n")
+    stamp_mod.stamps_file(pcb).write_text(json.dumps(records))
+    assert Board(pcb).stamps() == records
+    with kat.pcb.edit(pcb):
+        pass
+    assert not stamp_mod.stamps_file(pcb).exists() and Board(pcb).stamps() == records
+    # lost: fitted from the groups and footprints, as the stamps put them
+    b = Board(pcb)
+    b.tree[:] = [x for x in b.tree if not (str(x[0]) == "property" and str(x[1]).startswith("kat.stamp."))]
+    pcb.write_text(dumps(b.tree) + "\n")
+    assert Board(pcb).stamps() == {}
+    assert cli.main(["pcb", "stamps", str(pcb), "--rebuild"]) == 0
+    res = json.loads(capsys.readouterr().out)
+    assert sorted(res["rebuilt"]) == ["/CH_A", "/CH_B"] and not res["failed"], res
+    got = Board(pcb).stamps()
+    for inst, rec in records.items():
+        for k in ("at", "rot", "side", "origin", "outline", "layer_map", "ports"):
+            assert got[inst][k] == pytest.approx(rec[k]) if k in ("at", "origin", "outline") else got[inst][k] == rec[k], (inst, k)

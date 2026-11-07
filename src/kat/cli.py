@@ -186,6 +186,8 @@ def cmd_pcb(a):
         return kat.pcb.stamp(a.pcb, a.block, names, xy(a.at), xy(a.step) if a.step else None,
                              a.rot, not a.no_lock, a.make_room, a.side, a.layer_map, a.allow_asymmetric, a.anchor,
                              a.zone_priority)
+    if a.pcb_cmd == "stamps":
+        return kat.pcb.stamps(a.pcb, (a.instance or True) if a.rebuild else False)
     if a.pcb_cmd == "collisions":
         return kat.pcb.stamp_collisions(a.pcb, a.instance or None)
     if a.pcb_cmd == "cell":
@@ -1050,6 +1052,16 @@ def build_parser() -> argparse.ArgumentParser:
     s9.add_argument("--layer-map", metavar="MAP", help='auto (default), roles, or "F.Cu=B.Cu,In1.Cu=In2.Cu,..."')
     s9.add_argument("--allow-asymmetric", action="store_true",
                     help="flip with the auto map although the stack-up is not mirror-symmetric")
+    s30 = psp.add_parser("stamps", formatter_class=_Fmt, help="the board's stamp records; --rebuild lost ones",
+                         description="Where each block instance was stamped (block, at, rot, side, origin,\n"
+                                     "outline, layer map, ports), kept in the board file. --rebuild recovers\n"
+                                     "records from the stamped groups and footprints (e.g. an older board whose\n"
+                                     "<board>.stamps.json is lost); the instances named are redone, else only\n"
+                                     "those without a record. Stamping still needs the schematic beside the board\n"
+                                     "to pair a hierarchical design's footprints.")
+    s30.add_argument("pcb", metavar="PCB")
+    s30.add_argument("instance", nargs="*", metavar="INSTANCE", help="with --rebuild: redo these")
+    s30.add_argument("--rebuild", action="store_true", help="recover records from the board and save them")
     s17 = psp.add_parser("collisions", formatter_class=_Fmt, help="collisions between stamped block instances",
                          description="Stamped instances pairwise, per layer: copper closer than its clearance\n"
                                      "(the same net, e.g. a shared GND, is allowed), courtyards overlapping on a\n"

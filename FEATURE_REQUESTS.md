@@ -77,13 +77,6 @@ changed minimum width, reporting it; report the bug to KiCad with a reduced boar
 two instances. Request: `stamp(..., twin=True)` and stamping sites read from a
 floorplan CSV.
 
-### FR-043: Keep stamp records with the board
-
-**Open.** Stamps are recorded in a separate `<board>.stamps.json`, and stamping needs the
-schematic next to the board. A lost record forced a full restamp. Request: store the
-record in the board (e.g. group or footprint properties), or `kat pcb stamps --rebuild`
-from the board.
-
 ### FR-046: Search a legal spot for loose parts
 
 **Partial.** `Board.place_near` puts a two-pad part next to a pad, stepping sideways until
@@ -524,3 +517,15 @@ at the same priority. The stamped-instance check (`cells._clash`) sees the offse
 priorities. KiCad 10.0.6's DRC reported no `zones_intersect` for such overlaps, crossing
 or contained, refilled or not, on a plain two-zone board either: the fill order decides,
 which the warning says. Test: `test_zone_priority_lifts_block_pours_over_a_board_pour`.
+
+### FR-043: Keep stamp records with the board
+
+The stamp records are kept in the board file, one board property `kat.stamp.<instance>`
+each, holding the record as JSON. KiCad 10's save keeps them. `Board.stamps()` and
+`kat pcb stamps PCB` list them. An older `<board>.stamps.json` is read and moved into the
+board on the next save. `kat pcb stamps PCB --rebuild [INSTANCE...]` / `Board.rebuild_stamps`
+/ `kat.pcb.stamps(pcb, rebuild=True)` recover lost records: block and side from the group
+name, rotation and position fitted to the footprints with the stamp's own placement, then
+ports, outline and layer map as `stamp_preview` gives them, and the zone priority offset
+from the pours. Pairing a hierarchical design's footprints still reads the schematic next
+to the board. Test: `test_stamp_records_live_in_the_board_and_can_be_rebuilt`.

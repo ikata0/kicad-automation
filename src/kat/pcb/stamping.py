@@ -114,8 +114,18 @@ def _track_end(b, at: tuple[float, float]) -> dict | None:
 
 
 def stamps_file(pcb: Path | str) -> Path:
-    """``<board>.stamps.json``: where each instance was stamped (block, at, rot) and its ports."""
+    """``<board>.stamps.json``: where earlier versions kept the stamp records; read when there,
+    and moved into the board on its next save."""
     return Path(pcb).with_suffix(".stamps.json")
+
+
+STAMP_PROPERTY = "kat.stamp."      # board property per instance: its stamp record as JSON
+
+
+def _stored_stamps(tree: list) -> dict:
+    """The stamp records kept in the board file: {instance: record}."""
+    return {str(c[1])[len(STAMP_PROPERTY):]: json.loads(str(c[2])) for c in tree
+            if head(c) == "property" and len(c) > 2 and str(c[1]).startswith(STAMP_PROPERTY)}
 
 
 # --- helpers ------------------------------------------------------------------------------
@@ -942,18 +952,23 @@ class StampMixin:
                                "stamp with zone_priority=+1 or more, or give the board's pour another priority")
         return out
 
-    def _stamp_record(self, instance: str) -> dict:
-        """What ``<board>.stamps.json`` (or this session) records for an instance."""
+    def stamps(self) -> dict:
+        """The stamp record of every instance stamped on this board: {instance: {block, at,
+        rot, side, anchor, origin, outline, layer_spec, layer_map, ports[, zone_priority]}}.
+        Kept in the board file (a ``kat.stamp.<instance>`` property each, so they travel with
+        it); an older ``<board>.stamps.json`` is read too and moved in on the next save."""
         f = stamps_file(self.path)
-        saved = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
-        return {**saved, **self._stamps}.get(_norm(instance), {})
+        legacy = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
+        return {**legacy, **_stored_stamps(self.tree), **self._stamps}
+
+    def _stamp_record(self, instance: str) -> dict:
+        """What the board (or this session) records for an instance."""
+        return self.stamps().get(_norm(instance), {})
 
     def ports(self, instance: str | None = None) -> dict:
         """Port points of stamped instances on this board (``set_port`` on the block
         board): {instance: {port: {x, y, net}}}, or one instance's {port: ...}."""
-        f = stamps_file(self.path)
-        saved = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
-        known = {k: v["ports"] for k, v in {**saved, **self._stamps}.items()}
+        known = {k: v["ports"] for k, v in self.stamps().items()}
         if instance is None:
             return known
         if _norm(instance) not in known:
@@ -961,18 +976,91 @@ class StampMixin:
         return known[_norm(instance)]
 
     def _save_stamps(self) -> None:
-        if not self._stamps and not self._renamed_instances:
-            return
+        """Write this session's stamp records (and renames) into the board's properties; an
+        older ``<board>.stamps.json`` is moved in and removed."""
         f = stamps_file(self.path)
-        saved = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
+        if not self._stamps and not self._renamed_instances and not f.exists():
+            return
+        legacy = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
+        saved = {**legacy, **_stored_stamps(self.tree)}
         for old, new in self._renamed_instances.items():
             if old in saved:
                 saved[new] = saved.pop(old)
-        self._renamed_instances = {}
-        if saved or self._stamps:
-            f.write_text(json.dumps({**saved, **self._stamps}, indent=2, sort_keys=True) + "\n",
-                         encoding="utf-8")
-        self._stamps = {}
+        saved.update(self._stamps)
+        self._renamed_instances, self._stamps = {}, {}
+        self.tree[:] = [c for c in self.tree if not (head(c) == "property" and len(c) > 1
+                                                     and str(c[1]).startswith(STAMP_PROPERTY))]
+        at = next((i + 1 for i, c in enumerate(self.tree) if head(c) == "setup"),
+                  next((i for i, c in enumerate(self.tree) if head(c) in ("net", "footprint")), len(self.tree)))
+        self.tree[at:at] = [[Sym("property"), STAMP_PROPERTY + k, json.dumps(saved[k], sort_keys=True)]
+                            for k in sorted(saved)]
+        if f.exists():
+            f.unlink()
+
+    def rebuild_stamps(self, instances: list[str] | None = None) -> dict:
+        """Recover lost stamp records from the board itself: for each stamped group
+        (``/CH_A (BLOCK)``, ``, bottom``) the block, side, rotation and position are fitted to
+        its footprints with the stamp's own placement, then ports, outline and layer map
+        follow as ``stamp_preview`` gives them, and a zone priority offset from the pours.
+        Instances that already have a record are kept unless named in ``instances``.
+        Returns rebuilt [instances], kept, failed {instance: why}. Save to keep them."""
+        import re
+        want = {_norm(i) for i in instances} if instances else None
+        have = self.stamps()
+        out: dict = {"rebuilt": [], "kept": [], "failed": {}}
+        found = [m for g in self._groups() if (m := re.fullmatch(r"(/\S+) \((\w+)(, bottom)?\)", str(g[1])))]
+        tops = {m.group(1) for m in found}
+        for m in found:
+            inst, block, side = m.group(1), m.group(2), "bottom" if m.group(3) else "top"
+            if any(inst.startswith(t + "/") for t in tops):       # a block inside a stamped block
+                continue
+            if (want is None and inst in have) or (want is not None and inst not in want):
+                if inst in have:
+                    out["kept"].append(inst)
+                continue
+            try:
+                self._stamps[inst] = self._fit_stamp(inst, block, side)
+                out["rebuilt"].append(inst)
+            except (env.KatError, StopIteration) as e:
+                out["failed"][inst] = str(e) or "no footprints to fit"
+        return out
+
+    def _fit_stamp(self, inst: str, block: str, side: str) -> dict:
+        """The stamp record of a stamped instance whose record is lost (``rebuild_stamps``)."""
+        from .. import blocks as lib
+        try:
+            block = lib.board_of(block, near=self.path)[0]
+        except env.KatError:                 # a block board without a library entry (no NAME.py)
+            block = next((c for d in (self.path.parent, *self.path.parents)
+                          if (c := d / "blocks" / block / f"{block}.kicad_pcb").exists()), None) or block
+        for rot in range(0, 360, 45):
+            plan = self._stamp_plan(block, inst, (0.0, 0.0), rot, side, None, True, None, "origin")
+            if not plan.pairs:
+                raise env.KatError(f"no footprints of {inst} pair with block {block}")
+            fits = []
+            for sf in plan.src.footprints():
+                tf = plan.pairs.get(sf.uuid)
+                if tf is None:
+                    continue
+                x, y = plan.f(sf.x, sf.y)
+                fits.append((tf.x - x, tf.y - y, (tf.rot - plan.f.fp_angle(sf.rot) + 180) % 360 - 180))
+            at = fits[0][:2]
+            if all(abs(a - at[0]) < 0.01 and abs(b - at[1]) < 0.01 and abs(r) < 0.01 for a, b, r in fits):
+                break
+        else:
+            raise env.KatError(f"{inst}'s footprints do not sit as one stamp of {block} would put them "
+                               "(moved by hand?)")
+        at = (round(at[0], 6), round(at[1], 6))
+        pre = self.stamp_preview(block, at, rot, inst, side, None, True)
+        src_pri = {str(find(z, "name")[1]): int(str((find(z, "priority") or [0, 0])[1]))
+                   for z in plan.src.zones() if find(z, "name") is not None and find(z, "keepout") is None}
+        offset = next((int(str((find(z, "priority") or [0, 0])[1])) - src_pri[n[len(inst) + 2:]]
+                       for z in self.zones() if (n := str((find(z, "name") or ["", ""])[1])).startswith(inst + ": ")
+                       and n[len(inst) + 2:] in src_pri), 0)
+        return {"block": str(plan.block_pcb), "at": list(at), "rot": float(rot), "side": side,
+                "anchor": "origin", "origin": pre["origin"], "outline": pre["outline"], "layer_spec": None,
+                "layer_map": plan.cmap, "ports": pre["ports"], **({"zone_priority": offset} if offset else {}),
+                "rebuilt": True}
 
     def rename_instances(self, names: dict[str, str]) -> dict:
         """Carry a block instance's stamped copy over to its new name (``/CH_A``: ``/CH_X``): the

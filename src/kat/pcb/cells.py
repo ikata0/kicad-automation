@@ -442,15 +442,10 @@ def stamped_items(board, instance: str, skip: frozenset = frozenset()) -> list[I
 
 
 def stamped_instances(board) -> list[str]:
-    """Instances stamped on a design (``<board>.stamps.json`` and this session) whose
-    group is still there."""
-    import json
-    from .stamping import stamps_file
-    f = stamps_file(board.path)
-    saved = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
+    """Instances stamped on a design (its stamp records, ``Board.stamps``) whose group is
+    still there."""
     names = {str(g[1]) for g in board._groups()}
-    return sorted(i for i in {**saved, **board._stamps}
-                  if any(n.startswith(f"{i} (") for n in names))
+    return sorted(i for i in board.stamps() if any(n.startswith(f"{i} (") for n in names))
 
 
 def _nested(a: str, b: str) -> bool:

@@ -712,8 +712,8 @@ def test_the_board_keeps_placement_copper_and_stamp_records(lib, tmp_path):
     assert len(after.tracks()) == tracks
     names = [str(g[1]) for g in after._groups()]
     assert any(n.startswith("/LEFT") for n in names) and not any(n.startswith("/CH_A") for n in names), names
-    saved = json.loads(stamps_file(pcb).read_text())
-    assert "/LEFT" in saved and "/CH_A" not in saved
+    saved = Board(pcb).stamps()                    # FR-043: kept in the board file itself
+    assert "/LEFT" in saved and "/CH_A" not in saved and not stamps_file(pcb).exists()
     assert kat.pcb.instances(pcb, "RC")["instances"] == ["/CH_B", "/LEFT"]
     # stamping it again replaces the copy instead of adding a second
     with kat.pcb.edit(pcb) as b:
