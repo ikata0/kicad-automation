@@ -13,7 +13,9 @@ accept `--lib DIR`.
    with `tag="DUT"`. Give local parts stable tags; call nested blocks with keyword
    arguments and tags. Generate the netlist, then call
    `kat.skidl_blocks.write(...)` to record ports, parameters and no-connects.
-3. `kat block build NAME` runs the harness and builds/syncs its drawings.
+3. `kat block build NAME` runs the harness and builds/syncs its drawings. Parts, values
+   and wiring belong in `NAME.py`: a build refuses to undo such changes made by hand in the
+   drawing and lists them (`--overwrite` drops them); arranging the drawing is fine.
 4. Arrange the reusable drawing, lay out the block, define environment and port
    points, and iterate until `kat block check NAME` passes.
 5. Use `rc = kat.blocks.use("RC")`, then

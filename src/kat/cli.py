@@ -266,7 +266,7 @@ def cmd_block(a):
     if a.block_cmd == "new":
         return blocks.new(a.name, a.lib)
     if a.block_cmd == "build":
-        return blocks.build(a.name, a.lib, a.force)
+        return blocks.build(a.name, a.lib, a.force, a.overwrite)
     if a.block_cmd == "check":
         return blocks.check(a.name, a.lib, () if a.no_require else tuple(a.require_field or ["MPN"]),
                             a.sides, a.layer_map, a.allow_asymmetric)
@@ -1246,7 +1246,9 @@ def build_parser() -> argparse.ArgumentParser:
     bsp = q.add_subparsers(dest="block_cmd", required=True, metavar="ACTION")
     for action, summary in (("new", "create a block: project, SKiDL template with harness"),
                             ("build", "run the harness, sync schematic and board, record ports/params;\n"
-                                      "refused before anything is written while a block file is open in KiCad"),
+                                      "refused before anything is written while a block file is open in KiCad,\n"
+                                      "and when its schematic was changed by hand against the last build's\n"
+                                      "design (parts, values, wiring; arrangement is fine): --overwrite"),
                             ("check", "schematic, gate (harness parts exempt), board and port points; stored for stamp"),
                             ("list", "the library's blocks and their check state")):
         b = bsp.add_parser(action, formatter_class=_Fmt, help=summary, description=summary)
@@ -1255,6 +1257,8 @@ def build_parser() -> argparse.ArgumentParser:
         b.add_argument("--lib", help="library folder (default: KAT_BLOCKS or the nearest blocks/)")
         if action == "build":
             b.add_argument("--force", action="store_true", help="pass the board sync gate")
+            b.add_argument("--overwrite", action="store_true",
+                           help="let the design undo hand changes to the schematic (they are listed otherwise)")
         if action == "check":
             b.add_argument("--sides", choices=("top", "both"), default="top",
                            help="both: also check the block flipped to the bottom side (stamp --side bottom)")

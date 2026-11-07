@@ -31,12 +31,6 @@ by the collision checks of `move` and `stamp`.
 Request: a project-wide prefix map applied by sync and `kat lib make`, whose
 `--reference` only sets it for one part.
 
-### FR-034: Protect hand-edited block sheets in a forced block build
-
-**Needs reproduction.** Reported: `kat block build --force` damaged a block sheet that
-had been edited by hand. `blocks.build(force=True)` is documented to pass only the board
-sync gate. Expected: refuse with a list of the hand edits, or merge them.
-
 ### FR-035: Run SKiDL designs from a sub-folder
 
 **Needs reproduction.** Reported: a SKiDL script in a sub-folder of the project gave
@@ -504,3 +498,15 @@ symbol of its own was "pin not connected" to ERC (it does not count power-symbol
 the flat sync's `_flag_apart` uses the global label as well. Test:
 `test_supplies_reaching_only_blocks_get_one_flag_at_the_top` (one block twice, on `+5V` and
 `VBAT_SW`; ERC clean, three flags at the top, none in the block, none added again).
+
+### FR-034: Protect hand-edited block sheets in a forced block build
+
+Reproduced: a forced build removed a part added by hand to the block sheet and set a
+hand-changed value back to the design's, only reporting it afterwards. `kat.blocks.build`
+now records content hashes of the sheets it wrote. When a sheet changed since, it first runs
+a dry-run sync against that build's netlist. If the sync would remove, update, attach,
+detach or rename anything, the build is refused before anything is written, with the list
+(e.g. "RC_block.kicad_sch: removed R2; ... updated C1 Value '220n' (design '100n')").
+`overwrite=True` / `kat block build --overwrite` lets the design win; `force` still only
+passes the board gate. Arrangement and notes pass and are kept. A refused board gate still
+leaves the newly synced schematic in place, because the gate judges that schematic.

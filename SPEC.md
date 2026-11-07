@@ -781,7 +781,11 @@ Each block is a project of its own in `blocks/NAME/` (`KAT_BLOCKS`, else the nea
   syncs the harness and the block sheet (§4.21: the block instance is written into
   `NAME_block.kicad_sch`) and the board, and records type, ports and parameters. It is
   refused before the harness runs while the block's sheets or board are open in KiCad, so a
-  locked file cannot leave the block half-built.
+  locked file cannot leave the block half-built, and when its schematics were changed by
+  hand against the last build's design (a part added, a value or the wiring changed: a
+  dry-run sync with that build's netlist, run only when a sheet's content changed since).
+  The error lists the changes; put them into `NAME.py`, or `--overwrite` lets the design win.
+  Arrangement and notes are kept either way; `--force` only passes the board sync gate.
 - **Ports** are the block call's net arguments (power nets such as GND stay global and get
   no port). A harness net with a name from KiCad's power library (`+5V`, `-5V`) makes
   that argument a power port too: `build` warns, since every design then gets that net
@@ -1117,6 +1121,7 @@ column in place of the net.
 | Freerouting narrows tracks at fine-pitch pads below the net-class width (DRC `track_width`); `--router.automatic_neckdown=false` is not applied on 2.4.1 | kat passes that setting on every run, which kept 2.5.0's test boards free of such errors; 2.5.0 still narrows some tracks, and on import kat widens them to the class width where the clearance allows, or else to the board's minimum, and reports the rest (`narrow`) |
 | A reference without a number (`ROUT`) passes ERC and parity, but KiCad treats it as unannotated: the BOM prints `ROUT?` | `kat ready` error `reference_without_number` |
 | No `rsvg-convert` on Windows; `kicad-cli` not on PATH there | PyMuPDF fallback (`[render]` extra, AGPL-3.0); discover KiCad 10 from HKCU/HKLM installer registration (32/64-bit views, custom folders), then standard folders; explicit `KICAD_CLI` and PATH take precedence |
+| `kat block build --force` silently undid hand changes to the block's sheet (an added part removed, a value set back): `force` was only meant for the board gate | `build` compares the drawing with the last build's design (dry run) and refuses with the list; `--overwrite` to let the design win |
 | A supply reaching blocks only through their ports stayed undriven (ERC `power_pin_not_driven`): the root's own sync runs ERC without the sheets; a flag in the block sheet would drive the net once per instance | after the hierarchical sync, the whole hierarchy's ERC; one PWR_FLAG per such net on the root sheet |
 | A power symbol wired only to a PWR_FLAG is "pin not connected" to KiCad's ERC, which does not count power-symbol pins | a flag placed apart sits on a global label of the net, which joins its power symbols |
 | A hierarchical sync placed 30 sheet boxes in rows down an A4 page and past its bottom; the flat sync's paper growth never saw them, and new parts were placed over the boxes | sheet boxes grow the paper too; the parts' placement counts the boxes |

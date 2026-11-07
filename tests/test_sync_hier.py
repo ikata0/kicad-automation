@@ -157,6 +157,27 @@ def test_block_build_writes_the_block_as_a_sheet_with_ports_and_parameters(lib):
     assert not again["schematic"]["updated"], again["schematic"]
 
 
+def test_a_build_refuses_to_undo_hand_changes(lib):
+    """FR-034: arrangement and notes are kept and pass; a part, value or wiring changed by
+    hand against the design is listed and kept, unless overwrite (force is the board gate)."""
+    blocks.build("RC", force=True)
+    blk = lib / "RC" / "RC_block.kicad_sch"
+    with kat.edit(blk) as s:
+        s.move("R1", by=(7.62, 0))
+        s.text("hand note", (60, 40))
+    assert not blocks.build("RC", force=True)["schematic"]["updated"]
+    with kat.edit(blk) as s:
+        s.add("Device:R", 120, 60)
+        s.set("C1", "Value", "220n")
+    before = blk.read_text()
+    with pytest.raises(kat.KatError, match=r"removed R2; RC_block.kicad_sch: updated C1 Value '220n' \(design '100n'\)"):
+        blocks.build("RC", force=True)
+    assert blk.read_text() == before
+    res = blocks.build("RC", force=True, overwrite=True)
+    assert res["schematic"]["removed"] == ["RC_block.kicad_sch: R2"], res["schematic"]
+    assert "hand note" in blk.read_text()
+
+
 def test_design_draws_block_instances_as_sheets(lib, tmp_path):
     blocks.build("RC", force=True)
     d = tmp_path / "design"

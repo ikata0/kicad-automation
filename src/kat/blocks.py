@@ -148,18 +148,53 @@ def new(name: str, lib: Path | str | None = None) -> dict:
             "next": f"edit {f['py'].name}, then kat block build {name}"}
 
 
-def build(name: str, lib: Path | str | None = None, force: bool = False) -> dict:
+def _hand_edits(d: Path) -> list[str]:
+    """What the block's schematics changed by hand against the design of the last build: a
+    dry-run sync with that build's netlist, run only when a sheet's content changed since
+    (arrangement, notes and other drawing edits a sync keeps are not counted). Each entry
+    names the sheet and the change the sync would undo."""
+    f = _files(d)
+    built = _info(d).get("built")
+    if not built or not f["net"].exists() or not f["sch"].exists():
+        return []
+    if all(f[k].exists() and content_hash(f[k]) == h for k, h in built["hashes"].items()):
+        return []
+    from . import syncer_hier
+    rep = syncer_hier.run(f["sch"], f["net"], built["sheets"], dry_run=True,
+                          generate={built["instance"]: f["block"]})
+    out = []
+    for key in ("removed", "updated", "detached", "attached", "renamed"):
+        for x in rep.get(key) or []:
+            if isinstance(x, dict):
+                what = (f"{x['ref']} {x['field']} {x['from']!r} (design {x['to']!r})" if "field" in x
+                        else x.get("pin") or x.get("ref") or str(x))
+                out.append(f"{x.get('sheet', '')}: {key} {what}")
+            else:
+                sheet, _, what = str(x).rpartition(": ")
+                out.append(f"{sheet}: {key} {what}" if sheet else f"{key} {what}")
+    return out
+
+
+def build(name: str, lib: Path | str | None = None, force: bool = False, overwrite: bool = False) -> dict:
     """Run the block's harness (``NAME.py`` -> ``NAME.net`` + block record), sync the
     schematic and the board, and store type, ports and parameters in the block file.
     ``force`` passes the board sync gate (e.g. parts without MPN while developing).
     Refused before anything runs or is written while the block's schematics or board are
-    open in KiCad, so a locked file cannot leave the block half-built."""
+    open in KiCad, so a locked file cannot leave the block half-built, and when the
+    schematics were changed by hand against the design of the last build (a part added, a
+    value or the wiring changed): the sync would undo that. The error lists the changes;
+    put them into ``NAME.py``, or pass ``overwrite`` to let the design win. Arrangement
+    and notes are kept either way."""
     import kat
     from .gui import guard
     d = find(name, lib)
     f = _files(d)
     for key in ("sch", "block", "flat", "pcb"):
         guard(f[key])
+    if not overwrite and (edits := _hand_edits(d)):
+        raise env.KatError(f"block {name}'s schematic was changed by hand against its design, and the "
+                           f"build would undo it: {'; '.join(edits[:12])}. Put the changes into "
+                           f"{f['py'].name}, or overwrite=True (--overwrite) to drop them")
     proc = subprocess.run([sys.executable, str(f["py"]), str(f["net"])], cwd=d,
                           capture_output=True, text=True, stdin=subprocess.DEVNULL)
     if proc.returncode != 0 or not f["net"].exists():
@@ -198,6 +233,10 @@ def build(name: str, lib: Path | str | None = None, force: bool = False) -> dict
         data["text_variables"] = {**data.get("text_variables", {}), **sch["parameters"]}
         pro.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
     flat = _build_flat(d, rec)
+    info = _info(d)                       # with what the flat drawing recorded
+    info["built"] = {"instance": inst, "sheets": sorted({me["type"]} | inner),
+                     "hashes": {k: content_hash(f[k]) for k in ("sch", "block") if f[k].exists()}}
+    _write_info(d, info)
     pcb = kat.pcb.sync(f["pcb"], force=force)
     return {"block": name, "type": me["type"], "ports": info["ports"], "power": info["power"],
             "params": info["params"],
