@@ -409,6 +409,11 @@ def test_a_library_block_as_a_candidate_cell_of_a_floorplan(hier, tmp_path):
     assert p["status"] == "blocked" and "wall" in p["walled_by"]
     two = dict(spec, cells=spec["cells"] + [{"name": "other", "outline": [want["outline"][0] - 1, 105, want["outline"][0] + 1, 108]}])
     assert kat.pcb.port_access(two)["overlaps"][0]["b"] == "other"
+    # FR-042: the cells as a site list file beside the spec, one block for all
+    (tmp_path / "sites.csv").write_text("name,x,y\nnew,125,105\n")
+    (tmp_path / "plan.json").write_text(json.dumps({**spec, "block": str(rc), "cells": "sites.csv"}))
+    listed = kat.pcb.port_access(tmp_path / "plan.json")
+    assert [(p["port"], p["status"]) for p in listed["ports"]] == [(p["port"], p["status"]) for p in r["ports"]]
 
 
 def test_preview_tells_ports_without_changing_the_board(hier, tmp_path, capsys):
@@ -1060,3 +1065,26 @@ def test_stamp_records_live_in_the_board_and_can_be_rebuilt(hier, tmp_path, caps
     for inst, rec in records.items():
         for k in ("at", "rot", "side", "origin", "outline", "layer_map", "ports"):
             assert got[inst][k] == pytest.approx(rec[k]) if k in ("at", "origin", "outline") else got[inst][k] == rec[k], (inst, k)
+
+
+def test_twins_and_site_lists(hier, tmp_path, capsys):
+    """FR-042: a cell's top copy and its mirrored bottom twin in one call, and sites from a
+    floorplan list (CSV with a twin column) through the CLI."""
+    c = copy_of(hier, tmp_path)
+    pcb, b1 = c["top"], c["b1"]
+    with kat.pcb.edit(pcb) as b:
+        r = b.stamp(b1, "/CH_A", at=(112, 102), twin="/CH_B")
+    got = {x["instance"]: x for x in r["instances"]}
+    assert got["/CH_A"]["side"] == "top" and got["/CH_B"]["side"] == "bottom"
+    assert got["/CH_A"]["outline"] == got["/CH_B"]["outline"] == [112.0, 102.0, 141.0, 108.0]
+    sites = tmp_path / "sites.csv"
+    sites.write_text("Instance,X,Y,Rot,Side,Twin\nCH_B,112,112,0,top,/CH_A\n", encoding="utf-8-sig")
+    assert cli.main(["pcb", "stamp", str(pcb), str(b1), "--sites", str(sites)]) in (0, 1)   # 1: J1 unrouted
+    res = json.loads(capsys.readouterr().out)
+    got = {x["instance"]: x for x in res["instances"]}
+    assert got["/CH_B"]["side"] == "top" and got["/CH_A"]["side"] == "bottom"
+    assert got["/CH_A"]["outline"] == [112.0, 112.0, 141.0, 118.0] and res["check"]["drc_errors"] == 0, res
+    assert stamp_mod.read_sites([{"instance": "X", "at": [1, 2], "side": "B"}]) == [
+        {"instance": "/X", "name": None, "at": (1.0, 2.0), "rot": 0.0, "side": "bottom", "twin": None, "block": None}]
+    with pytest.raises(kat.KatError, match="site 1: give x and y"):
+        stamp_mod.read_sites([{"instance": "/X"}])

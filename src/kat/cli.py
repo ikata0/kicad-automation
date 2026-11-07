@@ -179,13 +179,25 @@ def cmd_pcb(a):
     if a.pcb_cmd == "stamp":
         names = "all" if a.instance == ["all"] else a.instance
         if a.preview:
+            if not a.at:
+                raise env.KatError("--preview needs --at X,Y")
             return kat.pcb.stamp_preview(a.pcb, a.block, names or None, xy(a.at), xy(a.step) if a.step else None,
                                          a.rot, a.side, a.layer_map, a.allow_asymmetric, a.anchor)
+        twins = [x.split("=", 1) for x in a.twin or []]
+        if any(len(t) != 2 for t in twins):
+            raise env.KatError("--twin TOP=BOTTOM (the instance stamped mirrored on the other side)")
+        if a.sites:
+            if names or a.at:
+                raise env.KatError("--sites gives the instances and places: no INSTANCE or --at with it")
+            return kat.pcb.stamp_sites(a.pcb, a.block, a.sites, not a.no_lock, a.make_room, a.layer_map,
+                                       a.allow_asymmetric, a.anchor, a.zone_priority)
         if not names:
-            raise env.KatError("name the instances (/CH_A ... or all); only --preview works without")
+            raise env.KatError("name the instances (/CH_A ... or all) or give --sites; only --preview works without")
+        if not a.at:
+            raise env.KatError("--at X,Y is needed (or --sites)")
         return kat.pcb.stamp(a.pcb, a.block, names, xy(a.at), xy(a.step) if a.step else None,
                              a.rot, not a.no_lock, a.make_room, a.side, a.layer_map, a.allow_asymmetric, a.anchor,
-                             a.zone_priority)
+                             a.zone_priority, dict(twins) or None)
     if a.pcb_cmd == "stamps":
         return kat.pcb.stamps(a.pcb, (a.instance or True) if a.rebuild else False)
     if a.pcb_cmd == "collisions":
@@ -1034,7 +1046,7 @@ def build_parser() -> argparse.ArgumentParser:
     s9.add_argument("pcb", metavar="PCB", help="the design's board")
     s9.add_argument("block", metavar="BLOCK_PCB", help="the checked block board")
     s9.add_argument("instance", nargs="*", metavar="INSTANCE", help="/CH_A ... or all")
-    s9.add_argument("--at", required=True, metavar="X,Y",
+    s9.add_argument("--at", metavar="X,Y",
                     help="where the block origin goes (mm), or the corner named by --anchor")
     s9.add_argument("--anchor", choices=("origin", "top-left"),
                     help="what --at places: the block origin, which --rot turns about, or the turned\n"
@@ -1046,6 +1058,10 @@ def build_parser() -> argparse.ArgumentParser:
     s9.add_argument("--rot", type=float, default=0.0, help="degrees, a multiple of 45")
     s9.add_argument("--no-lock", action="store_true", help="leave the copied copper unlocked")
     s9.add_argument("--make-room", action="store_true", help="move design parts out of the block's way")
+    s9.add_argument("--sites", metavar="FILE",
+                    help="CSV (instance,x,y[,rot,side,twin]) or JSON list: every instance at its own site, one batch")
+    s9.add_argument("--twin", action="append", metavar="TOP=BOTTOM",
+                    help="also stamp BOTTOM mirrored on the other side at TOP's site (repeatable)")
     s9.add_argument("--zone-priority", type=int, metavar="N",
                     help="add N to the block's pour priorities, above a board-wide pour (default: as recorded, else 0)")
     s9.add_argument("--side", choices=("top", "bottom", "F", "B"), help="side of the block's parts, top/F or bottom/B (default: as recorded, else top)")

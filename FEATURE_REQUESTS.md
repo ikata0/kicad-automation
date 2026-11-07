@@ -71,12 +71,6 @@ changed minimum width, reporting it; report the bug to KiCad with a reduced boar
 
 ## Routing and board-editing APIs
 
-### FR-042: Stamp mirrored twins and site lists
-
-**Open.** A cell holding a top copy and a mirrored bottom copy of a block is stamped as
-two instances. Request: `stamp(..., twin=True)` and stamping sites read from a
-floorplan CSV.
-
 ### FR-046: Search a legal spot for loose parts
 
 **Partial.** `Board.place_near` puts a two-pad part next to a pad, stepping sideways until
@@ -529,3 +523,14 @@ name, rotation and position fitted to the footprints with the stamp's own placem
 ports, outline and layer map as `stamp_preview` gives them, and the zone priority offset
 from the pours. Pairing a hierarchical design's footprints still reads the schematic next
 to the board. Test: `test_stamp_records_live_in_the_board_and_can_be_rebuilt`.
+
+### FR-042: Stamp mirrored twins and site lists
+
+`b.stamp(block, "/CH_A", at, twin="/CH_B")` (or `{instance: twin}` with several, CLI
+`--twin /CH_A=/CH_B`, `kat.pcb.stamp(..., twin={...})`) stamps the twin mirrored on the
+other side at the same site, in the same batch. Sites come from a floorplan list via
+`kat pcb stamp PCB BLOCK --sites FILE` / `kat.pcb.stamp_sites`: a CSV with columns
+`instance, x, y[, rot, side, twin]` or a JSON list, read by `kat.pcb.stamping.read_sites`.
+A floorplan spec (`kat pcb access`) can name the same list file as its `cells`, with a
+`name` column for candidates that are not design instances yet. Tests:
+`test_twins_and_site_lists` and `test_a_library_block_as_a_candidate_cell_of_a_floorplan`.

@@ -119,6 +119,38 @@ def stamps_file(pcb: Path | str) -> Path:
     return Path(pcb).with_suffix(".stamps.json")
 
 
+def read_sites(sites, need_instance: bool = True) -> list[dict]:
+    """Stamping sites from a CSV file (columns ``instance, x, y`` and optionally ``rot``,
+    ``side``, ``twin``, ``block``, ``name``; a header row), a JSON file holding such a list, or
+    the list itself (``at`` [x, y] or ``x``/``y``). Without ``need_instance`` a row may name a
+    candidate cell (``name``) instead of a design instance (a floorplan). Returns [{instance,
+    name, at, rot, side, twin, block}] (None where not given)."""
+    import csv
+    if isinstance(sites, (str, Path)):
+        path = Path(sites)
+        text = path.read_text(encoding="utf-8-sig")
+        if path.suffix.lower() == ".json":
+            rows = json.loads(text)
+        else:
+            rows = [{k.strip().lower(): (v or "").strip() for k, v in r.items() if k}
+                    for r in csv.DictReader(text.splitlines())]
+    else:
+        rows = list(sites)
+    out = []
+    for k, r in enumerate(rows, 1):
+        try:
+            at = tuple(float(v) for v in r["at"]) if r.get("at") not in (None, "") else (float(r["x"]), float(r["y"]))
+        except (KeyError, TypeError, ValueError):
+            raise env.KatError(f"site {k}: give x and y (mm) or at") from None
+        if not r.get("instance") and (need_instance or not r.get("name")):
+            raise env.KatError(f"site {k}: no instance" + ("" if need_instance else " or name"))
+        out.append({"instance": _norm(str(r["instance"])) if r.get("instance") else None,
+                    "name": r.get("name") or None, "at": at, "rot": float(r.get("rot") or 0),
+                    "side": lay.stamp_side(r.get("side") or None), "twin": _norm(str(r["twin"])) if r.get("twin") else None,
+                    "block": r.get("block") or None})
+    return out
+
+
 STAMP_PROPERTY = "kat.stamp."      # board property per instance: its stamp record as JSON
 
 
@@ -587,7 +619,7 @@ class StampMixin:
               rot: float = 0.0, lock: bool = True, source_instance: str | None = None,
               make_room: bool = False, side: str | None = None, layer_map: str | dict | None = None,
               allow_asymmetric: bool = False, anchor: str | None = None,
-              zone_priority: int | None = None) -> dict:
+              zone_priority: int | None = None, twin: str | dict | None = None) -> dict:
         """Copy a checked block layout (a block board, or a block name from the library)
         onto one instance of the block: parts placed as on
         the block board, tracks, vias, zones, keep-outs, graphics and board-only parts
@@ -624,20 +656,28 @@ class StampMixin:
         priority of the block's pours (not below 0; None: as recorded, else 0), so they sit
         above a board-wide pour on the same layer instead of meeting it at one priority, where
         KiCad's fill order decides who gets the shared area (KiCad 10's DRC reports nothing);
-        the stamp warns about that. Returns pairs, renamed nets,
+        the stamp warns about that. ``twin``: the instance (or {instance: twin} for several)
+        stamped at the same site on the other side, mirrored: a cell holding a top and a bottom
+        copy in one call; both are results. Returns pairs, renamed nets,
         side, layer map, origin, outline and counts; several instances: ``instances`` (those
         results, in ``order``) and ``order``."""
-        if isinstance(instance, dict):
-            wanted = []
-            for name, where in instance.items():
-                pos, r, sd = where, rot, side
-                if isinstance(where[0], (tuple, list)):
-                    pos, r, sd = (*where, side)[:3] if len(where) == 2 else where
-                wanted.append((name, pos, r, sd))
-            return self._stamp_batch(block_pcb, wanted, lock, source_instance, make_room, layer_map,
-                                     allow_asymmetric, anchor, zone_priority)
-        return self._stamp_batch(block_pcb, [(instance, at, rot, side)], lock, source_instance, make_room,
-                                 layer_map, allow_asymmetric, anchor, zone_priority)["instances"][0]
+        many = isinstance(instance, dict)
+        wanted = []
+        for name, where in (instance.items() if many else [(instance, (at, rot, side))]):
+            pos, r, sd = where, rot, side
+            if isinstance(where[0], (tuple, list)):
+                pos, r, sd = (*where, side)[:3] if len(where) == 2 else where
+            wanted.append((name, pos, r, sd))
+        twins = twin if isinstance(twin, dict) else {wanted[0][0]: twin} if twin else {}
+        for name, pos, r, sd in list(wanted):
+            if twins.get(name):
+                other = "top" if (lay.stamp_side(sd) or "top") == "bottom" else "bottom"
+                wanted.append((twins[name], pos, r, other))
+        if unknown := sorted(set(twins) - {w[0] for w in wanted}):
+            raise env.KatError(f"twin of {', '.join(unknown)}: not stamped in this call")
+        res = self._stamp_batch(block_pcb, wanted, lock, source_instance, make_room, layer_map,
+                                allow_asymmetric, anchor, zone_priority)
+        return res if many or twins else res["instances"][0]
 
     def _stamp_batch(self, block_pcb, wanted: list[tuple], lock: bool, source_instance: str | None,
                      make_room: bool, layer_map, allow_asymmetric: bool, anchor: str | None,

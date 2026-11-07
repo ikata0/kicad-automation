@@ -722,6 +722,11 @@ with kat.pcb.edit("top/top.kicad_pcb") as b:
   then go on in natural order of their names (returned as `order`), so `make_room` is
   repeatable too. A refusal lists every collision with its pairs and order, and the board
   stays as it was. `--step` still follows the order the instances are named in.
+- **Twins and site lists:** `twin="/CH_B"` (or `{instance: twin}`; `--twin /CH_A=/CH_B`)
+  stamps the twin mirrored on the other side at the same site, in the same batch: a cell
+  holding a top and a bottom copy. `kat pcb stamp PCB BLOCK --sites FILE`
+  (`kat.pcb.stamp_sites`) takes every instance's site from a floorplan list: a CSV with
+  columns `instance, x, y` and optionally `rot, side, twin` (or a JSON list of such rows).
 - **Preview:** `b.stamp_preview(block, at, rot, instance, side, ...)` /
   `kat pcb stamp PCB BLOCK [INSTANCE...] --at X,Y --preview` answers the same without
   changing the board, with `ports` in the design frame and `order`, the ports per outline
@@ -779,6 +784,8 @@ placed as `stamp` would; they block the layers they name, as do keep-outs, and a
 cut-outs, keep-outs and pads. A port is `reachable` (length, vias), `blocked` (`walled_by`) or `sealed`.
 Each port is judged alone, so a gap one track fits through passes for ten: routing and DRC stay
 the judges. A block's outline counts as solid on `blocked_layers`, even where its copper leaves room.
+`cells` may also name a site list file beside the spec (the CSV of `stamp --sites`, with a
+`name` column for candidates that are no design instance yet), with `block` for all of them.
 
 ### 4.19 Block library
 

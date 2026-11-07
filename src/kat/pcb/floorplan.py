@@ -74,7 +74,7 @@ def _read(spec: dict | Path | str) -> dict:
         raise env.KatError(f"{path.name} is not valid JSON: {e}") from e
     if not isinstance(data, dict):
         raise env.KatError(f"{path.name}: expected an object")
-    return data
+    return {**data, "_dir": str(path.parent)}      # files it names are beside it
 
 
 def access(spec: dict | Path | str) -> dict:
@@ -140,7 +140,19 @@ def access(spec: dict | Path | str) -> dict:
                                          box=(min(a for a, _ in q), min(b for _, b in q), max(a for a, _ in q), max(b for _, b in q))))
     # the cells
     cells = []
-    for k, c in enumerate(spec.get("cells") or [], 1):
+    listed = spec.get("cells") or []
+    if isinstance(listed, str):          # a site list (kat pcb stamp --sites), one block for all
+        from .stamping import read_sites
+        file = Path(listed) if Path(listed).is_absolute() or not spec.get("_dir") else Path(spec["_dir"]) / listed
+        listed = []
+        for r in read_sites(file, need_instance=False):
+            cell = {"block": r["block"] or spec.get("block"), "at": r["at"], "rot": r["rot"],
+                    "instance": r["instance"], "side": r["side"], **({"name": r["name"]} if r["name"] else {})}
+            listed.append(cell)
+            if r["twin"]:
+                listed.append({**cell, "instance": r["twin"],
+                               "side": "top" if (r["side"] or "top") == "bottom" else "bottom"})
+    for k, c in enumerate(listed, 1):
         name = c.get("name") or c.get("instance") or f"cell {k}"
         ports = c.get("ports")
         if c.get("block"):

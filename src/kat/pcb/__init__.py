@@ -125,7 +125,7 @@ def stamp(pcb: Path | str, block_pcb: Path | str, instances: str | list[str],
           at: tuple[float, float], step: tuple[float, float] | None = None, rot: float = 0.0,
           lock: bool = True, make_room: bool = False, side: str | None = None,
           layer_map: str | None = None, allow_asymmetric: bool = False, anchor: str | None = None,
-          zone_priority: int | None = None) -> dict:
+          zone_priority: int | None = None, twin: dict[str, str] | None = None) -> dict:
     """Stamp a checked block layout onto instances of the block (``Board.stamp``) and save.
     ``instances``: paths such as ``/CH_A`` (a list, or ``"all"`` for every instance). The
     n-th one goes to ``at + n * step`` (mm; default step: the block's pitch, ``block_cell``,
@@ -134,7 +134,8 @@ def stamp(pcb: Path | str, block_pcb: Path | str, instances: str | list[str],
     push the design's parts out of the block parts' way instead of refusing. ``side``
     "top"/"bottom" (None: as recorded per instance, else top), ``layer_map`` "auto",
     "roles" or ``"F.Cu=B.Cu,..."``, ``allow_asymmetric``, ``zone_priority`` (added to the
-    block's pour priorities): see ``Board.stamp``. Ends with
+    block's pour priorities), ``twin`` ({instance: the instance stamped mirrored on the other
+    side at the same site}): see ``Board.stamp``. Ends with
     the board check, like ``sync``. All instances are judged on their final geometry, so they
     may swap places and the outcome does not depend on the order they are processed in
     (``order``, returned with their results); a refusal lists every collision and saves
@@ -148,7 +149,26 @@ def stamp(pcb: Path | str, block_pcb: Path | str, instances: str | list[str],
         done = b.stamp(block_pcb, {name: ((at[0] + k * step[0], at[1] + k * step[1]), rot)
                                    for k, name in enumerate(names)}, lock=lock, make_room=make_room,
                        side=side, layer_map=layer_map, allow_asymmetric=allow_asymmetric, anchor=anchor,
-                       zone_priority=zone_priority)
+                       zone_priority=zone_priority, twin=twin)
+    c = checks.run(Path(pcb))
+    return tidy({"board": str(pcb), "instances": done["instances"], "order": done["order"],
+                 "check": {k: c[k] for k in ("ok", "drc_errors", "unconnected", "parity")}})
+
+
+def stamp_sites(pcb: Path | str, block_pcb: Path | str, sites, lock: bool = True, make_room: bool = False,
+                layer_map: str | None = None, allow_asymmetric: bool = False, anchor: str | None = None,
+                zone_priority: int | None = None) -> dict:
+    """Stamp a block at the sites of a floorplan list (``stamping.read_sites``: a CSV with
+    ``instance, x, y[, rot, side, twin]`` columns, a JSON list or the list itself), all in one
+    batch as ``stamp`` does: ``twin`` is the instance stamped mirrored on the other side of
+    the same site. Saves, then checks the board like ``stamp``."""
+    from .stamping import read_sites
+    report.touch(pcb)
+    rows = read_sites(sites)
+    with edit(pcb) as b:
+        done = b.stamp(block_pcb, {r["instance"]: (r["at"], r["rot"], r["side"]) for r in rows}, lock=lock,
+                       make_room=make_room, layer_map=layer_map, allow_asymmetric=allow_asymmetric, anchor=anchor,
+                       zone_priority=zone_priority, twin={r["instance"]: r["twin"] for r in rows if r["twin"]})
     c = checks.run(Path(pcb))
     return tidy({"board": str(pcb), "instances": done["instances"], "order": done["order"],
                  "check": {k: c[k] for k in ("ok", "drc_errors", "unconnected", "parity")}})
