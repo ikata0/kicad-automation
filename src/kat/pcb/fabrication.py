@@ -31,9 +31,14 @@ def _title(b: Board) -> dict:
 
 
 def fab(pcb: Path | str, out: Path | str | None = None, step: bool = True, three_d: bool = True) -> dict:
-    """Write the fabrication set into ``out`` (default fab/<name>-<rev>/ next to the board)."""
+    """Write the fabrication set into ``out`` (default fab/<name>-<rev>/ next to the board).
+    Refused when the board has vias its fabrication profile forbids (``fab_profile``)."""
+    from . import fabprofile as profile
     pcb = Path(pcb)
     b = Board(pcb)
+    if bad := profile.findings(b).get("forbidden_vias"):
+        raise env.KatError(f"{len(bad)} vias the fabrication profile forbids ({', '.join(sorted({v['kind'] for v in bad}))}, "
+                           f"e.g. at {bad[0]['at']}): the supplier cannot make the board")
     rev = _title(b).get("rev") or "draft"
     out = Path(out) if out else pcb.parent / "fab" / f"{pcb.stem}-{rev}"
     ger, asm = out / "gerbers", out / "assembly"
@@ -80,7 +85,8 @@ REQUIRED = {"gerber copper": ("gerbers", "Cu"), "gerber outline": ("gerbers", "E
 def ready(pcb: Path | str, fab_dir: Path | str | None = None, accept: dict[str, str] | None = None,
           overhang: list[str] | None = None) -> dict:
     """Release gate. Errors: board check not clean (DRC errors or warnings, parity,
-    unconnected, parts outside the outline), title or revision empty, fabrication set
+    unconnected, parts outside the outline), departures from the fabrication profile
+    (``fab_profile``: forbidden vias, classes or rules below its minimum), title or revision empty, fabrication set
     missing or incomplete (Gerbers for copper, mask and outline, drill, position file,
     BOM, IPC-D-356), or older than the board. ``accept``: DRC warning kinds judged
     harmless, each with its reason ({"via_dangling": "..."}); ``overhang``: parts meant to
@@ -102,6 +108,8 @@ def ready(pcb: Path | str, fab_dir: Path | str | None = None, accept: dict[str, 
                        "detail": {**{k: c[k] for k in ("drc_errors", "unconnected", "parity", "islands",
                                                         "outside_outline")},
                                   "warnings": left_warnings, "overhang": left_overhang}})
+    if c.get("profile"):
+        errors.append({"problem": "fab_profile", "detail": c["profile"]})
     accepted = {"warnings": {k: {"count": warn_kinds[k], "reason": r} for k, r in accept.items() if k in warn_kinds},
                 "overhang": [r for r in overhang if r in c["overhang"]]}
     t = _title(b)

@@ -414,13 +414,45 @@ class SetupMixin:
 
     # --- net classes and rules (project files, written on save) ---------------------------
 
+    def fab_profile(self, via_types: list[str] | None = None, min_clearance: float | None = None,
+                    clear: bool = False) -> dict:
+        """The board's fabrication profile, what the supplier can make, held for the whole
+        flow (``kat.pcb.fabprofile``): ``via_types`` (through, blind, buried, micro) and
+        ``min_clearance`` (mm, also the board minimum DRC uses). A generated rule
+        ``kat profile vias`` disallows the other via kinds in DRC; ``via``, ``route_vias``,
+        ``netclass``, ``stamp``, ``check``, ``ready`` and ``fab`` hold to it. No arguments:
+        read it; ``clear``: remove it. Kept in ``<board>.kat.json``, written on save.
+        Returns the profile."""
+        from . import fabprofile as prof
+        cur = {} if clear else dict(self._profile if self._profile is not None else prof.read(self.path))
+        if via_types is None and min_clearance is None and not clear:
+            return cur
+        prof.check_values(via_types, min_clearance)
+        if via_types is not None:
+            cur["via_types"] = [k for k in ("through", "blind", "buried", "micro") if k in via_types]
+        if min_clearance is not None:
+            cur["min_clearance"] = float(min_clearance)
+            self.constraints(min_clearance=float(min_clearance))
+        r = prof.rule(cur.get("via_types"))
+        self._gen_rules[prof.RULE] = r or ""
+        self._profile = cur
+        return cur
+
     def netclass(self, name: str, track: float, clearance: float, via: float = 0.6,
                  via_drill: float = 0.3, nets: list[str] | None = None,
-                 layers: list[str] | None = None) -> dict:
+                 layers: list[str] | None = None, below_profile: bool = False) -> dict:
         """Define or change a net class in the .kicad_pro; ``nets`` are net-name patterns
         (``GND``, ``/LED_*``) assigned to it. ``Default`` changes the default class.
         ``layers``: the copper layers the router may use for the class (kept in
-        ``<board>.kat.json``; KiCad has no such setting, DRC does not check it)."""
+        ``<board>.kat.json``; KiCad has no such setting, DRC does not check it). A clearance
+        below the fabrication profile's minimum (``fab_profile``) is refused unless
+        ``below_profile``, which records it in the profile's ``exceptions``."""
+        p = self.fab_profile()
+        if p.get("min_clearance") and clearance < p["min_clearance"] - 1e-9:
+            if not below_profile:
+                raise env.KatError(f"net class {name}: clearance {clearance:g} mm is below the fabrication "
+                                   f"profile's minimum {p['min_clearance']:g} mm (below_profile=True to decide so)")
+            self._profile = {**p, "exceptions": {**(p.get("exceptions") or {}), name: clearance}}
         self._pro_edits.append(("netclass", dict(name=name, track=track, clearance=clearance,
                                                  via=via, via_drill=via_drill, nets=nets or [])))
         if layers is not None:
@@ -450,12 +482,17 @@ class SetupMixin:
         joins by a through via gets none of its new copper (``disallowed_vias`` in the result, the
         net unconnected). Freerouting joins layers with one via only, so it does not stack blind
         and buried vias. Stored with the router's other settings. Returns the setting."""
+        from . import fabprofile as prof
         from .structure import via_kind
         copper = self.copper_layers()
+        p = self.fab_profile()
+        if through:
+            prof.via_allowed(p, "through", "the router's")
         out = []
         for s in spans:
             top, bottom, kind, size, drill = (*s, None, None, None)[:5]
             kind, span = via_kind(top, bottom, copper, kind)
+            prof.via_allowed(p, kind, f"the router's {span[0]}-{span[1]}")
             out.append({"layers": list(span), "kind": kind, **({"size": size} if size else {}),
                         **({"drill": drill} if drill else {})})
         self._route_edits["vias"] = {"spans": out, "through": bool(through)}
@@ -573,11 +610,20 @@ class SetupMixin:
         own, gen = _split_rules(old)
         if self._rules_text is not None:
             own = [self._rules_text] if self._rules_text else []
-        gen = {**gen, **self._gen_rules}
+        gen = {k: v for k, v in {**gen, **self._gen_rules}.items() if v}     # "" removes one
         return "\n".join(own + [gen[k] for k in sorted(gen)])
 
     def _write_project_files(self) -> None:
         self._write_route_settings()
+        if self._profile is not None:
+            from . import layers as lay
+            data = lay.meta(self.path)
+            if self._profile:
+                data["fab_profile"] = self._profile
+            else:
+                data.pop("fab_profile", None)
+            lay.write_meta(self.path, data)
+            self._profile = None
         pro = self.path.with_suffix(".kicad_pro")
         if self._pro_edits:
             pro.write_text(json.dumps(self._project_data(), indent=2) + "\n", encoding="utf-8")

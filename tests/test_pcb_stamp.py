@@ -1034,6 +1034,11 @@ def test_zone_priority_lifts_block_pours_over_a_board_pour(hier, tmp_path):
     with kat.pcb.edit(pcb) as b:                                    # restamped: the offset is kept
         b.stamp(b1, "/CH_A", at=tuple(rec["at"]), rot=rec["rot"])
     assert Board(pcb)._stamp_record("/CH_A")["zone_priority"] == 2
+    # FR-037: a block whose classes ask less than the design's fabrication profile is named
+    with kat.pcb.edit(pcb) as b:
+        b.fab_profile(min_clearance=0.25)
+        r = b.stamp(b1, "/CH_A", at=tuple(rec["at"]), rot=rec["rot"])
+    assert any("below the design's profile minimum 0.25" in w for w in r.get("warnings", [])), r.get("warnings")
 
 
 def test_stamp_records_live_in_the_board_and_can_be_rebuilt(hier, tmp_path, capsys):

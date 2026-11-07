@@ -548,6 +548,7 @@ class Board(SetupMixin, PlacementMixin, StructureMixin, StampMixin, FinishMixin)
         self._route_edits: dict = {}
         self._stamps: dict = {}
         self._renamed_instances: dict[str, str] = {}
+        self._profile: dict | None = None          # a changed fabrication profile, written on save
 
     @staticmethod
     def create(path: Path | str) -> "Board":

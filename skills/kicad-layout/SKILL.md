@@ -106,12 +106,13 @@ with kat.pcb.edit(PCB) as b:
     b.plane("GND", "In1.Cu")                     # layer type power: the router lays no tracks
     b.zone("+5V", "In2.Cu", priority=1)          # a pour; name defaults to "+5V In2.Cu"
     b.keepout(["F.Cu", "B.Cu"], rect=(2, 40, 6, 20), vias=False, pour=False)
-    # the fab's minimums first; J1 is an edge-mount SMA (pads at the edge)
-    b.constraints(min_track=0.1, min_clearance=0.1, min_via=0.45, min_via_drill=0.2,
+    # the fab's profile and minimums first; J1 is an edge-mount SMA (pads at the edge)
+    b.fab_profile(via_types=["through"], min_clearance=0.125)
+    b.constraints(min_track=0.1, min_via=0.45, min_via_drill=0.2,
                   hole_clearance=0.2, edge_clearance=0.3, edge_exempt=["J1"])
     b.netclass("POWER", track=0.5, clearance=0.25, nets=["+5V", "GND"])
     b.netclass("ANALOG", track=0.2, clearance=0.2, nets=["/AIN"], layers=["F.Cu", "In2.Cu"])
-    b.netclass("SPI", track=0.15, clearance=0.1, nets=["/SPI_*"], layers=["F.Cu", "B.Cu"])
+    b.netclass("SPI", track=0.15, clearance=0.125, nets=["/SPI_*"], layers=["F.Cu", "B.Cu"])
     b.class_clearance("SPI", "ANALOG", 1.0)      # DRC rule and the router's rule
     for x, y in ((3.5, 3.5), (128.5, 3.5), (3.5, 96.5), (128.5, 96.5)):
         b.mounting_hole((x, y), "M3")

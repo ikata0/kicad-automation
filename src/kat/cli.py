@@ -198,6 +198,8 @@ def cmd_pcb(a):
         return kat.pcb.stamp(a.pcb, a.block, names, xy(a.at), xy(a.step) if a.step else None,
                              a.rot, not a.no_lock, a.make_room, a.side, a.layer_map, a.allow_asymmetric, a.anchor,
                              a.zone_priority, dict(twins) or None)
+    if a.pcb_cmd == "profile":
+        return kat.pcb.profile(a.pcb, a.via_types.split(",") if a.via_types else None, a.min_clearance, a.clear)
     if a.pcb_cmd == "stamps":
         return kat.pcb.stamps(a.pcb, (a.instance or True) if a.rebuild else False)
     if a.pcb_cmd == "collisions":
@@ -1068,6 +1070,18 @@ def build_parser() -> argparse.ArgumentParser:
     s9.add_argument("--layer-map", metavar="MAP", help='auto (default), roles, or "F.Cu=B.Cu,In1.Cu=In2.Cu,..."')
     s9.add_argument("--allow-asymmetric", action="store_true",
                     help="flip with the auto map although the stack-up is not mirror-symmetric")
+    s31 = psp.add_parser("profile", formatter_class=_Fmt, help="the board's fabrication profile",
+                         description="What the supplier can make, held for the whole flow: via types and the\n"
+                                     "minimum clearance (also the board minimum DRC uses). A generated DRC rule\n"
+                                     "disallows the other via kinds; b.via and route_vias refuse them, netclass\n"
+                                     "refuses a clearance below the minimum (below_profile=True records an\n"
+                                     "exception), stamp warns about a block's departures, pcb check lists them\n"
+                                     "(profile, not clean), pcb ready makes them errors, pcb fab refuses forbidden\n"
+                                     "vias. Without options: show it and the board's departures.")
+    s31.add_argument("pcb", metavar="PCB")
+    s31.add_argument("--via-types", metavar="KINDS", help="through,blind,buried,micro (comma-separated)")
+    s31.add_argument("--min-clearance", type=float, metavar="MM", help="e.g. 0.125")
+    s31.add_argument("--clear", action="store_true", help="remove the profile")
     s30 = psp.add_parser("stamps", formatter_class=_Fmt, help="the board's stamp records; --rebuild lost ones",
                          description="Where each block instance was stamped (block, at, rot, side, origin,\n"
                                      "outline, layer map, ports), kept in the board file. --rebuild recovers\n"

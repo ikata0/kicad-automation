@@ -1,5 +1,7 @@
 """Blind, buried and micro vias: built, checked on their own span, and routed with."""
 
+import json
+
 import pytest
 
 import kat
@@ -276,3 +278,40 @@ def test_dsn_carries_the_minimum_and_route_reports_what_breaks_it(tmp_path):
     specctra.write_dsn(default, dsn)
     assert "via_via" not in dsn.read_text()                             # nothing asked beyond the copper
 
+
+
+def test_a_fabrication_profile_holds_the_whole_flow(tmp_path, capsys):
+    """FR-037: through vias only, 0.125 mm minimum: DRC disallows the rest, kat refuses to make
+    them or a class below the minimum, check lists departures, fab refuses forbidden vias."""
+    from kat import cli
+    pcb, b = board(tmp_path)
+    b.save()
+    assert cli.main(["pcb", "profile", str(pcb), "--via-types", "through", "--min-clearance", "0.125"]) == 0
+    out = json.loads(capsys.readouterr().out)
+    assert out["profile"] == {"via_types": ["through"], "min_clearance": 0.125} and out["departures"] == {}
+    assert "disallow blind_via buried_via micro_via" in pcb.with_suffix(".kicad_dru").read_text()
+    b = Board(pcb)
+    assert b.board_minimums()["min_clearance"] == 0.125
+    with pytest.raises(kat.KatError, match="allows through vias only"):
+        b.via((5, 5), "A", layers=("F.Cu", "In1.Cu"))
+    with pytest.raises(kat.KatError, match="allows through vias only"):
+        b.route_vias([("F.Cu", "In1.Cu", "micro")])
+    with pytest.raises(kat.KatError, match="below the fabrication profile"):
+        b.netclass("Fine", 0.1, 0.1)
+    b.netclass("Fine", 0.1, 0.1, below_profile=True)            # decided, and recorded
+    b.via((20, 15), "A")
+    b._via((5, 5), "A", 0.6, 0.3, False, ("F.Cu", "In1.Cu"), "blind")   # as an import would bring it
+    b.save()
+    assert kat.pcb.profile(pcb)["profile"]["exceptions"] == {"Fine": 0.1}
+    c = kat.pcb.check(pcb)
+    assert c["profile"] == {"forbidden_vias": [{"kind": "blind", "at": [5.0, 5.0], "net": "A"}]} and not c["clean"]
+    assert c["by_type"].get("items_not_allowed") == 1                    # KiCad's DRC agrees
+    with pytest.raises(kat.KatError, match="profile forbids"):
+        kat.pcb.fab(pcb, step=False, three_d=False)
+    assert any(e["problem"] == "fab_profile" for e in kat.pcb.ready(pcb)["errors"])
+    # FR-051's via spacing: holes are kept apart in every direction, not only along the axes
+    with pytest.raises(kat.KatError, match="hole"):
+        b = Board(pcb)
+        b.via((20.3, 15.3), "A")                                 # 0.42 mm centre to centre, diagonal
+    assert kat.pcb.profile(pcb, clear=True)["profile"] == {}
+    assert "kat profile vias" not in pcb.with_suffix(".kicad_dru").read_text()

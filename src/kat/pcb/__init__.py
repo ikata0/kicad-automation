@@ -174,6 +174,22 @@ def stamp_sites(pcb: Path | str, block_pcb: Path | str, sites, lock: bool = True
                  "check": {k: c[k] for k in ("ok", "drc_errors", "unconnected", "parity")}})
 
 
+def profile(pcb: Path | str, via_types: list[str] | None = None, min_clearance: float | None = None,
+            clear: bool = False) -> dict:
+    """The board's fabrication profile (``Board.fab_profile``): ``via_types`` the supplier
+    makes (through, blind, buried, micro) and ``min_clearance`` (mm). Set, read (no
+    arguments) or ``clear`` it; returns ``profile`` and the board's departures from it
+    (``departures``, as ``kat pcb check`` reports them)."""
+    from . import fabprofile as prof
+    report.touch(pcb)
+    if via_types is None and min_clearance is None and not clear:
+        b = Board(pcb)
+        return tidy({"board": str(pcb), "profile": b.fab_profile(), "departures": prof.findings(b)})
+    with edit(pcb) as b:
+        p = b.fab_profile(via_types, min_clearance, clear)
+    return tidy({"board": str(pcb), "profile": p, "departures": prof.findings(Board(pcb))})
+
+
 def stamps(pcb: Path | str, rebuild: bool | list[str] = False) -> dict:
     """The board's stamp records ({instance: {block, at, rot, side, origin, outline, layer_map,
     ports, ...}}), kept in the board file. ``rebuild``: recover lost ones from the stamped

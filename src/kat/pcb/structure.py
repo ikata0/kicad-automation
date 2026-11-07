@@ -308,6 +308,8 @@ class StructureMixin:
             raise env.KatError("a via needs a net (or a pad to sit on)")
         copper = self.copper_layers()
         kind, span = via_kind(*(layers or (copper[0], copper[-1])), copper, kind)
+        from .fabprofile import via_allowed
+        via_allowed(self.fab_profile(), kind, f"via at {xy}:")
         rules = self.net_rules(net)
         micro = kind == "micro"
         size = size or rules["microvia" if micro else "via"]

@@ -35,25 +35,6 @@ mutual capacitance per net pair. The existing parallel-plate and 2D cross-sectio
 estimates in `src\kat\pcb\coupling.py` and `src\kat\pcb\field2d.py` do not provide
 a tiled 3D field solution.
 
-### FR-037: Fabrication profile: via types and minimum clearance
-
-**Open.** `b.constraints(min_clearance=...)` sets the board minimum, but nothing holds
-a supplier's limits for the whole flow, and the layout skill's example uses 0.1 mm.
-Request: a profile stored with the board, e.g. `b.fab_profile(via_types=["through"],
-min_clearance=0.125)` or `kat pcb constraints`, written to KiCad's rules where possible
-(`(constraint disallow blind_via buried_via micro_via)`), and honoured by:
-- `b.via()` and the routers: no other via type, the profile's clearance;
-- stamping and `kat block check`: report a block's via types and clearances below the
-  profile before it is stamped;
-- `kat pcb check` (warning) and `ready` (error): every forbidden via, and every net
-  class or custom rule below the profile minimum, besides what DRC finds;
-- `kat pcb fab`: refuse to export forbidden vias;
-- `kat new`, `kat pcb netclass`, block import and stamping: classes start at the
-  profile minimum (suggested default 0.125 mm); a lower value is an explicit, recorded
-  decision.
-
-The profile could later carry minimum drill, annular ring, track and layer count.
-
 ### FR-038: Name pads on isolated pour fragments
 
 **Partial.** `kat pcb check` counts DRC's isolated copper and starved thermals as
@@ -117,12 +98,14 @@ router's "all routed" is not the verdict. Optionally `--nets GLOB` / `--netclass
 
 ### FR-051: Grid-router capabilities
 
-**Open.** FR-018 built no grid router, as nothing then showed it would beat Freerouting.
+**Open, waiting** (decided 2026-11-06: like FR-006, until a benchmark board fails with
+Freerouting). FR-018 built no grid router, as nothing then showed it would beat Freerouting.
 Downstream grid routers since needed, on dense multi-layer boards:
 - speed: a native A* core or a coarse global stage (pure Python took minutes per
   rip-up iteration);
 - targeted rip-up and reroute when negotiated routing plateaus;
-- via spacing checked in all directions, not only orthogonally (FR-023 covers the rule);
+- via spacing checked in all directions, not only orthogonally (FR-023 covers the rule;
+  kat's own via placement checks it in every direction, see FR-037);
 - zone fills rasterised per net as obstacles or targets;
 - failed nets retried with a permuted order automatically.
 
@@ -534,3 +517,23 @@ other side at the same site, in the same batch. Sites come from a floorplan list
 A floorplan spec (`kat pcb access`) can name the same list file as its `cells`, with a
 `name` column for candidates that are not design instances yet. Tests:
 `test_twins_and_site_lists` and `test_a_library_block_as_a_candidate_cell_of_a_floorplan`.
+
+### FR-037: Fabrication profile: via types and minimum clearance
+
+`b.fab_profile(via_types=["through"], min_clearance=0.125)` / `kat.pcb.profile` /
+`kat pcb profile PCB --via-types through --min-clearance 0.125` store the profile in
+`<board>.kat.json`. KiCad gets what it can enforce: a generated rule `kat profile vias`
+(`(constraint disallow blind_via buried_via micro_via)`, flagged by DRC as
+`items_not_allowed`) and the board minimum clearance. kat holds its own steps to it:
+- `b.via` and `route_vias` refuse forbidden kinds;
+- `b.netclass` refuses a clearance below the minimum unless `below_profile=True`, which is
+  recorded in the profile's `exceptions`;
+- `stamp` warns about a block's forbidden vias and classes below the minimum;
+- `kat pcb check` lists departures in `profile` (not clean), and `kat pcb ready` makes them
+  errors (`fab_profile`);
+- `kat pcb fab` refuses forbidden vias.
+The layout skill's example now uses the profile and 0.125 mm. Not done: making `kat new`
+and block import apply the profile, since classes start at KiCad's 0.2 mm default, above the
+suggested minimum. FR-051's via-spacing point is covered: hole-to-hole spacing is checked in
+every direction (diagonal case in the test). Test:
+`test_a_fabrication_profile_holds_the_whole_flow`.

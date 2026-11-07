@@ -910,6 +910,8 @@ class StampMixin:
         if info.get("type") and (why := lib.stale(block_pcb.parent)):
             warnings.append(f"block {block_pcb.stem}: {why}")
         src = Board(block_pcb)
+        from .fabprofile import block_departures
+        warnings += block_departures(src, self.fab_profile(), block_pcb.stem)
         block = block_pcb.stem
         pairs, environment, mode = self._pairs(src, instance, source_instance) if instance else ({}, [], None)
 

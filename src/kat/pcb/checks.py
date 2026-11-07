@@ -50,8 +50,10 @@ ISLAND_TYPES = ("starved_thermal", "isolated_copper", "zone_has_empty_net")
 def run(pcb: Path, mapping: Path | None = None, complete: bool | list[str] = True) -> dict:
     """KiCad's DRC (zones refilled in memory, parity against the schematic) plus kat's
     findings: board outline missing, parts outside the outline (``outside_outline``: pads
-    outside; ``overhang``: pads inside, only the body beyond the edge), and the board's
-    net rules (``net_rules``: coupling, layers, plane; see ``coupling``). ``mapping``: a pin
+    outside; ``overhang``: pads inside, only the body beyond the edge), the board's
+    net rules (``net_rules``: coupling, layers, plane; see ``coupling``) and its departures
+    from the fabrication profile (``profile``: forbidden vias, classes or rules below the
+    minimum clearance; see ``profile``). ``mapping``: a pin
     table the pads must agree with (``kat.mapping.check``), reported in ``mapping``.
 
     ``ok``: no DRC errors, parity 0, nothing unconnected, outline present, mapping agrees.
@@ -86,13 +88,16 @@ def run(pcb: Path, mapping: Path | None = None, complete: bool | list[str] = Tru
     islands = [v for v in d["violations"] if v["type"] in ISLAND_TYPES]
     from . import coupling
     rules = coupling.run(pcb, b)
+    from . import fabprofile as profile
+    departures = profile.findings(b)
     result = {"file": str(pcb), "outline": list(outline) if outline else None,
               "footprints": len(b.footprints()), "tracks": len(b.tracks()), "vias": len(b.vias()),
               "drc_errors": d["errors"], "drc_warnings": d["warnings"], "by_type": d["by_type"],
               "unconnected": len(d["unconnected"]), "parity": len(d["parity"]),
               "islands": len(islands), "outside_outline": outside, "overhang": overhang,
               "violations": d["violations"], "unconnected_items": d["unconnected"],
-              "parity_items": d["parity"], **({"net_rules": rules} if rules else {})}
+              "parity_items": d["parity"], **({"net_rules": rules} if rules else {}),
+              **({"profile": departures} if departures else {})}
     ok = bool(outline) and d["errors"] == 0 and not d["parity"] and not d["unconnected"]
     if mapping:
         from ..mapping import check as check_mapping
@@ -100,7 +105,7 @@ def run(pcb: Path, mapping: Path | None = None, complete: bool | list[str] = Tru
         ok = ok and result["mapping"]["ok"]
     result["ok"] = ok
     result["clean"] = (ok and d["warnings"] == 0 and not outside and not overhang
-                       and not (rules and rules["findings"]))
+                       and not (rules and rules["findings"]) and not departures)
     return result
 
 
