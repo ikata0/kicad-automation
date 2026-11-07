@@ -315,3 +315,29 @@ def test_a_fabrication_profile_holds_the_whole_flow(tmp_path, capsys):
         b.via((20.3, 15.3), "A")                                 # 0.42 mm centre to centre, diagonal
     assert kat.pcb.profile(pcb, clear=True)["profile"] == {}
     assert "kat profile vias" not in pcb.with_suffix(".kicad_dru").read_text()
+
+
+def test_plane_stubs_reuse_a_near_via_and_say_when_no_plane_is_there(tmp_path, capsys):
+    """FR-048: kat pcb plane-stub and kat pcb stitch; an existing via of the net within reach
+    is used, and a net without a pour on another layer is named."""
+    from kat import cli
+    pcb, b = board(tmp_path)
+    for ref, x in (("R1", 10), ("R2", 20)):
+        f = b.add_footprint(R0603, ref, x, 10)
+        for num, net in (("1", "GND"), ("2", f"S{ref}")):
+            node = f.pad(num).node
+            node.insert(node.index(find(node, "layers")) + 1, [Sym("net"), net])
+    gnd = b.footprint("R2").pad("1")
+    b.via((gnd.x - 1.5, gnd.y), "GND")                      # already there, 1.5 mm from R2.1
+    b.save()
+    assert cli.main(["pcb", "plane-stub", str(pcb), "R1", "--net", "GND"]) in (0, 1)
+    res = json.loads(capsys.readouterr().out)
+    assert res["warnings"] == ["no pour of GND on another copper layer: the via reaches no plane yet"]
+    with kat.pcb.edit(pcb) as e:
+        e.plane("GND", "In1.Cu")
+    res = kat.pcb.plane_stub(pcb, "R2", nets=["GND"])
+    assert res["vias"][0]["reused"] and res["vias"][0]["via"] == [gnd.x - 1.5, gnd.y] and "warnings" not in res
+    assert len(Board(pcb).vias()) == 2                        # R1's new one and the reused one
+    assert cli.main(["pcb", "stitch", str(pcb), "GND", "--pitch", "8"]) in (0, 1)
+    st = json.loads(capsys.readouterr().out)
+    assert st["vias"] == len(st["points"]) > 4 and st["check"]["drc_errors"] == 0, st

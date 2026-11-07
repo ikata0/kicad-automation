@@ -30,12 +30,6 @@ a tiled 3D field solution.
 
 ## Routing and board-editing APIs
 
-### FR-048: Plane-access helpers
-
-**Partial.** `b.stitch` places a stitching-via lattice in the library. Remaining: a
-`kat pcb stitch` command and a plane-stub helper (`kat pcb plane-stub`) that joins SMD
-plane pads to the nearest legal via.
-
 ### FR-049: Post-route clean-up (`kat pcb tidy`)
 
 **Open.** Router output is electrically fine but untidy: 90° and acute corners,
@@ -553,3 +547,13 @@ of its cut-outs, the board's footprint keep-outs on that side and the given `kee
 returns at, rot, side, distance and tried, and refuses (leaving the part) when nothing fits.
 `place_near` stays for the two-pad case, oriented to its pin. Test:
 `test_place_free_finds_the_nearest_legal_spot` (checked against DRC's courtyard check).
+
+### FR-048: Plane-access helpers
+
+`kat pcb stitch PCB NET [--pitch] [--margin]` / `kat.pcb.stitch` wraps `b.stitch`, which now
+returns the via `points`. `kat pcb plane-stub PCB REF... [--net] [--skip-net]` /
+`kat.pcb.plane_stub` wraps `fanout`. A plane stub now uses the nearest via of its net that
+was already there, within 3 mm and reachable by a clear stub (`reused`), before placing a
+new one. A pad whose net has no pour on another copper layer is named in `warnings`. Both
+commands save and report the board check. Test:
+`test_plane_stubs_reuse_a_near_via_and_say_when_no_plane_is_there`.

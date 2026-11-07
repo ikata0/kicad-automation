@@ -330,8 +330,8 @@ the GND pour into islands. So the agent lays the structure first and locks it:
 |---|---|
 | `track(["R1.2", "D1.2"], layer, width)` | net from the pads it touches; refused if they disagree (connections come from the schematic) or if it comes closer than the net-class clearance to other-net copper |
 | `via(at, net, layers=(a, b), kind=None)` | a via; on a pad (`"U1.9"`) it takes the pad's net. Without `layers` a through via; otherwise blind, buried or (`kind="micro"`) a µvia, the kind inferred and the span checked against the stack-up (`via_kind`), since KiCad's DRC does not judge it. Size and drill default to the class's via or µvia; clearance is checked on the span only. `vias()` gives `kind` and `span` |
-| `via_to_plane("D1.1")`, `fanout(refs, nets=["GND"])` | short stub + via next to an SMD pad (outward first, then sideways), so it reaches its plane; fanout gives each of several pads with one number its own via (`J1.2@3`), pads on F and B at one spot share it |
-| `stitch("GND", pitch)` | stitching vias on a grid where they clear copper and courtyards (after the structure) |
+| `via_to_plane("D1.1")`, `fanout(refs, nets=["GND"])` (`kat pcb plane-stub PCB REF... --net GND`) | short stub + via next to an SMD pad, so it reaches its plane: the nearest via of the net already there within 3 mm that a clear stub reaches (`reused`), else a new one (outward first, then sideways); fanout gives each of several pads with one number its own new via (`J1.2@3`), pads on F and B at one spot share it; `warnings` names nets with no pour on another layer |
+| `stitch("GND", pitch)` (`kat pcb stitch PCB NET [--pitch]`) | stitching vias on a grid where they clear copper, holes and courtyards (after the structure); returns their `points` |
 | `lock(net)`, `remove_tracks(net, layer)` | locked copper stays for the router and for rip-up |
 | `at_point(at, layer, kind, net)`, `remove(uuid)`, `remove_at(at, ...)` (`kat pcb remove`) | single tracks and vias by uuid or position, locked ones too (naming them is the decision) |
 | `net_rules(net)` | width, clearance, via size of the net's class |
@@ -992,6 +992,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `pcb stamp PCB BLOCK_PCB INSTANCE... --at X,Y [--step DX,DY] [--rot R] [--anchor origin/top-left] [--no-lock] [--make-room] [--side bottom] [--layer-map auto/roles/MAP] [--allow-asymmetric]` | copy a checked block layout onto instances (`all`), flipped on the bottom side, then the board check (§4.18) |
 | `pcb stamp PCB BLOCK_PCB [INSTANCE...] --at X,Y --preview [...]` | origin, turned bounds and ports of a proposed stamp, board unchanged (§4.18) |
 | `pcb escape PCB SPEC.json [--apply] [--out FILE]` | route permutable pins, choosing the assignment with the tracks (§4.10) |
+| `pcb stitch PCB NET [--pitch MM] [--margin MM]` / `pcb plane-stub PCB REF... [--net N] [--skip-net N]` | stitching vias; SMD pads to their plane by stub and via (§4.9) |
 | `pcb profile PCB [--via-types KINDS] [--min-clearance MM] [--clear]` | the board's fabrication profile and its departures (§4.7) |
 | `pcb stamps PCB [--rebuild [INSTANCE...]]` | the board's stamp records; recover lost ones from the board (§4.18) |
 | `pcb access SPEC.json` | before routing: can each candidate cell's port reach a source? A coarse maze per layer (§4.18) |

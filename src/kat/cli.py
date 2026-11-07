@@ -198,6 +198,10 @@ def cmd_pcb(a):
         return kat.pcb.stamp(a.pcb, a.block, names, xy(a.at), xy(a.step) if a.step else None,
                              a.rot, not a.no_lock, a.make_room, a.side, a.layer_map, a.allow_asymmetric, a.anchor,
                              a.zone_priority, dict(twins) or None)
+    if a.pcb_cmd == "stitch":
+        return kat.pcb.stitch(a.pcb, a.net, a.pitch, a.margin, not a.no_lock)
+    if a.pcb_cmd == "plane-stub":
+        return kat.pcb.plane_stub(a.pcb, a.ref, a.net or None, a.skip_net or [], not a.no_lock)
     if a.pcb_cmd == "profile":
         return kat.pcb.profile(a.pcb, a.via_types.split(",") if a.via_types else None, a.min_clearance, a.clear)
     if a.pcb_cmd == "stamps":
@@ -1072,6 +1076,23 @@ def build_parser() -> argparse.ArgumentParser:
     s9.add_argument("--layer-map", metavar="MAP", help='auto (default), roles, or "F.Cu=B.Cu,In1.Cu=In2.Cu,..."')
     s9.add_argument("--allow-asymmetric", action="store_true",
                     help="flip with the auto map although the stack-up is not mirror-symmetric")
+    s32 = psp.add_parser("stitch", formatter_class=_Fmt, help="stitching vias of a net on a grid",
+                         description="Vias of NET on a grid inside the outline where they clear other copper,\n"
+                                     "holes and courtyards: they tie the net's pours on all layers together.")
+    s32.add_argument("pcb", metavar="PCB")
+    s32.add_argument("net", metavar="NET")
+    s32.add_argument("--pitch", type=float, default=5.0, metavar="MM", help="grid pitch (default 5)")
+    s32.add_argument("--margin", type=float, default=2.0, metavar="MM", help="from the outline's box (default 2)")
+    s32.add_argument("--no-lock", action="store_true", help="leave the vias unlocked")
+    s33 = psp.add_parser("plane-stub", formatter_class=_Fmt, help="SMD pads to their plane by stub and via",
+                         description="Each SMD pad of the parts gets a short stub to a via of its net: the nearest\n"
+                                     "existing via within 3 mm a clear stub reaches, else a new one outward from the\n"
+                                     "part. warnings: nets with no pour on another copper layer.")
+    s33.add_argument("pcb", metavar="PCB")
+    s33.add_argument("ref", nargs="+", metavar="REF")
+    s33.add_argument("--net", action="append", metavar="NET", help="only these nets (repeatable)")
+    s33.add_argument("--skip-net", action="append", metavar="NET", help="never these nets (repeatable)")
+    s33.add_argument("--no-lock", action="store_true", help="leave stubs and vias unlocked")
     s31 = psp.add_parser("profile", formatter_class=_Fmt, help="the board's fabrication profile",
                          description="What the supplier can make, held for the whole flow: via types and the\n"
                                      "minimum clearance (also the board minimum DRC uses). A generated DRC rule\n"

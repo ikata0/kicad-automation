@@ -175,6 +175,29 @@ def stamp_sites(pcb: Path | str, block_pcb: Path | str, sites, lock: bool = True
                  "check": {k: c[k] for k in ("ok", "drc_errors", "unconnected", "parity")}})
 
 
+def stitch(pcb: Path | str, net: str, pitch: float = 5.0, margin: float = 2.0, lock: bool = True) -> dict:
+    """Stitching vias of ``net`` on a grid (``Board.stitch``) and save; returns net, vias,
+    points and the board check's ok, drc_errors and unconnected."""
+    report.touch(pcb)
+    with edit(pcb) as b:
+        res = b.stitch(net, pitch, margin, lock)
+    c = checks.run(Path(pcb))
+    return tidy({"board": str(pcb), **res, "check": {k: c[k] for k in ("ok", "drc_errors", "unconnected")}})
+
+
+def plane_stub(pcb: Path | str, refs: str | list[str], nets: list[str] | None = None,
+               skip_nets: list[str] = (), lock: bool = True) -> dict:
+    """A stub and via from each SMD pad of ``refs`` (only ``nets``, never ``skip_nets``) to
+    its net's plane on another layer (``Board.fanout``: the nearest via of the net within
+    reach first, else a new one) and save. Returns vias, failed, warnings (nets without a
+    pour on another layer) and the board check's ok, drc_errors and unconnected."""
+    report.touch(pcb)
+    with edit(pcb) as b:
+        res = b.fanout(refs, nets, list(skip_nets), lock)
+    c = checks.run(Path(pcb))
+    return tidy({"board": str(pcb), **res, "check": {k: c[k] for k in ("ok", "drc_errors", "unconnected")}})
+
+
 def profile(pcb: Path | str, via_types: list[str] | None = None, min_clearance: float | None = None,
             clear: bool = False) -> dict:
     """The board's fabrication profile (``Board.fab_profile``): ``via_types`` the supplier

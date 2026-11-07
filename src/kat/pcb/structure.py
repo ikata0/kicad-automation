@@ -383,17 +383,35 @@ class StructureMixin:
 
     def via_to_plane(self, pad: str, lock: bool = True, _cu=None) -> dict:
         """A short stub from an SMD pad to a via next to it, so the pad reaches a plane of
-        its net on another layer. The via goes outward from the part first, then sideways."""
+        its net on another layer: the nearest via of its net within 3 mm that a clear stub
+        reaches is used (``reused``), else a new one goes outward from the part first, then
+        sideways. ``warning`` when no pour of the net lies on another copper layer."""
         ref, _, number = pad.partition(".")
         return self._via_to_pad(self.footprint(ref).pad(number), pad, lock, _cu)
 
-    def _via_to_pad(self, p, pad: str, lock: bool, _cu=None) -> dict:
+    def _via_to_pad(self, p, pad: str, lock: bool, _cu=None, reuse: set | None = None) -> dict:
         """``via_to_plane`` for a Pad object (a part may have several pads of one number)."""
         if not p.net:
             raise env.KatError(f"{pad} has no net")
         layer = next(l for l in self.copper_layers() if p.on(l))
         rules = self.net_rules(p.net)
         cu = _cu or _Copper(self)
+        planes = {str(l) for z in self.zones() if find(z, "keepout") is None
+                  and (n := find(z, "net")) is not None and str(n[1]) == p.net
+                  for l in ((find(z, "layers") or find(z, "layer")) or [None])[1:]}
+        warn = ({} if planes - {layer} else
+                {"warning": f"no pour of {p.net} on another copper layer: the via reaches no plane yet"})
+        half, cl = max(p.w, p.h) / 2, self._clearance_fn()
+        for v in sorted((v for v in self.vias() if v["net"] == p.net and layer in v["span"]
+                         and (reuse is None or tuple(v["at"]) in reuse)),
+                        key=lambda v: math.dist(v["at"], (p.x, p.y))):
+            if math.dist(v["at"], (p.x, p.y)) > half + 3.0:
+                break
+            if inside(p.outline, v["at"]) or cu.conflicts(p.net, {layer}, cl, seg=(((p.x, p.y), v["at"]), rules["track"] / 2)):
+                continue
+            self._segment((p.x, p.y), v["at"], rules["track"], layer, p.net, lock)
+            cu.add_track((p.x, p.y), v["at"], rules["track"], layer, p.net)
+            return {"pad": pad, "net": p.net, "via": list(v["at"]), "reused": True, **warn}
         spot = self._free_via_spot(cu, p, p.net, rules["via"], rules["track"], layer, drill=rules["via_drill"])
         if spot is None:
             raise env.KatError(f"no free spot for a via next to {pad}")
@@ -404,14 +422,17 @@ class StructureMixin:
         if not shared:        # a pad on the other side at the same place already made it
             self._via(spot, p.net, rules["via"], rules["via_drill"], lock)
             cu.add_via(spot, rules["via"], p.net, set(self.copper_layers()), rules["via_drill"])
-        return {"pad": pad, "net": p.net, "via": list(spot), **({"shared": True} if shared else {})}
+        return {"pad": pad, "net": p.net, "via": list(spot), **({"shared": True} if shared else {}), **warn}
 
     def fanout(self, refs: str | list[str], nets: list[str] | None = None,
                skip_nets: list[str] = (), lock: bool = True) -> dict:
         """``via_to_plane`` for the SMD pads of ``refs`` (only ``nets`` if given, never
-        ``skip_nets``). Pads that find no spot are listed in ``failed``."""
+        ``skip_nets``): a via that was there before is used when near, the new ones are each
+        pad's own. Pads that find no spot are listed in ``failed``; ``warnings``: nets without
+        a pour on another layer."""
         refs = [refs] if isinstance(refs, str) else refs
         cu = _Copper(self)
+        before = {tuple(v["at"]) for v in self.vias()}      # its own new vias are not shared
         done, failed = [], []
         for ref in refs:
             pads = self.footprint(ref).pads()
@@ -422,14 +443,17 @@ class StructureMixin:
                 label = f"{ref}.{p.number}" + (f"@{sum(q.number == p.number for q in pads[:i]) + 1}"
                                                if sum(q.number == p.number for q in pads) > 1 else "")
                 try:
-                    done.append(self._via_to_pad(p, label, lock, _cu=cu))
+                    done.append(self._via_to_pad(p, label, lock, _cu=cu, reuse=before))
                 except env.KatError as e:
                     failed.append({"pad": label, "why": str(e)})
-        return {"vias": done, "failed": failed}
+        warnings = sorted({d.pop("warning") for d in done if "warning" in d})
+        return {"vias": done, "failed": failed, **({"warnings": warnings} if warnings else {})}
 
     def stitch(self, net: str, pitch: float = 5.0, margin: float = 2.0, lock: bool = True) -> dict:
-        """Stitching vias of ``net`` on a grid inside the outline, where they clear other
-        copper and no courtyard lies (they tie the net's pours on all layers together)."""
+        """Stitching vias of ``net`` on a grid (``pitch`` mm, ``margin`` from the outline's
+        box) inside the outline, where they clear other copper and holes and no courtyard
+        lies (they tie the net's pours on all layers together). Returns net, vias (count) and
+        points (where they went)."""
         edge = self.outline_box()
         if not edge:
             raise env.KatError("stitching needs a board outline")
@@ -454,7 +478,7 @@ class StructureMixin:
                 self._via((x, y), net, rules["via"], rules["via_drill"], lock)
                 cu.add_via((x, y), rules["via"], net, set(self.copper_layers()), rules["via_drill"])
                 placed.append([round(x, 3), round(y, 3)])
-        return {"net": net, "vias": len(placed)}
+        return {"net": net, "vias": len(placed), "points": placed}
 
     # --- locking and rip-up ----------------------------------------------------------------
 
