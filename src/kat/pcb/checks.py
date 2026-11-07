@@ -138,7 +138,9 @@ def run(pcb: Path, mapping: Path | None = None, complete: bool | list[str] = Tru
     from the fabrication profile (``profile``: forbidden vias, classes or rules below the
     minimum clearance; see ``fabprofile``). ``isolated_pads``: pads on a pour fragment cut off
     from the rest of their zone (``isolated_pads``), which DRC shows only as one unconnected
-    item at the zone's corner. ``mapping``: a pin
+    item at the zone's corner. ``routing_shape``: per layer the corners (45, 90, acute), short
+    segments and reversals of the tracks (``trackclean.metrics``), which ``kat pcb tidy`` cleans
+    up; they change neither ``ok`` nor ``clean``. ``mapping``: a pin
     table the pads must agree with (``kat.mapping.check``), reported in ``mapping``.
 
     ``ok``: no DRC errors, parity 0, nothing unconnected, outline present, mapping agrees.
@@ -176,6 +178,8 @@ def run(pcb: Path, mapping: Path | None = None, complete: bool | list[str] = Tru
     rules = coupling.run(pcb, b)
     from . import fabprofile as profile
     departures = profile.findings(b)
+    from .trackclean import metrics as shape
+    routing_shape = shape(b) if b.tracks() else {}
     result = {"file": str(pcb), "outline": list(outline) if outline else None,
               "footprints": len(b.footprints()), "tracks": len(b.tracks()), "vias": len(b.vias()),
               "drc_errors": d["errors"], "drc_warnings": d["warnings"], "by_type": d["by_type"],
@@ -184,7 +188,8 @@ def run(pcb: Path, mapping: Path | None = None, complete: bool | list[str] = Tru
               "violations": d["violations"], "unconnected_items": d["unconnected"],
               "parity_items": d["parity"], **({"net_rules": rules} if rules else {}),
               **({"profile": departures} if departures else {}),
-              **({"isolated_pads": cut_off} if cut_off else {})}
+              **({"isolated_pads": cut_off} if cut_off else {}),
+              **({"routing_shape": routing_shape} if routing_shape else {})}
     ok = bool(outline) and d["errors"] == 0 and not d["parity"] and not d["unconnected"]
     if mapping:
         from ..mapping import check as check_mapping

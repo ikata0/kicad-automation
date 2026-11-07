@@ -358,6 +358,21 @@ help more than more passes). On a dense board: constrained nets first (`--net`, 
 `'/SPI_*'`, `--netclass`), then groups by region or connector; `kat pcb check` after each, and
 `kat pcb lock PCB [--net N]` once it is right, so the next run keeps it.
 
+**Tidying the routing.** `kat pcb tidy PCB` (`kat.pcb.tidy_tracks`; in memory `b.tidy()`) cleans up
+router output on chains of straight segments between fixed points (pads, vias, junctions,
+arcs, locked copper), whose ends never move: `normalize` (zero-length, collinear, spikes,
+dangling stubs), `staircase` (runs of short segments become one straight or 45-degree path),
+`tight` (shortcuts at multiples of 45 degrees that jump over no pad, via or track end: the same
+homotopy class), `spread` (`--spread GAP`: a segment closer than GAP to other copper moves away
+where its neighbours stay at 45 degrees; `--max-growth`, `--freeze-length`) and `corners`
+(right-angle and acute corners become two 45s or an arc). Every new segment keeps its
+clearances, keep-outs and edge distance; steps 1-4 never lengthen a net. The board is then
+judged by DRC and a net with more findings or unconnected items than before is put back
+(`rolled_back`). `--nets`, `--layers`, `--region`, `--include-locked`, `--dry-run`; `before` and
+`after` give per layer the corners (45, 90, acute, other), short segments, reversals and gaps.
+Running it again changes nothing. `kat pcb check` reports the same shape (`routing_shape`,
+no gaps), which changes neither `ok` nor `clean`.
+
 - Every footprint becomes its own DSN image with pins at their board positions and
   padstacks carrying the rotated pad outline on the pad's copper layers; everything is
   placed "front, 0". No rotation or mirroring is left for the router to interpret.
@@ -998,6 +1013,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `pcb stamp PCB BLOCK_PCB INSTANCE... --at X,Y [--step DX,DY] [--rot R] [--anchor origin/top-left] [--no-lock] [--make-room] [--side bottom] [--layer-map auto/roles/MAP] [--allow-asymmetric]` | copy a checked block layout onto instances (`all`), flipped on the bottom side, then the board check (§4.18) |
 | `pcb stamp PCB BLOCK_PCB [INSTANCE...] --at X,Y --preview [...]` | origin, turned bounds and ports of a proposed stamp, board unchanged (§4.18) |
 | `pcb escape PCB SPEC.json [--apply] [--out FILE]` | route permutable pins, choosing the assignment with the tracks (§4.10) |
+| `pcb tidy PCB [--nets GLOB] [--layers L,..] [--region X,Y,W,H] [--steps S,..] [--corners 45/arc/keep] [--spread GAP] [--max-growth PCT] [--freeze-length NET] [--include-locked] [--dry-run]` | clean up routed tracks, judged by DRC per net (§4.10) |
 | `pcb stitch PCB NET [--pitch MM] [--margin MM]` / `pcb plane-stub PCB REF... [--net N] [--skip-net N]` | stitching vias; SMD pads to their plane by stub and via (§4.9) |
 | `pcb profile PCB [--via-types KINDS] [--min-clearance MM] [--clear]` | the board's fabrication profile and its departures (§4.7) |
 | `pcb stamps PCB [--rebuild [INSTANCE...]]` | the board's stamp records; recover lost ones from the board (§4.18) |

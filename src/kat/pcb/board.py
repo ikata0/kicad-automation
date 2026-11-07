@@ -583,6 +583,16 @@ class Board(SetupMixin, PlacementMixin, StructureMixin, StampMixin, FinishMixin)
 
     # --- footprints -----------------------------------------------------------------
 
+    def tidy(self, nets: list[str] | None = None, layers: list[str] | None = None, region=None,
+             steps: list[str] | None = None, corners: str = "45", spread: float | None = None,
+             max_growth: float = 10.0, freeze_length: list[str] = (), include_locked: bool = False) -> dict:
+        """Clean up routed tracks in memory (``kat.pcb.trackclean``; ``kat.pcb.tidy_tracks``
+        also saves, runs DRC and puts back nets it made worse). Returns steps, nets and
+        length {net: [before, after] mm}."""
+        from . import trackclean as tc
+        return tc.tidy_board(self, nets, layers, region, tuple(steps or tc.STEPS), corners, spread,
+                             max_growth, tuple(freeze_length), include_locked)
+
     def footprints(self) -> list[Footprint]:
         """All footprints on the board."""
         return [Footprint(n) for n in find_all(self.tree, "footprint")]

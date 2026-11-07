@@ -220,6 +220,10 @@ with kat.pcb.edit(PCB) as b:
   and if it is right, `kat pcb lock PCB` (or `--net`): locked copper stays when the router runs
   again. `--timeout` keeps a partial result, `--passes` bounds the passes, and the router's
   "all routed" is no verdict: `check.unconnected` and `check.islands` are.
+- After routing, `kat pcb tidy PCB` cleans up corners, staircases, spikes, dangling stubs and
+  detours (`--dry-run` first; `--include-locked` for locked copper; `--spread 0.25` moves runs off
+  minimum clearance where it keeps 45-degree angles). DRC judges it, and nets it made worse are put
+  back. `routing_shape` in `kat pcb check` counts 90-degree corners, short segments and reversals.
 - A route that stopped converging shows in `unrouted` per pass, a slow stage in `stages`.
   `--skip-class NAME` leaves a class out; `--no-optimize` skips the optimizer. Look at `settings`
   after `--router-option`: Freerouting exits 0 even on settings it ignores.

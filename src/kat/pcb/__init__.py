@@ -124,6 +124,62 @@ def route(pcb: Path | str, passes: int = 20, nets: list[str] | None = None, time
     return tidy(_route.route(Path(pcb), passes, nets, timeout, out, skip_classes, optimize, options, classes))
 
 
+def tidy_tracks(pcb: Path | str, nets: list[str] | None = None, layers: list[str] | None = None,
+                region: tuple[float, float, float, float] | None = None, steps: list[str] | None = None,
+                corners: str = "45", spread: float | None = None, max_growth: float = 10.0,
+                freeze_length: list[str] = (), include_locked: bool = False, dry_run: bool = False) -> dict:
+    """Clean up routed tracks (``kat.pcb.trackclean``): ``steps`` of normalize, staircase,
+    tight, spread, corners (default all; spread only with ``spread``, the target gap in mm).
+    ``nets`` (globs), ``layers`` and ``region`` (x0, y0, x1, y1 mm) limit it; locked tracks
+    stay unless ``include_locked``; ``corners`` "45", "arc" or "keep"; ``max_growth`` (%) caps
+    what spreading adds to a net, ``freeze_length`` nets never grow. Saved, then judged by
+    KiCad's DRC: a net with more violations or unconnected items than before is put back
+    (``rolled_back``). Returns steps (changes per step), nets (changed and kept), length {net:
+    [before, after] mm}, before and after (``trackclean.metrics`` per layer, with gaps), the
+    check (drc_errors, unconnected); ``dry_run`` saves nothing."""
+    from ..sexpr import dumps, find as _find, head as _head, loads
+    from . import trackclean as tc
+    report.touch(pcb)
+    pcb = Path(pcb)
+    b = Board(pcb)
+    before = tc.metrics(b, gaps=True)
+    res = tc.tidy_board(b, nets, layers, region, tuple(steps or tc.STEPS), corners, spread, max_growth,
+                        tuple(freeze_length), include_locked)
+    out = {"board": str(pcb), "steps": res["steps"], "nets": res["nets"], "length": res["length"],
+           "before": before, "after": tc.metrics(b, gaps=True)}
+    if dry_run or not res["nets"]:
+        return tidy({**out, "dry_run": dry_run, "rolled_back": []})
+    original = pcb.read_text(encoding="utf-8")
+    old = checks.drc(pcb, parity=False, refill=True)
+    b.save()
+    rolled: list[str] = []
+    for _ in range(3):
+        d = checks.drc(pcb, parity=False, refill=True)
+        left = sorted(set(res["nets"]) - set(rolled))
+        was = tc.by_net(old["violations"] + old["unconnected"], set(left))
+        now = tc.by_net(d["violations"] + d["unconnected"], set(left))
+        worse = [n for n in left if now.get(n, 0) > was.get(n, 0)]
+        if not worse:
+            break
+        rolled += worse
+        tree = loads(original)
+        back = [n for n in tree if _head(n) in ("segment", "arc")
+                and (x := _find(n, "net")) is not None and str(x[1]) in worse]
+        cur = Board(pcb)
+        cur.tree[:] = [n for n in cur.tree if not (_head(n) in ("segment", "arc")
+                       and (x := _find(n, "net")) is not None and str(x[1]) in worse)]
+        for n in back:
+            cur._insert(n)
+        cur.save()
+    final = Board(pcb)
+    lengths = tc.net_lengths(final)
+    kept = [n for n in res["nets"] if n not in rolled]
+    return tidy({**out, "nets": kept, "rolled_back": sorted(rolled),
+                 "length": {n: [res["length"][n][0], round(lengths.get(n, 0.0), 4)] for n in kept},
+                 "after": tc.metrics(final, gaps=True), "dry_run": False,
+                 "check": {"drc_errors": d["errors"], "unconnected": len(d["unconnected"])}})
+
+
 def lock(pcb: Path | str, net: str | None = None, locked: bool = True) -> dict:
     """Lock (or with ``locked=False`` unlock) the board's tracks and vias, all or one net's
     (``Board.lock``), and save: locked copper stays when the router runs again, so an accepted

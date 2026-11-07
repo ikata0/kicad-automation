@@ -30,29 +30,6 @@ a tiled 3D field solution.
 
 ## Routing and board-editing APIs
 
-### FR-049: Post-route clean-up (`kat pcb tidy`)
-
-**Open.** Router output is electrically fine but untidy: 90° and acute corners,
-doubled-back segments, staircases of short segments, small kinks, and long parallel runs
-at minimum clearance where space is free. KiCad has no batch equivalent of its
-interactive optimizer. Proposal: `kat pcb tidy PCB [--nets GLOB] [--layers L,..]
-[--region X,Y,W,H] [--corners 45|arc|keep] [--spread GAP] [--dry-run]`, also as
-`b.tidy(...)`, with optional steps:
-1. normalise: merge (near-)collinear segments, drop zero-length ones, doubled-back
-   overlaps and dangling stubs;
-2. de-staircase: replace runs of short segments with one straight or 45° segment;
-3. corners: 90° to two 45° bends or arcs; no acute corner except at a pad entry;
-4. pull tight within the homotopy class (vias fixed unless `--move-vias`);
-5. spread neighbouring tracks towards a target gap where space allows.
-
-Constraints: effective clearances (FR-021), exact pads (FR-020), keep-outs and foreign
-zone fills; locked tracks stay unless `--include-locked`; no net gets longer in steps 1-4,
-at most by a set percentage in step 5, not at all for `--freeze-length NETS`; net rules
-and DRC re-run, and a violating change is rolled back per net; deterministic, idempotent
-and journalled. Report (also `--dry-run`) per layer: corner-angle histogram, short
-segments, reversals, length change per net, gap histogram before and after. The same
-metrics as `kat pcb check` warnings would let a review find untidy routing without images.
-
 ### FR-051: Grid-router capabilities
 
 **Open, waiting** (decided 2026-11-06: like FR-006, until a benchmark board fails with
@@ -571,3 +548,21 @@ scripts and numbers in `../kicad-sandbox/experiments/2026-11-07-batch-speed/`.
   `fanout` share one index across their vias. Caching it across arbitrary edits could pass a
   bad via on a stale index, so many single vias in a pass stay at that cost, or use
   `check=False` and let DRC judge.
+
+### FR-049: Post-route clean-up (`kat pcb tidy`)
+
+`kat pcb tidy PCB [--nets GLOB] [--layers] [--region X,Y,W,H] [--steps] [--corners
+45|arc|keep] [--spread GAP] [--max-growth PCT] [--freeze-length NET] [--include-locked]
+[--dry-run]`, `kat.pcb.tidy_tracks`, `Board.tidy` (in memory), module `kat.pcb.trackclean`.
+It works on chains of straight segments between fixed points, whose ends never move, with
+all five steps: normalize, staircase, tight (at 45-degree multiples, homotopy kept by
+refusing shortcuts over any pad, via or track end), spread (only where the neighbours stay
+at 45 degrees) and corners (45 or arc). Every new segment is checked against effective
+clearances (FR-021), exact pads (FR-020), track keep-outs and the edge. Steps 1-4 never
+lengthen a net. Locked tracks stay unless `--include-locked`. KiCad's DRC then judges each
+net and puts back the ones it made worse (`rolled_back`). Before/after metrics per layer
+(corner angles, short segments, reversals, gap histogram) are in the result; `kat pcb check`
+gives the shape without gaps as `routing_shape`. Running it again changes nothing.
+On the routed LED matrix with locked copper included: 17 s, 136 nets, 90-degree corners
+196 -> 0, DRC clean (`../kicad-sandbox/experiments/2026-11-07-batch-speed/`).
+Not done: `--move-vias`, since vias stay fixed.

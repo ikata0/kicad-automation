@@ -177,6 +177,14 @@ def cmd_pcb(a):
                              optimize=not a.no_optimize,
                              options=dict(x.split("=", 1) for x in a.router_option or []) or None,
                              classes=a.netclass or None)
+    if a.pcb_cmd == "tidy":
+        region = None
+        if a.region:
+            x, y, w, h = (float(v) for v in a.region.split(","))
+            region = (x, y, x + w, y + h)
+        return kat.pcb.tidy_tracks(a.pcb, a.nets or None, a.layers.split(",") if a.layers else None, region,
+                                   a.steps.split(",") if a.steps else None, a.corners, a.spread, a.max_growth,
+                                   a.freeze_length or [], a.include_locked, a.dry_run)
     if a.pcb_cmd == "lock":
         return kat.pcb.lock(a.pcb, a.net, not a.unlock)
     if a.pcb_cmd == "stamp":
@@ -1016,6 +1024,27 @@ def build_parser() -> argparse.ArgumentParser:
     s5.add_argument("--timeout", type=int, default=1800,
                     help="seconds (default 1800): the router stops there and what it has is kept (timed_out)")
     s5.add_argument("--install", action="store_true", help="download Freerouting first if missing")
+    s35 = psp.add_parser("tidy", formatter_class=_Fmt, help="clean up routed tracks",
+                         description="Steps (default all): normalize (zero-length, collinear, spikes, dangling\n"
+                                     "stubs), staircase (runs of short segments -> one straight or 45-degree path),\n"
+                                     "tight (pull tight, never over a pad, via or track end), spread (with\n"
+                                     "--spread GAP: segments closer than GAP to other copper moved away where there\n"
+                                     "is room), corners (90-degree and acute corners -> two 45s or an arc).\n"
+                                     "Chain ends (pads, vias, junctions, locked copper) never move; every new\n"
+                                     "segment keeps its clearances. Saved, then judged by DRC: a net it made worse\n"
+                                     "is put back (rolled_back). before/after: corners, short segments, reversals\n"
+                                     "and gaps per layer. Running it again changes nothing.")
+    s35.add_argument("pcb", metavar="PCB")
+    s35.add_argument("--nets", action="append", metavar="GLOB", help="only these nets (repeatable)")
+    s35.add_argument("--layers", metavar="L,..", help="only these copper layers")
+    s35.add_argument("--region", metavar="X,Y,W,H", help="only tracks inside this box (mm)")
+    s35.add_argument("--steps", metavar="S,..", help="normalize,staircase,tight,spread,corners (default all)")
+    s35.add_argument("--corners", choices=("45", "arc", "keep"), default="45")
+    s35.add_argument("--spread", type=float, metavar="GAP", help="target gap in mm for the spread step")
+    s35.add_argument("--max-growth", type=float, default=10.0, metavar="PCT", help="spread may lengthen a net this much")
+    s35.add_argument("--freeze-length", action="append", metavar="NET", help="never lengthen this net (repeatable)")
+    s35.add_argument("--include-locked", action="store_true", help="also locked tracks")
+    s35.add_argument("--dry-run", action="store_true", help="report only, save nothing")
     s34 = psp.add_parser("lock", formatter_class=_Fmt, help="lock tracks and vias (all, or one net's)",
                          description="Locked copper stays when the router runs again: lock each accepted chunk\n"
                                      "of routing, then route the next.")
