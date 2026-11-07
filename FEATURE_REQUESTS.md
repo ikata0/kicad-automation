@@ -31,12 +31,6 @@ by the collision checks of `move` and `stamp`.
 Request: a project-wide prefix map applied by sync and `kat lib make`, whose
 `--reference` only sets it for one part.
 
-### FR-035: Run SKiDL designs from a sub-folder
-
-**Needs reproduction.** Reported: a SKiDL script in a sub-folder of the project gave
-`NO_LIB` warnings and left its by-products (`.erc`, `.log`, `_sklib.py`) in the project
-root.
-
 ## Electrical checks
 
 ### FR-006: Estimate coupling across repeated blocks in 3D
@@ -510,3 +504,14 @@ detach or rename anything, the build is refused before anything is written, with
 `overwrite=True` / `kat block build --overwrite` lets the design win; `force` still only
 passes the board gate. Arrangement and notes pass and are kept. A refused board gate still
 leaves the newly synced schematic in place, because the gate judges that schematic.
+
+### FR-035: Run SKiDL designs from a sub-folder
+
+Reproduced, and both symptoms come from the working directory: SKiDL reads no
+`sym-lib-table` and searches only the working directory. So a script in `sub/` could not find
+a project library when run from `sub/` (`NO_LIB`), and when run from the project root it
+found it but wrote `.erc`, `.log`, `_sklib.py` and the netlist there. `kat.skidl_blocks.
+project_libraries()` adds the project's `sym-lib-table` libraries (with `${KIPRJMOD}`) to
+SKiDL's search path; the project is found above the running script. The setup reference
+(`skills/kicad-design/references/setup.md`) says to run scripts from their own folder.
+Test: `test_a_script_in_a_sub_folder_finds_the_project_libraries`.

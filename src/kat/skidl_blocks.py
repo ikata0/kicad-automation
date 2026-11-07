@@ -20,6 +20,9 @@ the end of the SKiDL script, after ``generate_netlist``::
 
 ``connect_pins`` connects a part from a pin table, so that a computed assignment can reach the
 design without editing the script (``kat.mapping.back_annotate``).
+
+``project_libraries`` lets a script in a sub-folder of the project find the project's own
+symbol libraries: SKiDL reads no ``sym-lib-table`` and searches only the working directory.
 """
 
 from __future__ import annotations
@@ -31,7 +34,7 @@ from pathlib import Path
 
 from .netlist import blocks_file
 
-__all__ = ["connect_pins", "pin_map", "record", "write"]
+__all__ = ["connect_pins", "pin_map", "project_libraries", "record", "write"]
 
 _OWN = {"func", "tag", "description", "purpose", "name", "circuit", "parent", "children",
         "parts", "nets", "buses", "skidl_trace", "fields", "pins", "__wrapped__"}
@@ -139,3 +142,39 @@ def write(netlist: Path | str, circuit=None) -> dict:
     out = blocks_file(Path(netlist))
     out.write_text(json.dumps(rec, indent=2) + "\n", encoding="utf-8")
     return dict(rec, file=str(out))
+
+
+def project_libraries(project: Path | str | None = None) -> dict:
+    """Add the KiCad project's symbol libraries (its ``sym-lib-table``, with ``${KIPRJMOD}``)
+    to SKiDL's search path, so ``Part("MyLib", "X")`` works from any working directory.
+    ``project``: the project folder (default: the nearest folder above the running script
+    with a ``.kicad_pro`` or ``sym-lib-table``). SKiDL finds a library by its file name, so a
+    nickname that differs from it is listed in ``renamed`` (use the file name there).
+    Returns project, added (folders), libraries {nickname: file}, renamed.
+
+    SKiDL still writes its by-products (``NAME.erc``, ``NAME.log``, ``NAME_sklib.py``) and a
+    relative ``generate_netlist(file_=...)`` into the working directory: run the script
+    from its own folder to keep them there."""
+    import sys
+
+    import skidl
+
+    from . import env
+    if project is None:
+        start = Path(sys.argv[0]).resolve().parent if sys.argv and sys.argv[0] else Path.cwd()
+        project = next((d for d in (start, *start.parents)
+                        if (d / "sym-lib-table").exists() or any(d.glob("*.kicad_pro"))), None)
+        if project is None:
+            raise env.KatError(f"no KiCad project (.kicad_pro or sym-lib-table) in {start} or above")
+    project = Path(project).resolve()
+    table = project / "sym-lib-table"
+    libs = env._read_lib_table(table, project) if table.exists() else {}
+    libs = {k: v for k, v in libs.items() if v.exists()}
+    paths = skidl.lib_search_paths.setdefault(skidl.KICAD10, [])
+    added = []
+    for folder in dict.fromkeys(str(v.parent) for v in libs.values()):
+        if folder not in paths:
+            paths.append(folder)
+            added.append(folder)
+    return {"project": str(project), "added": added, "libraries": {k: str(v) for k, v in libs.items()},
+            "renamed": {k: v.stem for k, v in libs.items() if k != v.stem}}

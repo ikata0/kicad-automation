@@ -50,6 +50,14 @@ cross-drive relative paths can fail. The automation repository's pytest suite
 chooses a same-drive temporary parent automatically on Windows when needed.
 An explicit `--basetemp` is still supported, but pytest clears that directory.
 
+SKiDL reads no `sym-lib-table` and searches only the working directory, and it
+writes its by-products (`NAME.erc`, `NAME.log`, `NAME_sklib.py`) and a relative
+`generate_netlist(file_=...)` there. Run a design script from its own folder, and
+when it uses the project's own libraries from a sub-folder, call
+`kat.skidl_blocks.project_libraries()` after importing skidl: it adds the project's
+`sym-lib-table` libraries to SKiDL's search path (a nickname that differs from the
+file name is listed in `renamed`; use the file name there).
+
 On Linux with stock libraries, SKiDL commonly uses
 `KICAD10_SYMBOL_DIR=/usr/share/kicad/symbols`; adjust for the actual installation.
 Use English diagnostics and initialize the library tables there too.

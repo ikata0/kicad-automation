@@ -141,3 +141,40 @@ def test_literal_pin_names_as_the_troubleshooting_guide_says(tmp_path):
     assert exact["+"] == ["6", "7"]                                 # one name, several pins
     assert regex["IN\\+"] == ["1"] and regex["A\\(0\\)"] == ["4"]   # escaping needs regex mode
     assert regex["IN.*"] == ["1", "2", "3"] and regex["A B"] == []
+
+
+SUB_DESIGN = '''
+import json
+from skidl import KICAD10, Net, Part, generate_netlist, set_default_tool
+import kat
+set_default_tool(KICAD10)
+libs = kat.skidl_blocks.project_libraries()
+a, b = Net("A"), Net("B")
+r = Part("MyLib", "R", footprint="Resistor_SMD:R_0603_1608Metric")
+a += r[1]
+b += r[2]
+generate_netlist(file_="design.net")
+print(json.dumps(libs))
+'''
+
+
+def test_a_script_in_a_sub_folder_finds_the_project_libraries(tmp_path):
+    """FR-035: SKiDL reads no sym-lib-table and searches the working directory only, so a
+    script in a sub-folder could not find a project library (from there) and left its files
+    in the project root (from the root). project_libraries adds the project's libraries."""
+    from kat import env
+    stock = env.stock_symbol_dir()
+    proj = tmp_path / "proj"
+    (proj / "libs").mkdir(parents=True)
+    (proj / "libs" / "MyLib.kicad_sym").write_text((stock / "Device.kicad_sym").read_text())
+    (proj / "sym-lib-table").write_text('(sym_lib_table (version 7) (lib (name "MyLib") (type "KiCad") '
+                                        '(uri "${KIPRJMOD}/libs/MyLib.kicad_sym") (options "") (descr "")))\n')
+    (proj / "proj.kicad_pro").write_text("{}\n")
+    (proj / "sub").mkdir()
+    (proj / "sub" / "design.py").write_text(SUB_DESIGN)
+    run = subprocess.run([sys.executable, "design.py"], cwd=proj / "sub", capture_output=True, text=True)
+    assert run.returncode == 0, run.stderr[-2000:]
+    got = json.loads(run.stdout.strip().splitlines()[-1])
+    assert got["project"] == str(proj.resolve()) and got["added"] == [str((proj / "libs").resolve())]
+    assert "NO_LIB" not in run.stderr and (proj / "sub" / "design.net").exists()
+    assert not list(proj.glob("design*"))                  # its files stay where it ran
