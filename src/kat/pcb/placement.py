@@ -33,17 +33,20 @@ class PlacementMixin:
                 outline[f.ref] = f.courtyard_outline()
             return outline[f.ref]
         out = []
-        for i, (a, ba) in enumerate(fps):
-            for b, bb in fps[i + 1:]:
-                if a.side != b.side or (want and a.ref not in want and b.ref not in want):
-                    continue
-                if not overlap(ba, bb, gap - 1e-6):
-                    continue
-                pa, pb = poly(a), poly(b)
-                if pa and pb and not (polygons_overlap(pa, pb) if gap <= 0
-                                      else _Shape(poly=pa).distance(_Shape(poly=pb)) < gap - 1e-6):
-                    continue
-                out.append({"a": a.ref, "b": b.ref, "side": a.side})
+        # pairs with a part of ``refs`` only (k x n, not n x n: a move checks one part), in
+        # board order either way
+        n = len(fps)
+        pairs = ((i, j) for i in range(n) for j in range(i + 1, n)) if want is None else sorted(
+            {(min(i, j), max(i, j)) for i in (k for k in range(n) if fps[k][0].ref in want) for j in range(n) if j != i})
+        for i, j in pairs:
+            (a, ba), (b, bb) = fps[i], fps[j]
+            if a.side != b.side or not overlap(ba, bb, gap - 1e-6):
+                continue
+            pa, pb = poly(a), poly(b)
+            if pa and pb and not (polygons_overlap(pa, pb) if gap <= 0
+                                  else _Shape(poly=pa).distance(_Shape(poly=pb)) < gap - 1e-6):
+                continue
+            out.append({"a": a.ref, "b": b.ref, "side": a.side})
         return out
 
     def near(self, at, radius: float = 3.0) -> list[dict]:

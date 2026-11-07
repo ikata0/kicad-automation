@@ -68,11 +68,6 @@ Downstream grid routers since needed, on dense multi-layer boards:
 
 Single tracks and vias can already be removed with `kat pcb remove --uuid / --at`.
 
-### FR-052: Faster `kat batch-exec` on large boards
-
-**Needs reproduction.** Reported: each pass on a board of several MB took minutes,
-spent in loading, saving and the report. Request: measure where the time goes; a lighter
-report mode and incremental save.
 
 ## Resolved
 
@@ -560,3 +555,19 @@ that the router's "all routed" is no verdict. New: `--net` takes globs (`'/SPI_*
 `--netclass NAME` (`kat.pcb.route(classes=[...])`, `router.select_nets`), and
 `kat pcb lock PCB [--net N] [--unlock]` (`kat.pcb.lock`). Test:
 `test_nets_by_glob_and_class_and_locking_a_chunk`.
+
+### FR-052: Faster `kat batch-exec` on large boards
+
+Measured on a 2.9 MB routed board (318 footprints, 3322 tracks, 649 vias), KiCad 10.0.6;
+scripts and numbers in `../kicad-sandbox/experiments/2026-11-07-batch-speed/`.
+- The minutes were not reproduced as fixed cost: a pass that moves one part takes 1.8 s in
+  all. Loading takes 0.2-0.5 s, saving 1.2 s (writing 0.4 s, `kicad-cli pcb upgrade`
+  0.34 s, re-reading 0.5 s), and the journal 0.08 s. So neither a lighter report mode nor an
+  incremental save would gain much.
+- The time goes into checked edits repeated many times in a pass. A checked move took
+  170 ms, because `collisions([ref])` compared every pair of footprints; it now compares only
+  the part's pairs: 17 ms, 20 moves 3.42 s -> 0.33 s.
+- A checked via takes 55 ms, nearly all of it rebuilding the copper index. `stitch` and
+  `fanout` share one index across their vias. Caching it across arbitrary edits could pass a
+  bad via on a stale index, so many single vias in a pass stay at that cost, or use
+  `check=False` and let DRC judge.
