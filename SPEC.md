@@ -312,6 +312,7 @@ everywhere (`move`, `add_board_part`, `fiducials`, `stamp`, `pcb cell`); anythin
 | `footprint(ref).lock()`, `.unlock()`, `.locked` | KiCad's lock flag, also in `info()`. The moves on this list refuse a locked part that would change (`force=True` overrides; staying put is fine, so it may be the reference of `align`), and `stamp` refuses to move one. `Footprint.place` stays the unchecked primitive |
 | `flip(ref)`, `align(refs, axis)`, `distribute(refs, start, pitch)` | side, rows/columns, even spacing |
 | `place_near(ref, "U1.8")` | a two-pad part beside a pin: outside the host's courtyard, on the side the pin faces, its pad on the pin's net nearest; steps sideways until free |
+| `place_free(ref, near, side, rot, keepouts, gap)` | any part at the nearest legal spot around a part, pad or point: rings outward, the courtyard (as drawn) `gap` from others on its side, inside the outline, out of cut-outs, footprint keep-outs and `keepouts`, its pads clear of other nets; returns at and distance |
 | `near(point, radius)`, `collisions(refs)` | what is around a point / courtyard overlaps |
 | `blocks()`, `block_box(name)`, `move_block(name, to/by)` | functional blocks: the `Block` field set in SKiDL (`part.fields["Block"] = "ch1"`) |
 | `replicate("ch1", {"ch2": (x, y), ...})` | arrange other blocks like the template; parts pair up by SKiDL tag with the block name removed (`CH_A/RC1/r` ↔ `CH_B/RC1/r`, `ch1_r` ↔ `ch2_r`), else by footprint and reference order |

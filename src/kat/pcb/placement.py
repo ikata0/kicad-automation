@@ -7,6 +7,7 @@ from __future__ import annotations
 import math
 
 from .. import env
+from ..sexpr import find
 from .geometry import Box, overlap, union
 from .layers import fp_side
 
@@ -140,6 +141,98 @@ class PlacementMixin:
         A locked part that would move is refused unless ``force``."""
         return self.move_many({r: {"to": (start[0] + i * pitch[0], start[1] + i * pitch[1]), "rot": rot}
                                for i, r in enumerate(refs)}, force=force)
+
+    def place_free(self, ref: str, near, side: str | None = None, rot: float | None = None,
+                   keepouts: list | None = None, gap: float = 0.25, max_distance: float = 20.0,
+                   step: float = 0.25, force: bool = False) -> dict:
+        """Put any part at the nearest legal spot around an anchor: ``near`` a part (``"U1"``,
+        its courtyard's centre), a pad (``"U1.8"``) or a point (x, y). Rings of growing radius
+        (``step`` mm apart, up to ``max_distance``) are tried, nearest first; a spot is legal
+        when the part's courtyard (as drawn) stays ``gap`` mm from every other courtyard on
+        its side, inside the board outline and out of its cut-outs, out of the board's
+        footprint keep-outs on that side and of ``keepouts`` (rectangles x0, y0, x1, y1 or
+        polygons), and its pads keep their clearance to other nets' copper. ``side`` F/B
+        (top/bottom) and ``rot`` default to the part's. A locked part is refused unless
+        ``force``. Returns ref, at, rot, side, distance (mm, its centre from the anchor) and
+        tried (spots)."""
+        from .cells import _Shape, polygons_overlap
+        from .geometry import inside
+        from .structure import _Copper
+        f = self.footprint(ref)
+        if f.locked and not force:
+            raise env.KatError(f"{ref} locked: unlock first (b.footprint(ref).unlock()) or pass force=True")
+        if isinstance(near, str):
+            r, _, num = near.partition(".")
+            host = self.footprint(r)
+            if num:
+                pad = host.pad(num)
+                anchor = (pad.x, pad.y)
+            else:
+                hb = host.box()
+                anchor = ((hb[0] + hb[2]) / 2, (hb[1] + hb[3]) / 2)
+        else:
+            anchor = (float(near[0]), float(near[1]))
+        undo = (f.x, f.y, f.rot, f.side)
+        if side is not None and fp_side(side) != f.side:
+            f.flip()
+        if rot is not None:
+            f.place(rot=rot)
+        court = f.courtyard_outline() or [(b[0], b[1]), (b[2], b[1]), (b[2], b[3]), (b[0], b[3])] if (b := f.box()) else None
+        if not court:
+            raise env.KatError(f"{ref} has no courtyard and no pads to place by")
+        cx = sum(p[0] for p in court) / len(court)
+        cy = sum(p[1] for p in court) / len(court)
+        pads = [(p.net, {l for l in self.copper_layers() if p.on(l)}, p.outline) for p in f.pads()]
+        others = [(o.courtyard_outline() or [(b[0], b[1]), (b[2], b[1]), (b[2], b[3]), (b[0], b[3])], b)
+                  for o in self.footprints() if o is not f and o.side == f.side and (b := o.box())]
+        loops = self.outline_loops()
+        edge, holes = (loops[0], loops[1:]) if loops else (None, [])
+        outer = "F.Cu" if f.side == "F" else "B.Cu"
+        walls = []
+        for k in keepouts or []:
+            walls.append([(k[0], k[1]), (k[2], k[1]), (k[2], k[3]), (k[0], k[3])] if len(k) == 4 and
+                         not isinstance(k[0], (tuple, list)) else [tuple(q) for q in k])
+        from .coupling import _pts
+        for z in self.zones():
+            k = find(z, "keepout")
+            lay = find(z, "layer") or find(z, "layers")
+            if k is None or lay is None or not any(str(c[0]) == "footprints" and str(c[1]) == "not_allowed"
+                                                   for c in k[1:] if isinstance(c, list) and len(c) > 1):
+                continue
+            if any(str(l) in (outer, "*.Cu", "F&B.Cu") for l in lay[1:]):
+                walls.append(_pts(find(z, "polygon")))
+        cu, cl = _Copper(self), self._clearance_fn()
+
+        def legal(dx, dy) -> bool:
+            poly = [(x + dx, y + dy) for x, y in court]
+            bx = (min(p[0] for p in poly), min(p[1] for p in poly), max(p[0] for p in poly), max(p[1] for p in poly))
+            if edge and not all(inside(edge, p) for p in poly):
+                return False
+            for o, ob in others:
+                if overlap(bx, ob, gap - 1e-6) and (polygons_overlap(poly, o) if gap <= 0
+                                                    else _Shape(poly=poly).distance(_Shape(poly=o)) < gap - 1e-6):
+                    return False
+            if any(polygons_overlap(poly, w) for w in holes + walls):
+                return False
+            return not any(cu.conflicts(net, lays, cl, poly=[(x + dx, y + dy) for x, y in out], skip=ref)
+                           for net, lays, out in pads if lays)
+        tried, r = 0, 0.0
+        while r <= max_distance + 1e-9:
+            n = 1 if r == 0 else max(8, math.ceil(2 * math.pi * r / step))
+            for k in range(n):
+                a = 2 * math.pi * k / n
+                tx, ty = anchor[0] + r * math.cos(a), anchor[1] + r * math.sin(a)
+                tried += 1
+                dx, dy = tx - cx, ty - cy
+                if legal(dx, dy):
+                    f.place(round(f.x + dx, 4), round(f.y + dy, 4))
+                    return {"ref": ref, "at": [f.x, f.y], "rot": f.rot, "side": f.side,
+                            "distance": round(r, 3), "tried": tried}
+            r += step
+        if f.side != undo[3]:
+            f.flip()
+        f.place(undo[0], undo[1], undo[2])
+        raise env.KatError(f"no legal spot for {ref} within {max_distance:g} mm of {near} ({tried} tried)")
 
     def place_near(self, ref: str, target: str, gap: float = 0.3, allow_overlap: bool = False,
                    force: bool = False) -> dict:

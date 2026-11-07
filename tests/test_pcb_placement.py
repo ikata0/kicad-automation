@@ -86,6 +86,31 @@ def test_place_near_puts_the_same_net_pad_next_to_the_pin(pcb):
         assert not b.collisions(["R1", "C1"])
 
 
+def test_place_free_finds_the_nearest_legal_spot(pcb):
+    """FR-046: any part, near a part, a pad or a point, on a chosen side, out of keep-outs;
+    the spot is nearest first and passes KiCad's courtyard check."""
+    import math
+    with kat.pcb.edit(pcb) as b:
+        b.outline(rect=(0, 0, 80, 60))
+        b.distribute(["J1", "Q1", "R1", "R2", "D1", "D2", "C1"], start=(10, 10), pitch=(8, 0))
+        b.move("Q1", to=(40, 30))
+        r = b.place_free("C1", "Q1", gap=0.25)
+        assert not b.collisions(["C1"], gap=0.2) and r["distance"] < 4, r
+        near = r["distance"]
+        q = b.footprint("Q1").box()
+        wall = (q[0] - 6, q[1] - 6, q[2] + 6, q[3] + 6)            # nothing may go close to Q1 now
+        r = b.place_free("C1", "Q1", keepouts=[wall])
+        c = b.footprint("C1").box()
+        assert r["distance"] > near and (c[2] <= wall[0] or c[0] >= wall[2] or c[3] <= wall[1] or c[1] >= wall[3]), r
+        r = b.place_free("D1", (40, 30), side="bottom")           # under Q1: the other side is free
+        assert r["side"] == "B" and r["distance"] < 0.3, r
+        with pytest.raises(kat.KatError, match="no legal spot"):
+            b.place_free("R1", "Q1", keepouts=[(0, 0, 80, 60)], max_distance=2)
+        assert (b.footprint("R1").x, b.footprint("R1").y) == (26, 10)            # left where it was
+        assert math.dist(r["at"], (b.footprint("D1").x, b.footprint("D1").y)) < 1e-6
+    assert kat.pcb.drc(pcb)["by_type"].get("courtyards_overlap") is None
+
+
 def test_blocks_move_and_replicate(pcb):
     with kat.pcb.edit(pcb) as b:
         assert {k: sorted(v) for k, v in b.blocks().items()} == {"ch1": ["D1", "R1"], "ch2": ["D2", "R2"]}

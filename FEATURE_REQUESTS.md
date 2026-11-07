@@ -30,12 +30,6 @@ a tiled 3D field solution.
 
 ## Routing and board-editing APIs
 
-### FR-046: Search a legal spot for loose parts
-
-**Partial.** `Board.place_near` puts a two-pad part next to a pad, stepping sideways until
-no courtyard overlaps. Request: any part near an anchor part or point, on a chosen side,
-with keep-outs, searching outward for the nearest legal spot.
-
 ### FR-048: Plane-access helpers
 
 **Partial.** `b.stitch` places a stitching-via lattice in the library. Remaining: a
@@ -547,3 +541,15 @@ coordinates, following `--view`, `--y-up` and `--origin`) replace the rectangle.
 bounding-box filter, as stamping already did. Test
 `test_stadium_courtyards_let_corners_pass_as_drc_does`: two stadium parts corner to corner
 pass kat and KiCad's DRC alike, the rectangles fail both, and an L stays an L.
+
+### FR-046: Search a legal spot for loose parts
+
+`Board.place_free(ref, near, side=None, rot=None, keepouts=None, gap=0.25,
+max_distance=20, step=0.25)` places any part near a part, a pad (`"U1.8"`) or a point. It
+tries rings of growing radius, nearest first. A spot is legal when the part's courtyard (as
+drawn, FR-029) keeps `gap` from the courtyards on its side, stays inside the outline and out
+of its cut-outs, the board's footprint keep-outs on that side and the given `keepouts`
+(rectangles or polygons), and its pads keep their clearance to other nets' copper. It
+returns at, rot, side, distance and tried, and refuses (leaving the part) when nothing fits.
+`place_near` stays for the two-pad case, oriented to its pin. Test:
+`test_place_free_finds_the_nearest_legal_spot` (checked against DRC's courtyard check).
