@@ -35,12 +35,6 @@ mutual capacitance per net pair. The existing parallel-plate and 2D cross-sectio
 estimates in `src\kat\pcb\coupling.py` and `src\kat\pcb\field2d.py` do not provide
 a tiled 3D field solution.
 
-### FR-038: Name pads on isolated pour fragments
-
-**Partial.** `kat pcb check` counts DRC's isolated copper and starved thermals as
-`islands`. A pad that sits on a sliver cut off from the rest of its pour shows only as
-one unconnected item. Request: name such pads and the fragment they sit on.
-
 ### FR-039: Verify zone fills against foreign-net copper
 
 **Needs reproduction.** Reported on KiCad 10: after routing, pours with a minimum width of
@@ -537,3 +531,12 @@ and block import apply the profile, since classes start at KiCad's 0.2 mm defaul
 suggested minimum. FR-051's via-spacing point is covered: hole-to-hole spacing is checked in
 every direction (diagonal case in the test). Test:
 `test_a_fabrication_profile_holds_the_whole_flow`.
+
+### FR-038: Name pads on isolated pour fragments
+
+`kat pcb check` lists `isolated_pads`: [{pad, net, zone, layer, at, fragment_area,
+zone_area}], the pads on a fill fragment other than the zone's largest. KiCad 10's DRC
+reports such a pad only as "Missing connection between items" between two parts of the zone,
+placed at the zone's corner. The fill is computed on a scratch copy, only for the zones DRC
+names in its unconnected items (`checks.isolated_pads`). Test:
+`test_a_pad_on_a_cut_off_fragment_is_named`.

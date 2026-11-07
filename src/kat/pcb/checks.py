@@ -8,6 +8,7 @@ from collections import Counter
 from pathlib import Path
 
 from .. import env
+from ..sexpr import find, find_all
 
 
 def _items(v: dict) -> list[dict]:
@@ -47,13 +48,52 @@ def drc(pcb: Path, parity: bool = True, refill: bool = False, save: bool = False
 ISLAND_TYPES = ("starved_thermal", "isolated_copper", "zone_has_empty_net")
 
 
+def isolated_pads(pcb: Path, b, unconnected: list[dict]) -> list[dict]:
+    """Pads that sit on a fragment of their own net's pour cut off from its largest part:
+    DRC reports those only as a missing connection between parts of the zone, at the zone's
+    corner. Only zones named in ``unconnected`` (DRC's items) are filled and looked at.
+    Returns [{pad, net, zone, layer, at, fragment_area (mm²), zone_area}]."""
+    import re
+    names = {m.group(1) for u in unconnected for i in u["items"]
+             if (m := re.match(r"Zone '([^']*)'", i["description"]))}
+    if not names:
+        return []
+    from .coupling import _filled, _pts
+    from .geometry import inside
+    filled = _filled(pcb)
+    area = lambda p: abs(sum(a[0] * c[1] - c[0] * a[1] for a, c in zip(p, p[1:] + p[:1]))) / 2  # noqa: E731
+    out = []
+    for z in find_all(filled.tree, "zone"):
+        name, net = find(z, "name"), find(z, "net")
+        if name is None or str(name[1]) not in names or net is None:
+            continue
+        by_layer: dict[str, list] = {}
+        for fp in find_all(z, "filled_polygon"):
+            by_layer.setdefault(str(find(fp, "layer")[1]), []).append(_pts(fp))
+        for layer, frags in by_layer.items():
+            if len(frags) < 2:
+                continue
+            main = max(frags, key=area)
+            for p in b.pads():
+                if p.net != str(net[1]) or not p.on(layer):
+                    continue
+                frag = next((f for f in frags if inside(f, (p.x, p.y))), None)
+                if frag is not None and frag is not main:
+                    out.append({"pad": f"{p.ref}.{p.number}", "net": p.net, "zone": str(name[1]), "layer": layer,
+                                "at": [round(p.x, 4), round(p.y, 4)], "fragment_area": round(area(frag), 3),
+                                "zone_area": round(area(main), 3)})
+    return out
+
+
 def run(pcb: Path, mapping: Path | None = None, complete: bool | list[str] = True) -> dict:
     """KiCad's DRC (zones refilled in memory, parity against the schematic) plus kat's
     findings: board outline missing, parts outside the outline (``outside_outline``: pads
     outside; ``overhang``: pads inside, only the body beyond the edge), the board's
     net rules (``net_rules``: coupling, layers, plane; see ``coupling``) and its departures
     from the fabrication profile (``profile``: forbidden vias, classes or rules below the
-    minimum clearance; see ``profile``). ``mapping``: a pin
+    minimum clearance; see ``fabprofile``). ``isolated_pads``: pads on a pour fragment cut off
+    from the rest of their zone (``isolated_pads``), which DRC shows only as one unconnected
+    item at the zone's corner. ``mapping``: a pin
     table the pads must agree with (``kat.mapping.check``), reported in ``mapping``.
 
     ``ok``: no DRC errors, parity 0, nothing unconnected, outline present, mapping agrees.
@@ -86,6 +126,7 @@ def run(pcb: Path, mapping: Path | None = None, complete: bool | list[str] = Tru
             pads_in = all(within(q) for p in f.pads() for q in p.outline)
             (overhang if pads_in and f.pads() else outside).append(f.ref)
     islands = [v for v in d["violations"] if v["type"] in ISLAND_TYPES]
+    cut_off = isolated_pads(pcb, b, d["unconnected"]) if d["unconnected"] else []
     from . import coupling
     rules = coupling.run(pcb, b)
     from . import fabprofile as profile
@@ -97,7 +138,8 @@ def run(pcb: Path, mapping: Path | None = None, complete: bool | list[str] = Tru
               "islands": len(islands), "outside_outline": outside, "overhang": overhang,
               "violations": d["violations"], "unconnected_items": d["unconnected"],
               "parity_items": d["parity"], **({"net_rules": rules} if rules else {}),
-              **({"profile": departures} if departures else {})}
+              **({"profile": departures} if departures else {}),
+              **({"isolated_pads": cut_off} if cut_off else {})}
     ok = bool(outline) and d["errors"] == 0 and not d["parity"] and not d["unconnected"]
     if mapping:
         from ..mapping import check as check_mapping

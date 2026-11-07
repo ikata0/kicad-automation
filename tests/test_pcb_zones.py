@@ -192,3 +192,23 @@ def test_keepout_around_warns_when_its_copper_would_break_it(tmp_path):
     b.save()
     assert "items_not_allowed" not in kat.pcb.drc(pcb, parity=False)["by_type"]
 
+
+
+def test_a_pad_on_a_cut_off_fragment_is_named(tmp_path):
+    """FR-038: a ring of another net cuts R1's pad 1 off the GND pour; DRC only says two parts
+    of the zone are not connected, at the zone's corner. The check names the pad."""
+    pcb = tmp_path / "z.kicad_pcb"
+    b = Board.create(pcb)
+    b.outline(rect=(0, 0, 40, 20))
+    on_net(b.add_footprint(SMD, "R1", 10, 10), "GND")
+    on_net(b.add_footprint(SMD, "R2", 30, 10), "GND")
+    ring = [(7, 8), (9.8, 8), (9.8, 12), (7, 12), (7, 8)]
+    for a, c in zip(ring, ring[1:]):
+        b.add_track(a, c, 0.25, "F.Cu", "X")
+    b.zone("GND", "F.Cu")
+    b.save()
+    c = kat.pcb.check(pcb)
+    assert c["unconnected"] == 1 and "R1" not in str(c["unconnected_items"])       # what DRC says
+    (pad,) = c["isolated_pads"]
+    assert pad["pad"] == "R1.1" and pad["zone"] == "GND F.Cu" and pad["layer"] == "F.Cu"
+    assert 0 < pad["fragment_area"] < 12 < pad["zone_area"]

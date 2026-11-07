@@ -447,6 +447,9 @@ that no more fit on this grid, on these layers; a finer `grid` cannot go below t
 plus kat's findings (outline missing, parts outside the outline, net rules). `ok` = no DRC
 errors, parity 0, nothing unconnected, outline present; `clean` = `ok` and no DRC warnings or kat
 findings. `islands` counts copper cut off from its net (starved thermals, isolated copper).
+`isolated_pads` names the pads that sit on a pour fragment cut off from the rest of their
+zone ({pad, net, zone, layer, at, fragment_area, zone_area}): DRC reports those only as a
+missing connection between two parts of the zone, at the zone's corner.
 `--out FILE` also writes the result as UTF-8 JSON (PowerShell's `>` writes UTF-16).
 
 **Net rules** (`kat pcb netrule`, stored in `<board>.kat.json`) check what DRC does not
@@ -1150,6 +1153,7 @@ column in place of the net.
 | Freerouting narrows tracks at fine-pitch pads below the net-class width (DRC `track_width`); `--router.automatic_neckdown=false` is not applied on 2.4.1 | kat passes that setting on every run, which kept 2.5.0's test boards free of such errors; 2.5.0 still narrows some tracks, and on import kat widens them to the class width where the clearance allows, or else to the board's minimum, and reports the rest (`narrow`) |
 | A reference without a number (`ROUT`) passes ERC and parity, but KiCad treats it as unannotated: the BOM prints `ROUT?` | `kat ready` error `reference_without_number` |
 | No `rsvg-convert` on Windows; `kicad-cli` not on PATH there | PyMuPDF fallback (`[render]` extra, AGPL-3.0); discover KiCad 10 from HKCU/HKLM installer registration (32/64-bit views, custom folders), then standard folders; explicit `KICAD_CLI` and PATH take precedence |
+| A pad on a sliver cut off from its pour showed as one unconnected item between two parts of the zone, placed at the zone's corner: no pad named | `pcb check` fills the zones DRC names and lists `isolated_pads` |
 | A supplier allowed through vias only and 0.125 mm clearance, but nothing held the flow to it: the skill's example used 0.1 mm, blocks brought blind vias | `fab_profile`: a DRC rule for the via kinds, and kat's own steps refuse or report departures |
 | The stamp records lived in `<board>.stamps.json` beside the board; a board copied without it needed a full restamp | records are board properties (`kat.stamp.<instance>`, kept by KiCad's save); `kat pcb stamps --rebuild` fits lost ones from the board |
 | Stamped block pours kept their priority, so a board-wide pour of another net at that priority met them; KiCad 10.0.6's DRC reported nothing (no `zones_intersect`), the fill order decided | the stamp warns; `zone_priority` lifts the block's pours |
