@@ -25,12 +25,6 @@ by the collision checks of `move` and `stamp`.
 
 ## Schematic sync and blocks
 
-### FR-030: Keep power symbols idempotent across syncs
-
-**Needs reproduction.** Reported: every `kat sync` added another power symbol stacked
-on an existing one of the same net, which a post-pass had to remove each time. Expected:
-a repeated sync adds nothing.
-
 ### FR-031: Add one PWR_FLAG per label-driven power net at the top level
 
 **Needs reproduction.** Reported: nets driven only through labels into blocks needed
@@ -493,3 +487,15 @@ would reach the title block, and reports it in `paper` [{sheet, from, to}], whic
 hierarchical report used to drop (`syncer.grow_paper`, `syncer_hier._next_spot`). New
 parts are now placed below the sheet boxes instead of over them. Test:
 `test_many_boxes_grow_the_paper` (30 boxes from A4).
+
+### FR-030: Keep power symbols idempotent across syncs
+
+Not reproduced. Three or four syncs in a row of hierarchical designs (two blocks on a
+connector, a chain of five and of thirty blocks, a power net driving a block's signal port)
+and repeated block builds each kept one power symbol per net and reported nothing.
+The flat sync's idempotence was already tested (`tests/test_sync.py`). Checking this
+found that the hierarchical report dropped `named`, `wired`, `flags` and `detached`, so a
+repeated power symbol could have gone unnoticed. They are now reported, and
+`test_many_boxes_grow_the_paper` requires a repeated sync to report nothing at all. Reopen
+with the design if it recurs: the likeliest remaining path is a lone power pin whose drawn
+net KiCad names differently from the design net (`Syncer.reconcile`).

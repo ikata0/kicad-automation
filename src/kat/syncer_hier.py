@@ -469,13 +469,14 @@ def run(root: Path, design_path: Path, sheets: list[str] | None = None, dry_run:
     near = root.parent
     sheet_names = _sheet_names(root, design, rename_sheets, generate)
     report = {"added": [], "removed": [], "updated": [], "renamed": [], "renamed_sheets": [], "possible_renames": [],
-              "attached": [], "unresolved": [], "files": [], "parameters": {}, "paper": {}}
+              "attached": [], "detached": [], "named": [], "wired": [], "flags": [], "unresolved": [], "files": [], "parameters": {}, "paper": {}}
     files: dict[Path, Schematic] = {}
 
     def draw(file: Path, within: str, rename: dict[str, str], is_root: bool) -> None:
         s = files.setdefault(file.resolve(), Schematic(file))
         rep = _flat(s, design, design.scope(within), rename, power_flags=is_root)
-        for k in ("added", "removed", "updated", "renamed", "attached", "unresolved"):
+        for k in ("added", "removed", "updated", "renamed", "attached", "detached", "named", "wired", "flags",
+                  "unresolved"):
             report[k] += [dict(x, sheet=file.name) if isinstance(x, dict) else f"{file.name}: {x}"
                           for x in rep.get(k, [])]
         if rep.get("paper"):

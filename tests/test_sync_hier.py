@@ -280,7 +280,7 @@ rc = kat.blocks.use("RC")
 gnd = Net("GND")
 j = Part("Connector_Generic", "Conn_01x02", tag="j",
          footprint="Connector_PinHeader_2.54mm:PinHeader_1x02_P2.54mm_Vertical")
-nets = [Net(f"N{i}") for i in range(%d)]
+nets = [Net("+5V")] + [Net(f"N{i}") for i in range(1, %d)]   # a power net into a signal port
 j[1] += nets[0]
 j[2] += gnd
 for i in range(len(nets) - 1):
@@ -291,7 +291,9 @@ kat.skidl_blocks.write("design.net")
 
 
 def test_many_boxes_grow_the_paper(lib, tmp_path):
-    """FR-032: sheet boxes that do not fit below each other grow the paper, as parts do."""
+    """FR-032: sheet boxes that do not fit below each other grow the paper, as parts do.
+    FR-030: a repeated sync adds nothing, power symbols included (with a power net on a
+    signal port: its label at the sheet pin is not turned into another power symbol)."""
     from kat.syncer import paper_size
     blocks.build("RC", force=True)
     d = tmp_path / "design"
@@ -311,7 +313,8 @@ def test_many_boxes_grow_the_paper(lib, tmp_path):
     j = next(b for sym in s.symbols() if sym.ref == "J1" and (b := s.body_box(sym)))
     assert all(b["at"][1] > j[3] for b in boxes)                     # below the parts
     again = kat.sync(sch, d / "design.net")
-    assert not again["added"] and not again["updated"] and not again["paper"], again
+    changed = {k: v for k, v in again.items() if isinstance(v, list) and v and k not in ("files", "possible_renames")}
+    assert not changed, changed
 
 
 def test_boxes_are_arranged_and_keep_hand_changes(lib, tmp_path):
