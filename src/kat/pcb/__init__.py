@@ -98,10 +98,11 @@ def view(pcb: Path | str, around: str | None = None, at: tuple[float, float] | N
 
 
 def refill(pcb: Path | str) -> dict:
-    """Fill all pours and save them into the board (KiCad's zone filler, via DRC)."""
+    """Fill all pours and save them into the board (KiCad's zone filler, via DRC). A fill
+    that DRC finds over other nets' copper is retried once with a nudged minimum width
+    (``fill_retry`` in the result; ``checks.refill``)."""
     report.touch(pcb)
-    d = checks.drc(Path(pcb), parity=False, refill=True, save=True)
-    return tidy({"file": str(pcb), "drc_errors": d["errors"], "unconnected": len(d["unconnected"])})
+    return tidy({"file": str(pcb), **checks.refill(Path(pcb))})
 
 
 def route(pcb: Path | str, passes: int = 20, nets: list[str] | None = None, timeout: int = 1800,

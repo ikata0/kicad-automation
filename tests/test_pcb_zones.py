@@ -212,3 +212,27 @@ def test_a_pad_on_a_cut_off_fragment_is_named(tmp_path):
     (pad,) = c["isolated_pads"]
     assert pad["pad"] == "R1.1" and pad["zone"] == "GND F.Cu" and pad["layer"] == "F.Cu"
     assert 0 < pad["fragment_area"] < 12 < pad["zone_area"]
+
+
+def test_a_fill_over_other_nets_is_retried_with_a_nudged_width(tmp_path, monkeypatch):
+    """FR-039 (not reproduced on KiCad 10.0.6 here): if DRC finds a fill over a foreign via,
+    refill nudges that zone's minimum width once and fills again, and says so."""
+    from kat.pcb import checks
+    pcb = design(tmp_path)
+    real, calls = checks.drc, []
+
+    def drc(path, parity=True, refill=False, save=False):
+        d = real(path, parity, refill, save)
+        calls.append(1)
+        if len(calls) == 1:                               # the reported bug, once
+            d["violations"].append({"severity": "error", "type": "clearance", "description": "Clearance violation",
+                                    "items": [{"description": "Zone 'GND F.Cu' [GND] on F.Cu, priority 0", "x": 1, "y": 1},
+                                              {"description": "Via [X] on F.Cu - B.Cu", "x": 1, "y": 1}]})
+            d["errors"] += 1
+        return d
+    monkeypatch.setattr(checks, "drc", drc)
+    r = kat.pcb.refill(pcb)
+    assert r["fill_retry"] == {"zones": {"GND F.Cu": 0.251}, "before": 1, "after": 0} and r["drc_errors"] == 0, r
+    assert float(find(Board(pcb).zones()[0], "min_thickness")[1]) == 0.251
+    monkeypatch.setattr(checks, "drc", real)
+    assert "fill_retry" not in kat.pcb.refill(pcb)

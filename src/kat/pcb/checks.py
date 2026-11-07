@@ -43,6 +43,51 @@ def drc(pcb: Path, parity: bool = True, refill: bool = False, save: bool = False
             "warnings": sum(v["severity"] == "warning" for v in violations)}
 
 
+FILL_TYPES = ("clearance", "shorting_items", "hole_clearance", "copper_edge_clearance")
+
+
+def _fill_hits(d: dict) -> list[tuple[str | None, str, dict]]:
+    """(zone name or None, zone net, violation) for each clearance or short of a zone's fill."""
+    import re
+    out = []
+    for v in d["violations"]:
+        if v["type"] not in FILL_TYPES:
+            continue
+        for i in v["items"]:
+            if m := re.match(r"Zone (?:'([^']*)' )?\[([^\]]*)\]", i["description"]):
+                out.append((m.group(1), m.group(2), v))
+                break
+    return out
+
+
+def refill(pcb: Path, nudge: float = 0.001) -> dict:
+    """Fill every pour (KiCad's filler through DRC) and save it, then check the fill against
+    other nets' copper: a reported fill over foreign vias, tracks or pads (seen on KiCad 10,
+    not reproduced here) is retried once with each such zone's minimum width changed by
+    ``nudge`` mm. Returns drc_errors, unconnected and, if it came to that, ``fill_retry``
+    {zones {name: new minimum width}, before, after (fill violations)}."""
+    from .board import Board
+    d = drc(pcb, parity=False, refill=True, save=True)
+    hits = _fill_hits(d)
+    out: dict = {}
+    if hits:
+        b = Board(pcb)
+        changed = {}
+        for z in b.zones():
+            name, net, mt = find(z, "name"), find(z, "net"), find(z, "min_thickness")
+            zn, znet = (str(name[1]) if name is not None else None), (str(net[1]) if net is not None else "")
+            if mt is None or not any((n is not None and n == zn) or (n is None and nt == znet) for n, nt, _ in hits):
+                continue
+            mt[1] = round(float(mt[1]) + nudge, 4)
+            changed[zn or znet] = mt[1]
+        b.save()
+        d = drc(pcb, parity=False, refill=True, save=True)
+        out["fill_retry"] = {"zones": changed, "before": len(hits), "after": len(_fill_hits(d)),
+                             **({"hint": "the fill still meets other nets: report it to KiCad with a reduced board"}
+                                if _fill_hits(d) else {})}
+    return {"drc_errors": d["errors"], "unconnected": len(d["unconnected"]), **out}
+
+
 # copper split into pieces the router or the pour believed connected (spike: 29 unconnected
 # after a "0 unrouted" autoroute)
 ISLAND_TYPES = ("starved_thermal", "isolated_copper", "zone_has_empty_net")

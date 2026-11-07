@@ -35,15 +35,6 @@ mutual capacitance per net pair. The existing parallel-plate and 2D cross-sectio
 estimates in `src\kat\pcb\coupling.py` and `src\kat\pcb\field2d.py` do not provide
 a tiled 3D field solution.
 
-### FR-039: Verify zone fills against foreign-net copper
-
-**Needs reproduction.** Reported on KiCad 10: after routing, pours with a minimum width of
-0.2 mm covered vias, tracks and through-hole pads of other nets (many DRC errors), also
-through pcbnew's `ZONE_FILLER` directly, and keep-out areas around those items were
-ignored. Changing the minimum width, clearance or priority made it disappear. Request:
-`kat pcb refill` checks the fill against foreign-net items and retries with a slightly
-changed minimum width, reporting it; report the bug to KiCad with a reduced board.
-
 ## Routing and board-editing APIs
 
 ### FR-046: Search a legal spot for loose parts
@@ -540,3 +531,14 @@ reports such a pad only as "Missing connection between items" between two parts 
 placed at the zone's corner. The fill is computed on a scratch copy, only for the zones DRC
 names in its unconnected items (`checks.isolated_pads`). Test:
 `test_a_pad_on_a_cut_off_fragment_is_named`.
+
+### FR-039: Verify zone fills against foreign-net copper
+
+Not reproduced on KiCad 10.0.6. A four-layer board with GND pours (minimum width 0.1, 0.15,
+0.2 and 0.25 mm) over foreign vias, tracks and through-hole pads filled cleanly, and so do
+the routed boards of the test suite. As requested, `kat pcb refill` / `kat.pcb.refill` now
+check the fill with DRC (clearance, shorts, hole clearance against zone items). If one is
+found, they retry once with each such zone's minimum width nudged by 0.001 mm and report
+`fill_retry` {zones, before, after}, with a hint to report it to KiCad if it stays.
+`checks.refill`; test `test_a_fill_over_other_nets_is_retried_with_a_nudged_width`
+(simulated). No KiCad bug report was prepared, since there is no failing board yet.
