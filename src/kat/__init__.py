@@ -27,13 +27,13 @@ from .env import KatError, tidy
 from .bootstrap import init
 from .history import restore as _restore
 from .history import snapshot as _snapshot
-from .project import new
+from .project import new, prefixes
 from .report import batch_exec, comment
 from .sheet import Sheet
 from .views import view as _view
 
 __all__ = ["KatError", "Sheet", "batch_exec", "blocks", "check", "comment", "edit", "hierarchy", "lib_search", "lib_show",
-           "init", "libmake", "load", "mapping", "nets", "new", "open_kicad", "pcb", "ready", "restore", "skidl_blocks", "snapshot", "stamp", "sync",
+           "init", "libmake", "load", "mapping", "nets", "new", "open_kicad", "pcb", "prefixes", "ready", "restore", "skidl_blocks", "snapshot", "stamp", "sync",
            "view"]
 
 

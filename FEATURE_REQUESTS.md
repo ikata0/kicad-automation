@@ -25,12 +25,6 @@ by the collision checks of `move` and `stamp`.
 
 ## Schematic sync and blocks
 
-### FR-033: Per-project reference prefixes
-
-**Open.** Generic connectors get `J`; some projects use another prefix (e.g. `CON`).
-Request: a project-wide prefix map applied by sync and `kat lib make`, whose
-`--reference` only sets it for one part.
-
 ## Electrical checks
 
 ### FR-006: Estimate coupling across repeated blocks in 3D
@@ -515,3 +509,13 @@ project_libraries()` adds the project's `sym-lib-table` libraries (with `${KIPRJ
 SKiDL's search path; the project is found above the running script. The setup reference
 (`skills/kicad-design/references/setup.md`) says to run scripts from their own folder.
 Test: `test_a_script_in_a_sub_folder_finds_the_project_libraries`.
+
+### FR-033: Per-project reference prefixes
+
+`kat prefix DIR J=CON` / `kat.prefixes(path, {"J": "CON"})` store the project's reference
+prefixes in `<project>.kat.json`. `kat lib make` uses the project's prefix for `J` unless
+`--reference` is given, and symbols kat adds without a reference (`Schematic.add_symbol`,
+`Sheet.add`) use the map. Sync never renames, by decision: a SKiDL design's references come
+from its netlist, and renaming them would break every netlist comparison. Instead
+`kat check` lists references off the map in `prefix_warnings` (changing neither `ok` nor
+`clean`), and the schematic skill shows SKiDL's `ref_prefix=`.

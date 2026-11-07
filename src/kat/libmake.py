@@ -348,7 +348,7 @@ def make(pins: Path | str, name: str, lib: str | None = None, out: Path | str | 
          symbol: bool = True, footprint: bool = True, view: str = "component", y_up: bool = False,
          origin: str = "table", drill: float | None = None, pad: tuple[float, float] | None = None,
          shape: str | None = None, pitch: tuple[float, float] | None = None, marker: str | None = "auto",
-         reference: str = "J", force: bool = False) -> dict:
+         reference: str | None = None, force: bool = False) -> dict:
     """Generate a symbol and a footprint from a pin table (see this module; CSV or JSON), so the
     pin assignment has one source. ``name``: the part; ``lib``: library name (default the part's);
     ``out``: folder for ``LIB.kicad_sym`` and ``LIB.pretty/`` (default here), and if it holds a
@@ -359,7 +359,9 @@ def make(pins: Path | str, name: str, lib: str | None = None, out: Path | str | 
     the footprint's origin is the table's, ``pin1`` (the marker pin) or the ``center``. ``drill``
     (mm), ``pad`` (w, h mm), ``shape``: defaults for rows that leave them empty; ``pitch`` (dx, dy
     mm) for ``row`` and ``col``. ``marker``: pin marked by a triangle and a rectangular pad, ``auto``
-    for pin 1 or else the first one, None for no marker. ``force``: replace a part of that name.
+    for pin 1 or else the first one, None for no marker. ``reference``: the reference prefix
+    (default the project's for ``J``, see ``kat.prefixes``, else ``J``). ``force``: replace a
+    part of that name.
 
     Returns lib_id, symbol and footprint (files, or None if not asked), pins, pads, holes, outline
     (x0, y0, x1, y1 mm around the pads) and registered."""
@@ -371,6 +373,9 @@ def make(pins: Path | str, name: str, lib: str | None = None, out: Path | str | 
         raise env.KatError("nothing to make: symbol or footprint")
     lib = lib or name
     out = Path(out) if out is not None else Path.cwd()
+    if reference is None:
+        from .project import prefixes
+        reference = prefixes(out).get("J", "J")
     report.touch(out / f"{lib}.kicad_sym")
     pads = pads_from_table(pins, drill, pad, shape, pitch)
     numbers = [p["number"] for p in pads if p["number"]]

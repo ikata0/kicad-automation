@@ -270,7 +270,13 @@ names and positions have one source. `--view pin` is for tables seen from the pi
 x; `--y-up` for y growing upwards. The marker pin has a triangle on silk and fab and a rectangular
 pad. KiCad reads both back before they are kept, and if the folder holds a project they are added
 to its library tables. It draws an outline around the pads, not the part's body: compare it with
-the datasheet before using it.
+the datasheet before using it. The reference prefix is `--reference`, else the project's for `J`.
+
+**Reference prefixes.** `kat prefix DIR J=CON` (`kat.prefixes`) stores the project's prefixes in
+`<project>.kat.json`. `lib make` and symbols kat adds itself (`add`, without a reference) use
+them. Sync never renames: a SKiDL design's references come from its netlist, so give the part
+`ref_prefix="CON"` in SKiDL; `kat check` lists references that do not follow the map in
+`prefix_warnings`, which change neither `ok` nor `clean`.
 
 **Mechanics from fabrication data.** `kat pcb import-mech PCB --odb JOB`, or `--gerber FILE --drill
 FILE...`, makes a new board fit an old one. It reads the ODB++ profile and drill layers, or an
@@ -942,8 +948,9 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 |---|---|
 | `init [DIR] [--force]` | bundled agent skills, references, managed AGENTS section and provenance; no KiCad required (§4.0) |
 | `new PATH` | project + empty sheet |
+| `prefix DIR [FROM=TO ...] [--clear]` | the project's reference prefixes (§4.7) |
 | `lib search WORDS` / `lib show LIB:NAME` | find symbols; units, pins, body |
-| `lib make --pins TABLE --name NAME [--lib L] [--out DIR] [--view component/pin] [--y-up] [--origin table/pin1/center] [--drill] [--pad] [--pitch] [--marker PIN]` | generate a symbol and a footprint from a pin table (§4.7) |
+| `lib make --pins TABLE --name NAME [--lib L] [--out DIR] [--view component/pin] [--y-up] [--origin table/pin1/center] [--drill] [--pad] [--pitch] [--marker PIN] [--reference P]` | generate a symbol and a footprint from a pin table (§4.7) |
 | `list SCH [--near X,Y --radius R]` / `pins SCH REF` / `netlist SCH` | inspect placement (or what is near a point, with uuids), pin positions + outward direction, KiCad's nets |
 | `sync SCH NETLIST [--dry-run] [--sheets TYPE,...] [--rename-sheet OLD=NEW]` | bring the design into the drawing (§4.4); block types as sheets; a renamed instance keeps its box (§4.21) |
 | `check SCH [--expect NETLIST] [--full] [--map TABLE]` | ERC + netlist comparison + drawing findings (lists cut to 10 per kind, totals in `counts`; `--full` all); `--map`: also against a pin table |

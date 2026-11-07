@@ -322,7 +322,10 @@ class Schematic:
         x, y = snap(x), snap(y)
         prefix = str(prop(sdef, "Reference")[2])
         if ref is None:
-            ref = self.next_ref(prefix)
+            if not hasattr(self, "_prefixes"):     # the project's map ({"J": "CON"}, kat.prefixes)
+                from .project import prefixes
+                self._prefixes = prefixes(self.path)
+            ref = self.next_ref(self._prefixes.get(prefix, prefix))
         elif any(s.ref == ref and s.unit == unit for s in self.symbols()):
             raise env.KatError(f"{ref} unit {unit} already placed")
         place = Placement(x, y, rot, mirror)

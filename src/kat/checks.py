@@ -156,7 +156,8 @@ def run(sch: Path, expect: Path | None = None, full: bool = False, mapping: Path
     ``clean``: ``ok`` and no drawing findings (text overlaps, body overlaps, off-page items,
     duplicated items, design net names missing from or different in the drawing).
     The comparison's lists are cut to 10 entries each (``counts`` has the totals) unless
-    ``full``."""
+    ``full``. ``prefix_warnings``: references that do not follow the project's prefixes
+    (``kat.prefixes``); they change neither ``ok`` nor ``clean``."""
     s = Schematic(sch)  # parse error -> exception
     result: dict = {"file": str(sch)}
     result["erc"] = erc(sch)  # also proves KiCad can load it
@@ -174,6 +175,13 @@ def run(sch: Path, expect: Path | None = None, full: bool = False, mapping: Path
     ok = (result["erc"]["errors"] == 0 and (not expect or result["netlist_vs_expected"]["match"])
           and (not mapping or result["mapping"]["ok"]))
     result["ok"] = ok
+    from .project import prefixes, ref_prefix
+    from .syncer import natural_key
+    if pmap := prefixes(sch):
+        result["prefix_warnings"] = [
+            {"ref": r, "prefix": ref_prefix(r), "project_prefix": pmap[ref_prefix(r)]}
+            for r in sorted({x.ref for x in s.symbols() if not x.ref.startswith("#")}, key=natural_key)
+            if ref_prefix(r) in pmap and pmap[ref_prefix(r)] != ref_prefix(r)]
     names = result.get("netlist_vs_expected", {})
     result["clean"] = ok and not (result["overlaps"] or result["body_overlaps"] or result["off_page"]
                                   or result["duplicates"]

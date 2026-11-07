@@ -2,6 +2,7 @@
 and DRC's library check for the footprint."""
 
 import json
+from pathlib import Path
 
 import pytest
 
@@ -197,6 +198,31 @@ def test_registering_leaves_what_is_in_the_table(project, tmp_path):
     assert '"mine"' in t.read_text() and '"gen"' in t.read_text()
     r = kat.libmake.make(table(tmp_path), "TWO", lib="gen", out=project.parent, drill=1.0)
     assert r["registered"] == []
+
+
+def test_project_prefixes_for_generated_and_added_parts(project, tmp_path, capsys):
+    """FR-033: a project prefix map (J=CON) for parts kat makes itself; kat check warns about
+    references that do not follow it, sync never renames them."""
+    from kat.schematic import Schematic
+    assert kat.prefixes(project) == {}
+    assert cli.main(["prefix", str(project.parent), "J=CON", "U=IC"]) == 0
+    assert json.loads(capsys.readouterr().out)["prefixes"] == {"J": "CON", "U": "IC"}
+    assert kat.prefixes(project, {"U": ""}) == {"J": "CON"}                     # empty removes
+    with pytest.raises(kat.KatError, match="letters"):
+        kat.prefixes(project, {"J": "CON1"})
+    r = kat.libmake.make(table(tmp_path), "ONE", lib="gen", out=project.parent, drill=1.0)
+    assert '(property "Reference" "CON"' in Path(r["symbol"]).read_text()
+    r = kat.libmake.make(table(tmp_path), "TWO", lib="gen", out=project.parent, drill=1.0, reference="X")
+    assert '(property "Reference" "X"' in Path(r["symbol"]).read_text()
+    s = Schematic(project)
+    assert s.add_symbol("Connector_Generic:Conn_01x02", 50.8, 50.8).ref == "CON1"
+    assert s.add_symbol("Device:R", 76.2, 50.8).ref == "R1"
+    s.add_symbol("Connector_Generic:Conn_01x02", 101.6, 50.8, ref="J7")       # as a SKiDL netlist names it
+    s.save()
+    c = kat.check(project)
+    assert c["prefix_warnings"] == [{"ref": "J7", "prefix": "J", "project_prefix": "CON"}]
+    assert kat.prefixes(project, clear=True) == {}
+    assert "prefix_warnings" not in kat.check(project)
 
 
 def test_a_marker_sits_outside_the_outline_at_its_pin(tmp_path):

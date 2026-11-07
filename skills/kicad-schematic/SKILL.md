@@ -21,6 +21,9 @@ layout.
 1. **Connectivity lives in the SKiDL design only.** In the drawing you only arrange things;
    `kat check --expect design.net` must keep matching.
 2. Every SKiDL part gets `tag=` and `ref=`; name the nets that matter (`Net("TIA_OUT")`).
+   A project with its own prefixes (`kat prefix DIR J=CON`) gives them in SKiDL
+   (`ref_prefix="CON"` or `ref="CON1"`): sync takes references from the netlist, and
+   `kat check` lists those off the map in `prefix_warnings`.
    Every `@subcircuit` call gets keyword arguments and `tag=` (the instance name); after
    `generate_netlist`, call `kat.skidl_blocks.write("design.net")`: it also
    records the pins tied to `NC` (a SKiDL builtin - `from skidl import NC` fails), which

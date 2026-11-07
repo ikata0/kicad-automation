@@ -90,6 +90,13 @@ def cmd_new(a):
     return kat.new(a.path, a.paper, a.force)
 
 
+def cmd_prefix(a):
+    pairs = [x.split("=", 1) for x in a.map]
+    if any(len(p) != 2 for p in pairs):
+        raise env.KatError("give prefixes as FROM=TO (e.g. J=CON; J= removes it)")
+    return {"prefixes": kat.prefixes(a.path, dict(pairs) if pairs else None, a.clear)}
+
+
 def cmd_init(a):
     return kat.init(a.path, a.force)
 
@@ -450,6 +457,15 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--paper", default="A4", help="page size: A4, A3, A2, ... (default A4)")
     q.add_argument("--force", action="store_true", help="overwrite an existing schematic")
 
+    q = cmd("prefix", cmd_prefix, "The project's reference prefixes (e.g. J=CON).",
+            "Stored in <project>.kat.json. kat lib make (without --reference) and symbols kat adds\n"
+            "itself use them. Sync never renames: a SKiDL design's references come from its netlist,\n"
+            "so give the part ref_prefix= there; kat check warns about references that do not follow.",
+            ["kat prefix boards/tia", "kat prefix boards/tia J=CON", "kat prefix boards/tia J="], sch=False)
+    q.add_argument("path", help="the project folder or a file in it")
+    q.add_argument("map", nargs="*", metavar="FROM=TO", help="library prefix = project prefix (TO empty removes it)")
+    q.add_argument("--clear", action="store_true", help="remove all")
+
     q = cmd("lib", cmd_lib, "Search and inspect symbol libraries.",
             "Libraries come from KiCad's sym-lib-table (global + project) or the stock directory.\n"
             "`show` prints pins in *library* coordinates (y up) plus units and the body box.",
@@ -492,7 +508,7 @@ def build_parser() -> argparse.ArgumentParser:
     s3.add_argument("--shape", choices=("circle", "rect", "oval", "roundrect"), help="shape of rows that give none")
     s3.add_argument("--pitch", metavar="DX[,DY]", help="mm per col and row")
     s3.add_argument("--marker", default="auto", metavar="PIN", help="marked pin: auto (pin 1, else the first), a number, none")
-    s3.add_argument("--reference", default="J", help="reference prefix (default J)")
+    s3.add_argument("--reference", help="reference prefix (default: the project's for J, see kat prefix; else J)")
     s3.add_argument("--force", action="store_true", help="replace a part of that name")
 
     q = cmd("api", cmd_api, "Look up kat's Python API: signatures and docstrings from the code.",
