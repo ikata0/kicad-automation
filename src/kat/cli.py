@@ -145,7 +145,7 @@ def cmd_lib(a):
         pair = lambda v: _xy(v) if v and "," in v else ((float(v), float(v)) if v else None)  # noqa: E731
         return kat.libmake.make(a.pins, a.name, a.lib, a.out, not a.no_symbol, not a.no_footprint, a.view, a.y_up,
                                 a.origin, a.drill, pair(a.pad), a.shape, pair(a.pitch),
-                                None if a.marker == "none" else a.marker, a.reference, a.force)
+                                None if a.marker == "none" else a.marker, a.reference, a.force, a.courtyard)
     return kat.lib_show(a.lib_id)
 
 
@@ -526,6 +526,8 @@ def build_parser() -> argparse.ArgumentParser:
     s3.add_argument("--pitch", metavar="DX[,DY]", help="mm per col and row")
     s3.add_argument("--marker", default="auto", metavar="PIN", help="marked pin: auto (pin 1, else the first), a number, none")
     s3.add_argument("--reference", help="reference prefix (default: the project's for J, see kat prefix; else J)")
+    s3.add_argument("--courtyard", default="rect", metavar="SHAPE",
+                    help="rect (default), stadium (round ends, for slot-shaped parts) or a JSON file [[x, y], ...]")
     s3.add_argument("--force", action="store_true", help="replace a part of that name")
 
     q = cmd("api", cmd_api, "Look up kat's Python API: signatures and docstrings from the code.",

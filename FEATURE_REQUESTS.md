@@ -16,13 +16,6 @@ file or its eventual tests.
 
 ## Import and library generation
 
-### FR-029: Non-rectangular courtyards in generated footprints
-
-**Open.** `kat lib make` (`src\kat\libmake.py`) always draws a rectangular courtyard
-around all pads. A slot-shaped part next to a pin row needed a stadium-shaped courtyard
-to avoid a false collision. Request: a courtyard polygon or stadium option, also used
-by the collision checks of `move` and `stamp`.
-
 ## Schematic sync and blocks
 
 ## Electrical checks
@@ -542,3 +535,15 @@ found, they retry once with each such zone's minimum width nudged by 0.001 mm an
 `fill_retry` {zones, before, after}, with a hint to report it to KiCad if it stays.
 `checks.refill`; test `test_a_fill_over_other_nets_is_retried_with_a_nudged_width`
 (simulated). No KiCad bug report was prepared, since there is no failing board yet.
+
+### FR-029: Non-rectangular courtyards in generated footprints
+
+`kat lib make --courtyard stadium` (round ends on the short sides, chords pushed out of
+the curve) or `--courtyard FILE.json` / `courtyard=[(x, y), ...]` (a polygon in the table's
+coordinates, following `--view`, `--y-up` and `--origin`) replace the rectangle.
+`Footprint.courtyard_outline` keeps a courtyard drawn as one polygon as it is, concave too
+(other shapes: their convex hull, as before). `Board.collisions`, and with it `move`,
+`move_many`, `flip` and `place_near`, now judges the courtyard polygons after the
+bounding-box filter, as stamping already did. Test
+`test_stadium_courtyards_let_corners_pass_as_drc_does`: two stadium parts corner to corner
+pass kat and KiCad's DRC alike, the rectangles fail both, and an L stays an L.

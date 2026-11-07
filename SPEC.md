@@ -272,6 +272,9 @@ x; `--y-up` for y growing upwards. The marker pin has a triangle on silk and fab
 pad. KiCad reads both back before they are kept, and if the folder holds a project they are added
 to its library tables. It draws an outline around the pads, not the part's body: compare it with
 the datasheet before using it. The reference prefix is `--reference`, else the project's for `J`.
+`--courtyard stadium` draws the courtyard with round ends (a slot-shaped part beside a pin row),
+`--courtyard FILE.json` a polygon of the table's points; `move` and `stamp` judge courtyards as
+drawn, as DRC does (one polygon stays as it is, concave too; other shapes by their convex hull).
 
 **Reference prefixes.** `kat prefix DIR J=CON` (`kat.prefixes`) stores the project's prefixes in
 `<project>.kat.json`. `lib make` and symbols kat adds itself (`add`, without a reference) use
@@ -1153,6 +1156,7 @@ column in place of the net.
 | Freerouting narrows tracks at fine-pitch pads below the net-class width (DRC `track_width`); `--router.automatic_neckdown=false` is not applied on 2.4.1 | kat passes that setting on every run, which kept 2.5.0's test boards free of such errors; 2.5.0 still narrows some tracks, and on import kat widens them to the class width where the clearance allows, or else to the board's minimum, and reports the rest (`narrow`) |
 | A reference without a number (`ROUT`) passes ERC and parity, but KiCad treats it as unannotated: the BOM prints `ROUT?` | `kat ready` error `reference_without_number` |
 | No `rsvg-convert` on Windows; `kicad-cli` not on PATH there | PyMuPDF fallback (`[render]` extra, AGPL-3.0); discover KiCad 10 from HKCU/HKLM installer registration (32/64-bit views, custom folders), then standard folders; explicit `KICAD_CLI` and PATH take precedence |
+| A slot-shaped part next to a pin row collided in kat by its rectangular courtyard; `move` compared bounding boxes even of polygon courtyards | `lib make --courtyard stadium` or a polygon; `collisions` judges the courtyard polygons, as DRC does |
 | Reported downstream on KiCad 10: pours of 0.2 mm minimum width filled over other nets' vias, tracks and pads after routing, gone with another width (not reproduced on 10.0.6 here) | `refill` checks the fill with DRC and retries once with a nudged minimum width, reporting `fill_retry` |
 | A pad on a sliver cut off from its pour showed as one unconnected item between two parts of the zone, placed at the zone's corner: no pad named | `pcb check` fills the zones DRC names and lists `isolated_pads` |
 | A supplier allowed through vias only and 0.125 mm clearance, but nothing held the flow to it: the skill's example used 0.1 mm, blocks brought blind vias | `fab_profile`: a DRC rule for the via kinds, and kat's own steps refuse or report departures |

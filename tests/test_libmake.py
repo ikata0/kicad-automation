@@ -284,3 +284,34 @@ def test_mapping_check_and_the_table_share_a_format(project, tmp_path):
     m = table(tmp_path, "pin,name,net\nJ1.1,VCC,VCC\nJ1.2,SIG,SIG\nJ1.3,GND,GND\nJ1.4,CLK,GND\nJ1.5,OUT,OUT\nJ1.6,NC_6,OUT\n", "m.csv")
     r = kat.mapping.check(project, m)
     assert r["ok"] and r["ignored"] == ["name"], r
+
+
+def test_stadium_courtyards_let_corners_pass_as_drc_does(project, tmp_path):
+    """FR-029: a slot-shaped part with a stadium courtyard; two of them corner to corner:
+    their bounding boxes overlap, their courtyards do not. kat's move judges the polygons and
+    agrees with DRC; with rectangular courtyards both refuse."""
+    from kat.pcb import Board
+    two = table(tmp_path, "pin,x,y\n1,0,0\n2,5.08,0\n", "slot.csv")
+    for name, court in (("STAD", "stadium"), ("RECT", "rect")):
+        kat.libmake.make(two, name, lib="gen", out=project.parent, drill=1.0, symbol=False, courtyard=court)
+    pcb = project.with_suffix(".kicad_pcb")
+    b = Board.create(pcb)
+    b.outline(rect=(0, 0, 60, 40))
+    for name, y in (("STAD", 10), ("RECT", 25)):
+        a = b.add_footprint(f"gen:{name}", f"A{y}", 10, y)
+        box = a.courtyard()
+        w, h = box[2] - box[0], box[3] - b.footprint(f"A{y}").courtyard()[1]
+        b.add_footprint(f"gen:{name}", f"B{y}", 10 + w - 0.3, y + h - 0.3)
+    hits = {(c["a"], c["b"]) for c in b.collisions()}
+    assert hits == {("A25", "B25")}, hits
+    assert len(b.footprint("A10").courtyard_outline()) > 4          # the stadium, not its box
+    b.save()
+    d = kat.pcb.drc(pcb, parity=False)
+    flagged = {i["description"].split()[1] for v in d["violations"] if v["type"] == "courtyards_overlap" for i in v["items"]}
+    assert flagged == {"A25", "B25"}, (d["by_type"], flagged)
+    # a concave courtyard given as a polygon (an L) stays as drawn, in the table's frame
+    ell = [(-1, -1), (7, -1), (7, 1.2), (1.2, 1.2), (1.2, 4), (-1, 4)]
+    kat.libmake.make(two, "ELL", lib="gen", out=project.parent, drill=1.0, symbol=False, courtyard=ell)
+    with kat.pcb.edit(pcb) as e:
+        e.add_footprint("gen:ELL", "L1", 40, 30)
+    assert Board(pcb).footprint("L1").courtyard_outline() == [(40 + x, 30 + y) for x, y in ell]

@@ -17,6 +17,7 @@ KiCad reads what is written back through ``sym upgrade`` and ``fp upgrade`` befo
 
 from __future__ import annotations
 
+import json
 import math
 import shutil
 import tempfile
@@ -285,9 +286,40 @@ def _marker(pin: dict, box) -> list[tuple[float, float]]:
     return [(x, tip), (x - base, tip + deep), (x + base, tip + deep)]
 
 
-def footprint_node(name: str, pads: list[dict], marker: str | None, reference: str) -> tuple[list, tuple]:
+def _stadium(court: tuple, n: int = 8) -> list[tuple[float, float]]:
+    """A stadium (a rectangle with semicircular ends on its short sides) around the box
+    ``court``: its ends' arcs drawn as ``n`` chords each, pushed out so that they never cut
+    inside the true curve."""
+    x0, y0, x1, y1 = court
+    w, h = x1 - x0, y1 - y0
+    r = min(w, h) / 2
+    grow = r / math.cos(math.pi / (2 * n))
+    out = []
+    if w >= h:                 # ends left and right
+        cy = (y0 + y1) / 2
+        for cx, a0 in ((x1 - r, -90), (x0 + r, 90)):
+            out += [(cx + grow * math.cos(math.radians(a0 + 180 * k / n)), cy + grow * math.sin(math.radians(a0 + 180 * k / n)))
+                    for k in range(n + 1)]
+    else:                      # ends top and bottom
+        cx = (x0 + x1) / 2
+        for cy, a0 in ((y1 - r, 0), (y0 + r, 180)):
+            out += [(cx + grow * math.cos(math.radians(a0 + 180 * k / n)), cy + grow * math.sin(math.radians(a0 + 180 * k / n)))
+                    for k in range(n + 1)]
+    return [(round(x, 3), round(y, 3)) for x, y in out]
+
+
+def _fp_poly(points, layer: str, width: float) -> list:
+    return [Sym("fp_poly"), [Sym("pts"), *([Sym("xy"), num(x), num(y)] for x, y in points)],
+            [Sym("stroke"), [Sym("width"), num(width)], [Sym("type"), Sym("default")]], [Sym("fill"), Sym("no")],
+            [Sym("layer"), layer], [Sym("uuid"), new_uuid()]]
+
+
+def footprint_node(name: str, pads: list[dict], marker: str | None, reference: str,
+                   courtyard: str | list = "rect") -> tuple[list, tuple]:
     """A footprint: the pads, an outline on silk and fab around them, the courtyard around all,
-    and a triangle at the ``marker`` pin. Returns the node and the outline (x0, y0, x1, y1 mm)."""
+    and a triangle at the ``marker`` pin. ``courtyard``: ``rect`` around everything, ``stadium``
+    (that rectangle with round ends on its short sides) or a polygon [(x, y), ...] in footprint
+    mm. Returns the node and the outline (x0, y0, x1, y1 mm)."""
     extent = []
     for p in pads:
         (w, h) = p["size"]
@@ -310,7 +342,9 @@ def footprint_node(name: str, pads: list[dict], marker: str | None, reference: s
             _fp_text("Value", name, 0, court[3] + 1, "F.Fab"),
             _fp_text("Datasheet", "", 0, 0, "F.Fab", hide=True), _fp_text("Description", "", 0, 0, "F.Fab", hide=True),
             [Sym("attr"), Sym("through_hole" if through else "smd")],
-            _fp_rect(box, "F.SilkS", 0.12), _fp_rect(box, "F.Fab", 0.1), _fp_rect(court, "F.CrtYd", 0.05),
+            _fp_rect(box, "F.SilkS", 0.12), _fp_rect(box, "F.Fab", 0.1),
+            _fp_rect(court, "F.CrtYd", 0.05) if courtyard == "rect" else
+            _fp_poly(_stadium(court) if courtyard == "stadium" else courtyard, "F.CrtYd", 0.05),
             *extra, *(_pad_node(p) for p in pads)]
     return node, box
 
@@ -348,7 +382,7 @@ def make(pins: Path | str, name: str, lib: str | None = None, out: Path | str | 
          symbol: bool = True, footprint: bool = True, view: str = "component", y_up: bool = False,
          origin: str = "table", drill: float | None = None, pad: tuple[float, float] | None = None,
          shape: str | None = None, pitch: tuple[float, float] | None = None, marker: str | None = "auto",
-         reference: str | None = None, force: bool = False) -> dict:
+         reference: str | None = None, force: bool = False, courtyard: str | list | Path = "rect") -> dict:
     """Generate a symbol and a footprint from a pin table (see this module; CSV or JSON), so the
     pin assignment has one source. ``name``: the part; ``lib``: library name (default the part's);
     ``out``: folder for ``LIB.kicad_sym`` and ``LIB.pretty/`` (default here), and if it holds a
@@ -361,7 +395,9 @@ def make(pins: Path | str, name: str, lib: str | None = None, out: Path | str | 
     mm) for ``row`` and ``col``. ``marker``: pin marked by a triangle and a rectangular pad, ``auto``
     for pin 1 or else the first one, None for no marker. ``reference``: the reference prefix
     (default the project's for ``J``, see ``kat.prefixes``, else ``J``). ``force``: replace a
-    part of that name.
+    part of that name. ``courtyard``: ``rect`` (around pads and marker), ``stadium`` (that
+    rectangle with round ends, for a slot-shaped part) or a polygon [(x, y), ...] (or a JSON
+    file of one) in the table's coordinates, which ``move`` and ``stamp`` then check exactly.
 
     Returns lib_id, symbol and footprint (files, or None if not asked), pins, pads, holes, outline
     (x0, y0, x1, y1 mm around the pads) and registered."""
@@ -427,7 +463,19 @@ def make(pins: Path | str, name: str, lib: str | None = None, out: Path | str | 
                 oy = (min(p["y"] for p in pads) + max(p["y"] for p in pads)) / 2
             for p in pads:
                 p["x"], p["y"] = round(p["x"] - ox, 6), round(p["y"] - oy, 6)
-        node, bbox = footprint_node(name, pads, chosen, reference)
+        court = courtyard
+        if isinstance(court, (str, Path)) and court not in ("rect", "stadium"):
+            if not Path(court).is_file():
+                raise env.KatError(f"courtyard {court!r}: rect, stadium, or a JSON file of [[x, y], ...]")
+            court = json.loads(Path(court).read_text(encoding="utf-8"))
+        if not isinstance(court, str):
+            if len(court) < 3:
+                raise env.KatError("a courtyard polygon needs three points or more")
+            court = [(-float(x) if view == "pin" else float(x), -float(y) if y_up else float(y)) for x, y in court]
+            if origin != "table":
+                court = [(x - ox, y - oy) for x, y in court]
+            court = [(round(x, 4), round(y, 4)) for x, y in court]
+        node, bbox = footprint_node(name, pads, chosen, reference, court)
         path = _write_footprint(out / f"{lib}.pretty", name, node, force)
         result["footprint"] = str(path)
         result["outline"] = [round(v, 4) for v in bbox]

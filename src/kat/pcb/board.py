@@ -466,12 +466,17 @@ class Footprint:
         return self.graphics_box("CrtYd")
 
     def courtyard_outline(self) -> list[tuple[float, float]] | None:
-        """The courtyard as a polygon in board mm, turned with the part: the convex hull of its
-        graphics (never smaller than the drawn courtyard; a rectangle stays that rectangle);
-        None without a courtyard. ``courtyard`` is its bounding box, which at 45 degrees is
-        much larger."""
+        """The courtyard as a polygon in board mm, turned with the part: a courtyard drawn as one
+        polygon is that polygon (concave too, e.g. an L), else the convex hull of its graphics
+        (never smaller than the drawn courtyard; a rectangle stays that rectangle); None
+        without a courtyard. ``courtyard`` is its bounding box, which at 45 degrees is much
+        larger."""
         from .coupling import _arc_points, _pt, _pts
         layer = f"{self.side}.CrtYd"
+        mine = [g for g in self.node if (h := head(g)) and h.startswith("fp_") and h not in ("fp_text", "fp_text_box")
+                and (lay := find(g, "layer")) is not None and str(lay[1]) == layer]
+        if len(mine) == 1 and head(mine[0]) == "fp_poly":
+            return [self.to_board(x, y) for x, y in _pts(mine[0])]
         pts: list[tuple[float, float]] = []
         for g in self.node:
             h = head(g)

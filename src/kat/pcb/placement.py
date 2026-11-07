@@ -20,16 +20,29 @@ class PlacementMixin:
 
     def collisions(self, refs: list[str] | None = None, gap: float = 0.0) -> list[dict]:
         """Courtyard overlaps between footprints on the same side (optionally only those
-        involving ``refs``)."""
+        involving ``refs``; ``gap`` mm more), judged on the courtyard polygons
+        (``Footprint.courtyard_outline``: a stadium or an L as drawn), as KiCad's DRC does."""
+        from .cells import _Shape, polygons_overlap
         fps = [(f, f.box()) for f in self.footprints() if f.box()]
         want = set(refs) if refs else None
+        outline: dict = {}
+
+        def poly(f):
+            if f.ref not in outline:
+                outline[f.ref] = f.courtyard_outline()
+            return outline[f.ref]
         out = []
         for i, (a, ba) in enumerate(fps):
             for b, bb in fps[i + 1:]:
                 if a.side != b.side or (want and a.ref not in want and b.ref not in want):
                     continue
-                if overlap(ba, bb, gap - 1e-6):
-                    out.append({"a": a.ref, "b": b.ref, "side": a.side})
+                if not overlap(ba, bb, gap - 1e-6):
+                    continue
+                pa, pb = poly(a), poly(b)
+                if pa and pb and not (polygons_overlap(pa, pb) if gap <= 0
+                                      else _Shape(poly=pa).distance(_Shape(poly=pb)) < gap - 1e-6):
+                    continue
+                out.append({"a": a.ref, "b": b.ref, "side": a.side})
         return out
 
     def near(self, at, radius: float = 3.0) -> list[dict]:
