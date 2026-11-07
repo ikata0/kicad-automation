@@ -677,7 +677,10 @@ with kat.pcb.edit("top/top.kicad_pcb") as b:
   the copper kinds it forbids on its layer and vs courtyards on its outer layer. Vias
   and through-hole pads count on every layer they span. Pours yield to other nets and are
   no obstacle, unless two of different nets overlap on a layer with the same priority
-  (`zones_intersect` in DRC, kind `pour`). So a block may run a rail under its neighbour on an inner layer, or
+  (kind `pour`: KiCad's fill order would decide who gets the shared area; KiCad 10.0.6's DRC
+  reports nothing, not even `zones_intersect`). A block's pours overlapping a board-wide pour
+  at their priority are a warning; `stamp(..., zone_priority=N)` / `--zone-priority N` adds N
+  to the block's pour priorities (remembered per instance). So a block may run a rail under its neighbour on an inner layer, or
   overlap the neighbour's outline, as long as nothing on any layer meets. A stamp that
   collides is refused with the rows; `b.stamp_collisions()` /
   `kat pcb collisions PCB [INSTANCE...]` lists the pairs on a design (rows `i`, `j`,
@@ -1130,6 +1133,7 @@ column in place of the net.
 | Freerouting narrows tracks at fine-pitch pads below the net-class width (DRC `track_width`); `--router.automatic_neckdown=false` is not applied on 2.4.1 | kat passes that setting on every run, which kept 2.5.0's test boards free of such errors; 2.5.0 still narrows some tracks, and on import kat widens them to the class width where the clearance allows, or else to the board's minimum, and reports the rest (`narrow`) |
 | A reference without a number (`ROUT`) passes ERC and parity, but KiCad treats it as unannotated: the BOM prints `ROUT?` | `kat ready` error `reference_without_number` |
 | No `rsvg-convert` on Windows; `kicad-cli` not on PATH there | PyMuPDF fallback (`[render]` extra, AGPL-3.0); discover KiCad 10 from HKCU/HKLM installer registration (32/64-bit views, custom folders), then standard folders; explicit `KICAD_CLI` and PATH take precedence |
+| Stamped block pours kept their priority, so a board-wide pour of another net at that priority met them; KiCad 10.0.6's DRC reported nothing (no `zones_intersect`), the fill order decided | the stamp warns; `zone_priority` lifts the block's pours |
 | A track port ending at the outline was dropped with the copper leading to it (its end reached nothing on the block board), while the stamp still reported the port | port points hold copper like pads; `harness_copper` counts what is dropped; a bare port point is a warning |
 | A SKiDL script in a project sub-folder: `NO_LIB` for the project's own library when run from there, by-products in the project root when run from the root (SKiDL reads no `sym-lib-table` and uses the working directory for both) | `kat.skidl_blocks.project_libraries()` adds the project's libraries; run scripts from their own folder |
 | `kat block build --force` silently undid hand changes to the block's sheet (an added part removed, a value set back): `force` was only meant for the board gate | `build` compares the drawing with the last build's design (dry run) and refuses with the list; `--overwrite` to let the design win |

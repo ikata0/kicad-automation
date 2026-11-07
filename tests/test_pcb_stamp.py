@@ -1006,3 +1006,25 @@ def test_coupling_2d_estimate_side_by_side(tmp_path, monkeypatch):
     # farther apart couples less; an inner layer between two planes is computed too
     assert kat.pcb.coupling_2d(0.25, 0.25, 0.4, 0.1)["pf_per_mm"] < per_mm
     assert kat.pcb.coupling_2d(0.25, 0.25, 0.2, 0.1, above=0.1)["pf_per_mm"] > 0
+
+
+def test_zone_priority_lifts_block_pours_over_a_board_pour(hier, tmp_path):
+    """FR-044: a board-wide pour at the block pours' priority meets them, and KiCad's fill
+    order decides (its DRC says nothing): the stamp warns; zone_priority lifts the copies
+    and is remembered."""
+    c = copy_of(hier, tmp_path)
+    pcb, b1 = c["top"], c["b1"]
+    rec = Board(pcb)._stamp_record("/CH_A")
+    with kat.pcb.edit(pcb) as b:
+        b.zone("GND", "F.Cu", name="board GND", priority=1)          # the block's pours have 1
+        r = b.stamp(b1, "/CH_A", at=tuple(rec["at"]), rot=rec["rot"])
+    assert any("same priority" in w and "board GND" in w for w in r.get("warnings", [])), r.get("warnings")
+    with kat.pcb.edit(pcb) as b:
+        r = b.stamp(b1, "/CH_A", at=tuple(rec["at"]), rot=rec["rot"], zone_priority=2)
+    assert not any("same priority" in w for w in r.get("warnings", [])), r.get("warnings")
+    pri = {str(find(z, "name")[1]): int(str((find(z, "priority") or [0, 0])[1])) for z in Board(pcb).zones()
+           if find(z, "name") and find(z, "keepout") is None}
+    assert pri["/CH_A/RC1: out node"] == 3 and pri["/CH_B/RC1: out node"] == 1 and pri["board GND"] == 1
+    with kat.pcb.edit(pcb) as b:                                    # restamped: the offset is kept
+        b.stamp(b1, "/CH_A", at=tuple(rec["at"]), rot=rec["rot"])
+    assert Board(pcb)._stamp_record("/CH_A")["zone_priority"] == 2

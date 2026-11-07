@@ -576,7 +576,8 @@ class StampMixin:
     def stamp(self, block_pcb: Path | str, instance: str | dict, at: tuple[float, float] | None = None,
               rot: float = 0.0, lock: bool = True, source_instance: str | None = None,
               make_room: bool = False, side: str | None = None, layer_map: str | dict | None = None,
-              allow_asymmetric: bool = False, anchor: str | None = None) -> dict:
+              allow_asymmetric: bool = False, anchor: str | None = None,
+              zone_priority: int | None = None) -> dict:
         """Copy a checked block layout (a block board, or a block name from the library)
         onto one instance of the block: parts placed as on
         the block board, tracks, vias, zones, keep-outs, graphics and board-only parts
@@ -609,7 +610,11 @@ class StampMixin:
         refused on an asymmetric stack-up unless ``allow_asymmetric``), "roles", or
         explicit ``"F.Cu=B.Cu,In1.Cu=In2.Cu"``. ``side``/``layer_map`` None: as recorded
         for the instance by an earlier stamp, else top / auto. The design's layer rules
-        (``layer_rule``) are checked on the copied copper. Returns pairs, renamed nets,
+        (``layer_rule``) are checked on the copied copper. ``zone_priority``: added to the
+        priority of the block's pours (not below 0; None: as recorded, else 0), so they sit
+        above a board-wide pour on the same layer instead of meeting it at one priority, where
+        KiCad's fill order decides who gets the shared area (KiCad 10's DRC reports nothing);
+        the stamp warns about that. Returns pairs, renamed nets,
         side, layer map, origin, outline and counts; several instances: ``instances`` (those
         results, in ``order``) and ``order``."""
         if isinstance(instance, dict):
@@ -620,12 +625,13 @@ class StampMixin:
                     pos, r, sd = (*where, side)[:3] if len(where) == 2 else where
                 wanted.append((name, pos, r, sd))
             return self._stamp_batch(block_pcb, wanted, lock, source_instance, make_room, layer_map,
-                                     allow_asymmetric, anchor)
+                                     allow_asymmetric, anchor, zone_priority)
         return self._stamp_batch(block_pcb, [(instance, at, rot, side)], lock, source_instance, make_room,
-                                 layer_map, allow_asymmetric, anchor)["instances"][0]
+                                 layer_map, allow_asymmetric, anchor, zone_priority)["instances"][0]
 
     def _stamp_batch(self, block_pcb, wanted: list[tuple], lock: bool, source_instance: str | None,
-                     make_room: bool, layer_map, allow_asymmetric: bool, anchor: str | None) -> dict:
+                     make_room: bool, layer_map, allow_asymmetric: bool, anchor: str | None,
+                     zone_priority: int | None = None) -> dict:
         """Stamp (instance, at, rot, side) entries: all off the board, then on in natural order,
         collisions gathered and reported together; on any refusal the board is restored."""
         from ..syncer import natural_key
@@ -643,7 +649,7 @@ class StampMixin:
             for name in order:
                 pos, r, sd = where[name]
                 done.append(self._stamp_one(block_pcb, name, pos, r, lock, source_instance, make_room, sd,
-                                            layer_map, allow_asymmetric, anchor, rows))
+                                            layer_map, allow_asymmetric, anchor, rows, zone_priority))
             if rows:
                 raise env.KatError(_collision_text(rows, order))
         except Exception:
@@ -654,9 +660,11 @@ class StampMixin:
 
     def _stamp_one(self, block_pcb, instance: str, at, rot: float, lock: bool, source_instance: str | None,
                    make_room: bool, side: str | None, layer_map, allow_asymmetric: bool, anchor: str | None,
-                   collisions: list[dict]) -> dict:
+                   collisions: list[dict], zone_priority: int | None = None) -> dict:
         """One instance of ``stamp``; its collisions with stamped instances go to ``collisions``."""
         from . import cells, coupling
+        if zone_priority is None:
+            zone_priority = self._stamp_record(instance).get("zone_priority", 0)
         plan = self._stamp_plan(block_pcb, instance, at, rot, side, layer_map, allow_asymmetric,
                                 source_instance, anchor)
         block_pcb, side, bottom, layer_map, warnings = (plan.block_pcb, plan.side, plan.bottom,
@@ -758,6 +766,13 @@ class StampMixin:
                         zname[1] = _joined(instance, str(zname[1]))
                     else:
                         c.insert(2, [Sym("name"), _joined(instance, "zone")])
+                    if zone_priority and find(c, "keepout") is None:
+                        pri = find(c, "priority")
+                        new = max(0, (int(str(pri[1])) if pri is not None else 0) + int(zone_priority))
+                        if pri is not None:
+                            pri[1] = Sym(str(new))
+                        else:
+                            c.insert(c.index(find(c, "name")) + 1, [Sym("priority"), Sym(str(new))])
                     counts["keepouts" if find(c, "keepout") is not None else "zones"] += 1
                 else:
                     counts["vias" if h == "via" else "tracks"] += 1
@@ -799,6 +814,7 @@ class StampMixin:
         mine = cells.items([c for _, c in copies if head(c) in COPPER or head(c) == "footprint"]
                            + [tf.node for tf in pairs.values()], order)
         collisions += cells.against(self, instance, mine, skip=frozenset(tf.uuid for tf in pairs.values()))
+        warnings += self._pours_meeting_the_board(mine, order)
         for n, c in copies:
             members[_uuid(n)] = _fresh(c)
             self._insert(c)
@@ -807,6 +823,7 @@ class StampMixin:
         ports = _placed_ports(info, f, netmap)
         spec = layer_map if isinstance(layer_map, str) or layer_map is None else dict(layer_map)
         self._stamps[instance] = {"block": str(block_pcb), "at": list(at), "rot": rot, "side": side,
+                                  **({"zone_priority": int(zone_priority)} if zone_priority else {}),
                                   "anchor": plan.anchor, "origin": list(plan.origin), "outline": plan.outline,
                                   "layer_spec": spec, "layer_map": cmap, "ports": ports}
         shown = {k: v for k, v in cmap.items() if k != v}
@@ -905,6 +922,25 @@ class StampMixin:
         ``instances``: only collisions of these."""
         from . import cells
         return cells.collisions(self, instances)
+
+    def _pours_meeting_the_board(self, mine: list, copper: list[str]) -> list[str]:
+        """Warnings for the stamped pours that overlap a pour of the board (not of a stamped
+        instance) on the same layer, at the same priority and on another net: KiCad's fill order
+        then decides which gets the shared area, and its DRC does not report it."""
+        from . import cells
+        stamped = cells.stamped_instances(self)
+        board = [z for z in self.zones() if find(z, "keepout") is None and not any(
+            str((find(z, "name") or ["", ""])[1]).startswith((i + ":", i + "/")) for i in stamped)]
+        theirs = [i for i in cells.items(board, copper) if i.kind == "pour"]
+        out = []
+        for a in (i for i in mine if i.kind == "pour"):
+            for b in theirs:
+                if (a.layer == b.layer and a.priority == b.priority and a.net != b.net
+                        and cells.polygons_overlap(a.shape.poly, b.shape.poly)):
+                    out.append(f"{a.what} meets the board's {b.what} on {a.layer} at the same priority "
+                               f"{a.priority} (another net: KiCad's fill order decides, its DRC says nothing): "
+                               "stamp with zone_priority=+1 or more, or give the board's pour another priority")
+        return out
 
     def _stamp_record(self, instance: str) -> dict:
         """What ``<board>.stamps.json`` (or this session) records for an instance."""

@@ -184,7 +184,8 @@ def cmd_pcb(a):
         if not names:
             raise env.KatError("name the instances (/CH_A ... or all); only --preview works without")
         return kat.pcb.stamp(a.pcb, a.block, names, xy(a.at), xy(a.step) if a.step else None,
-                             a.rot, not a.no_lock, a.make_room, a.side, a.layer_map, a.allow_asymmetric, a.anchor)
+                             a.rot, not a.no_lock, a.make_room, a.side, a.layer_map, a.allow_asymmetric, a.anchor,
+                             a.zone_priority)
     if a.pcb_cmd == "collisions":
         return kat.pcb.stamp_collisions(a.pcb, a.instance or None)
     if a.pcb_cmd == "cell":
@@ -1043,6 +1044,8 @@ def build_parser() -> argparse.ArgumentParser:
     s9.add_argument("--rot", type=float, default=0.0, help="degrees, a multiple of 45")
     s9.add_argument("--no-lock", action="store_true", help="leave the copied copper unlocked")
     s9.add_argument("--make-room", action="store_true", help="move design parts out of the block's way")
+    s9.add_argument("--zone-priority", type=int, metavar="N",
+                    help="add N to the block's pour priorities, above a board-wide pour (default: as recorded, else 0)")
     s9.add_argument("--side", choices=("top", "bottom", "F", "B"), help="side of the block's parts, top/F or bottom/B (default: as recorded, else top)")
     s9.add_argument("--layer-map", metavar="MAP", help='auto (default), roles, or "F.Cu=B.Cu,In1.Cu=In2.Cu,..."')
     s9.add_argument("--allow-asymmetric", action="store_true",

@@ -124,7 +124,8 @@ def route(pcb: Path | str, passes: int = 20, nets: list[str] | None = None, time
 def stamp(pcb: Path | str, block_pcb: Path | str, instances: str | list[str],
           at: tuple[float, float], step: tuple[float, float] | None = None, rot: float = 0.0,
           lock: bool = True, make_room: bool = False, side: str | None = None,
-          layer_map: str | None = None, allow_asymmetric: bool = False, anchor: str | None = None) -> dict:
+          layer_map: str | None = None, allow_asymmetric: bool = False, anchor: str | None = None,
+          zone_priority: int | None = None) -> dict:
     """Stamp a checked block layout onto instances of the block (``Board.stamp``) and save.
     ``instances``: paths such as ``/CH_A`` (a list, or ``"all"`` for every instance). The
     n-th one goes to ``at + n * step`` (mm; default step: the block's pitch, ``block_cell``,
@@ -132,7 +133,8 @@ def stamp(pcb: Path | str, block_pcb: Path | str, instances: str | list[str],
     is the turned outline's top-left corner instead of the block origin. ``make_room``:
     push the design's parts out of the block parts' way instead of refusing. ``side``
     "top"/"bottom" (None: as recorded per instance, else top), ``layer_map`` "auto",
-    "roles" or ``"F.Cu=B.Cu,..."``, ``allow_asymmetric``: see ``Board.stamp``. Ends with
+    "roles" or ``"F.Cu=B.Cu,..."``, ``allow_asymmetric``, ``zone_priority`` (added to the
+    block's pour priorities): see ``Board.stamp``. Ends with
     the board check, like ``sync``. All instances are judged on their final geometry, so they
     may swap places and the outcome does not depend on the order they are processed in
     (``order``, returned with their results); a refusal lists every collision and saves
@@ -145,7 +147,8 @@ def stamp(pcb: Path | str, block_pcb: Path | str, instances: str | list[str],
             [instances] if isinstance(instances, str) else list(instances))
         done = b.stamp(block_pcb, {name: ((at[0] + k * step[0], at[1] + k * step[1]), rot)
                                    for k, name in enumerate(names)}, lock=lock, make_room=make_room,
-                       side=side, layer_map=layer_map, allow_asymmetric=allow_asymmetric, anchor=anchor)
+                       side=side, layer_map=layer_map, allow_asymmetric=allow_asymmetric, anchor=anchor,
+                       zone_priority=zone_priority)
     c = checks.run(Path(pcb))
     return tidy({"board": str(pcb), "instances": done["instances"], "order": done["order"],
                  "check": {k: c[k] for k in ("ok", "drc_errors", "unconnected", "parity")}})

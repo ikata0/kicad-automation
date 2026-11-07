@@ -12,8 +12,8 @@ under the neighbour, courtyards over the cell edge) as long as these do not coll
 - **courtyard** vs courtyard on the same side (overlapping; touching is fine);
 - **keepout** vs what it forbids of the other copy on its layer: tracks, vias, pads,
   and on an outer layer the courtyards of that side (footprints);
-- **pour** vs pour on the same layer with the same priority and different nets: DRC's
-  ``zones_intersect``, since neither knows which to fill.
+- **pour** vs pour on the same layer with the same priority and different nets: which one
+  gets the shared area depends on KiCad's fill order (KiCad 10's DRC reports nothing).
 
 Through-hole pads and vias count on every copper layer they span. Otherwise pours are no
 obstacle: they keep their clearance to other nets when filled. A copy on the bottom side is

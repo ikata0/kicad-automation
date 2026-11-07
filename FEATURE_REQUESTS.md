@@ -84,12 +84,6 @@ schematic next to the board. A lost record forced a full restamp. Request: store
 record in the board (e.g. group or footprint properties), or `kat pcb stamps --rebuild`
 from the board.
 
-### FR-044: Offset zone priorities when stamping
-
-**Open.** Stamped block zones keep their priority, so a board-wide pour on the same layer
-at that priority gives `zones_intersect`, and stamp refuses overlaps of different nets at
-one priority. Request: a stamp option to offset block zone priorities.
-
 ### FR-046: Search a legal spot for loose parts
 
 **Partial.** `Board.place_near` puts a two-pad part next to a pad, stepping sideways until
@@ -519,3 +513,14 @@ The stamp result counts that copper in `harness_copper` (no longer in
 `skipped_environment`), and warns about each port point that no block copper reaches.
 Test: `test_port_points_are_checked_and_stamped` (an edge track port with a harness route
 beyond it; the stub survives at the transformed point).
+
+### FR-044: Offset zone priorities when stamping
+
+`b.stamp(..., zone_priority=N)` / `kat.pcb.stamp(..., zone_priority=N)` /
+`kat pcb stamp --zone-priority N` add N to the copied pours' priorities (not below 0).
+The offset is recorded per instance and used again on a restamp. A stamp warns when one of
+its pours overlaps a board pour (not a stamped instance's) of another net on the same layer
+at the same priority. The stamped-instance check (`cells._clash`) sees the offset
+priorities. KiCad 10.0.6's DRC reported no `zones_intersect` for such overlaps, crossing
+or contained, refilled or not, on a plain two-zone board either: the fill order decides,
+which the warning says. Test: `test_zone_priority_lifts_block_pours_over_a_board_pour`.
