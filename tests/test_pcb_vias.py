@@ -341,3 +341,31 @@ def test_plane_stubs_reuse_a_near_via_and_say_when_no_plane_is_there(tmp_path, c
     assert cli.main(["pcb", "stitch", str(pcb), "GND", "--pitch", "8"]) in (0, 1)
     st = json.loads(capsys.readouterr().out)
     assert st["vias"] == len(st["points"]) > 4 and st["check"]["drc_errors"] == 0, st
+
+
+def test_nets_by_glob_and_class_and_locking_a_chunk(tmp_path, capsys):
+    """FR-050: route's net selection by name, glob and net class (without running the router),
+    and kat pcb lock for an accepted chunk."""
+    from kat import cli
+    from kat.pcb.router import select_nets
+    pcb, b = board(tmp_path)
+    for k, (n1, n2) in enumerate((("/SPI_CLK", "/SPI_MOSI"), ("/AIN", "GND"))):
+        f = b.add_footprint(R0603, f"R{k + 1}", 10 + 5 * k, 10)
+        for num, net in (("1", n1), ("2", n2)):
+            node = f.pad(num).node
+            node.insert(node.index(find(node, "layers")) + 1, [Sym("net"), net])
+    b.netclass("ANALOG", 0.2, 0.2, nets=["/AIN"])
+    b.add_track((10, 10), (10, 15), 0.2, "F.Cu", "/SPI_CLK")
+    b.add_track((15, 10), (15, 15), 0.2, "F.Cu", "GND")
+    b.save()
+    b = Board(pcb)
+    assert select_nets(b, None, None) is None
+    assert select_nets(b, ["/SPI_*"], None) == ["/SPI_CLK", "/SPI_MOSI"]
+    assert select_nets(b, ["GND"], ["ANALOG"]) == ["GND", "/AIN"]
+    with pytest.raises(kat.KatError, match="no net matches"):
+        select_nets(b, ["/I2C_*"], None)
+    with pytest.raises(kat.KatError, match="no net is in class FAST"):
+        select_nets(b, None, ["FAST"])
+    assert cli.main(["pcb", "lock", str(pcb), "--net", "/SPI_CLK"]) == 0
+    assert json.loads(capsys.readouterr().out)["changed"] == 1
+    assert {t["net"]: t["locked"] for t in Board(pcb).tracks()} == {"/SPI_CLK": True, "GND": False}

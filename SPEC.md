@@ -352,6 +352,12 @@ pads); four layers with In1 as GND plane routed completely in about 2 minutes.
 runs Freerouting headless, reads the SES back, adds the new tracks and vias, saves and
 runs `kat pcb check`. No pcbnew involved.
 
+**Routing in chunks.** Freerouting's time grows steeply with nets, layers and pad density
+(the FR-018 benchmark: 287 nets on 4 layers about 1.5 min, 798 nets about 8 min; two more layers
+help more than more passes). On a dense board: constrained nets first (`--net`, globs such as
+`'/SPI_*'`, `--netclass`), then groups by region or connector; `kat pcb check` after each, and
+`kat pcb lock PCB [--net N]` once it is right, so the next run keeps it.
+
 - Every footprint becomes its own DSN image with pins at their board positions and
   padstacks carrying the rotated pad outline on the pad's copper layers; everything is
   placed "front, 0". No rotation or mirroring is left for the router to interpret.
@@ -987,7 +993,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `pcb sync PCB [--sch] [--dry-run] [--force] [--rip-stale]` | parts and nets onto the board (§4.6) |
 | `pcb refill PCB` | fill all pours and save them (after finishing) |
 | `pcb fab PCB` / `pcb ready PCB [--accept KIND=REASON] [--overhang REF]` | fabrication set / release gate (§4.11) |
-| `pcb route PCB [--passes] [--net NAME] [--skip-class NAME] [--no-optimize] [--timeout S] [--router-option KEY=VALUE] [--install]` | Freerouting through kat's DSN/SES, then the board check (§4.10) |
+| `pcb route PCB [--passes] [--net NAME/GLOB] [--netclass NAME] [--skip-class NAME] [--no-optimize] [--timeout S] [--router-option KEY=VALUE] [--install]` / `pcb lock PCB [--net N] [--unlock]` | Freerouting through kat's DSN/SES, then the board check; lock an accepted chunk (§4.10) |
 | `pcb check PCB [--map TABLE] [--out FILE]` / `pcb snapshot PCB` / `pcb view PCB ...` | board DRC + findings, history step with pictures, zoomed view (§4.12) |
 | `pcb stamp PCB BLOCK_PCB INSTANCE... --at X,Y [--step DX,DY] [--rot R] [--anchor origin/top-left] [--no-lock] [--make-room] [--side bottom] [--layer-map auto/roles/MAP] [--allow-asymmetric]` | copy a checked block layout onto instances (`all`), flipped on the bottom side, then the board check (§4.18) |
 | `pcb stamp PCB BLOCK_PCB [INSTANCE...] --at X,Y --preview [...]` | origin, turned bounds and ports of a proposed stamp, board unchanged (§4.18) |

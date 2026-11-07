@@ -107,9 +107,11 @@ def refill(pcb: Path | str) -> dict:
 
 def route(pcb: Path | str, passes: int = 20, nets: list[str] | None = None, timeout: int = 1800,
           out: Path | str | None = None, install: bool = False, skip_classes: list[str] | None = None,
-          optimize: bool = True, options: dict | None = None) -> dict:
+          optimize: bool = True, options: dict | None = None, classes: list[str] | None = None) -> dict:
     """Autoroute with Freerouting (headless) through kat's Specctra DSN/SES; locked copper
-    stays, ``nets`` limits what is routed and ``skip_classes`` leaves net classes out. Ends with
+    stays, ``nets`` (names or globs, ``/SPI_*``) and ``classes`` (net classes) limit what is
+    routed, ``skip_classes`` leaves net classes out. Route in chunks on a dense board:
+    constrained nets first, ``lock`` each accepted chunk and check it. Ends with
     KiCad's DRC (``check``): trust that, not the router's own count. ``timeout`` (s): the router
     stops there and keeps what it has (``timed_out``). ``optimize=False`` skips its optimizer.
     ``options``: other Freerouting settings; ``settings`` reports the ones it refused or kat has not
@@ -119,7 +121,17 @@ def route(pcb: Path | str, passes: int = 20, nets: list[str] | None = None, time
     from . import router as _route
     if install:
         _route.install()
-    return tidy(_route.route(Path(pcb), passes, nets, timeout, out, skip_classes, optimize, options))
+    return tidy(_route.route(Path(pcb), passes, nets, timeout, out, skip_classes, optimize, options, classes))
+
+
+def lock(pcb: Path | str, net: str | None = None, locked: bool = True) -> dict:
+    """Lock (or with ``locked=False`` unlock) the board's tracks and vias, all or one net's
+    (``Board.lock``), and save: locked copper stays when the router runs again, so an accepted
+    chunk of routing is kept. Returns the count."""
+    report.touch(pcb)
+    with edit(pcb) as b:
+        res = b.lock(net, locked)
+    return tidy({"board": str(pcb), **res})
 
 
 def stamp(pcb: Path | str, block_pcb: Path | str, instances: str | list[str],

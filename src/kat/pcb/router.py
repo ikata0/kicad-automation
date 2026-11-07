@@ -123,6 +123,32 @@ def read_log(log: str) -> dict:
                        re.findall(r"Failed to apply CLI router setting: router\.([^:]+): (.*)", log)]}
 
 
+def select_nets(b: Board, nets: list[str] | None, classes: list[str] | None) -> list[str] | None:
+    """The nets named by ``nets`` (names or globs such as ``/SPI_*``) and by net ``classes``,
+    together; None when neither is given (all nets). KatError for a glob or class that
+    matches nothing."""
+    import fnmatch
+    if not nets and not classes:
+        return None
+    every = specctra._net_names(b)
+    chosen: list[str] = []
+    for n in nets or []:
+        if any(c in n for c in "*?["):
+            hit = sorted(fnmatch.filter(every, n))
+            if not hit:
+                raise env.KatError(f"no net matches {n!r}")
+            chosen += hit
+        else:
+            chosen.append(n)
+    if classes:
+        of = {n: b.net_rules(n)["netclass"] for n in every}
+        unknown = sorted(set(classes) - set(of.values()))
+        if unknown:
+            raise env.KatError(f"no net is in class {', '.join(unknown)}: {', '.join(sorted(set(of.values())))}")
+        chosen += sorted(n for n in every if of[n] in classes)
+    return list(dict.fromkeys(chosen))
+
+
 def _nets_without(b: Board, nets: list[str] | None, classes: list[str]) -> tuple[list[str], dict[str, list[str]]]:
     """``nets`` (default all) without those in net classes ``classes``, and what was left out."""
     every = specctra._net_names(b)
@@ -136,10 +162,11 @@ def _nets_without(b: Board, nets: list[str] | None, classes: list[str]) -> tuple
 
 def route(pcb: Path | str, passes: int = 20, nets: list[str] | None = None, timeout: int = 1800,
           out: Path | str | None = None, skip_classes: list[str] | None = None, optimize: bool = True,
-          options: dict | None = None) -> dict:
+          options: dict | None = None, classes: list[str] | None = None) -> dict:
     """Autoroute the board: DSN -> Freerouting -> SES -> new tracks and vias -> save ->
-    KiCad DRC. Locked copper is kept as it is; ``nets`` restricts routing to those nets, and
-    ``skip_classes`` leaves out net classes, whose pads stay obstacles. On a library block's board
+    KiCad DRC. Locked copper is kept as it is; ``nets`` (names or globs) and ``classes`` (net
+    classes) restrict routing to those nets, and ``skip_classes`` leaves out net classes, whose
+    pads stay obstacles. On a library block's board
     the harness parts are obstacles only (not routed to). ``timeout`` (s) is the router's own limit:
     it stops there and what it has is kept, with ``timed_out`` in the result. ``optimize=False`` skips
     its optimizer stage. Necks are off unless ``options`` has {"automatic_neckdown": True}.
@@ -159,6 +186,7 @@ def route(pcb: Path | str, passes: int = 20, nets: list[str] | None = None, time
     work = Path(out) if out else pcb.parent / "history" / f"{stamp}_route"
     work.mkdir(parents=True, exist_ok=True)
     b = Board(pcb)
+    nets = select_nets(b, nets, classes)
     skipped = {}
     if skip_classes:
         nets, skipped = _nets_without(b, nets, list(skip_classes))

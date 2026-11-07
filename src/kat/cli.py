@@ -175,7 +175,10 @@ def cmd_pcb(a):
             raise env.KatError(f"--router-option {bad[0]!r}: give KEY=VALUE")
         return kat.pcb.route(a.pcb, a.passes, a.net or None, a.timeout, install=a.install, skip_classes=a.skip_class,
                              optimize=not a.no_optimize,
-                             options=dict(x.split("=", 1) for x in a.router_option or []) or None)
+                             options=dict(x.split("=", 1) for x in a.router_option or []) or None,
+                             classes=a.netclass or None)
+    if a.pcb_cmd == "lock":
+        return kat.pcb.lock(a.pcb, a.net, not a.unlock)
     if a.pcb_cmd == "stamp":
         names = "all" if a.instance == ["all"] else a.instance
         if a.preview:
@@ -990,12 +993,20 @@ def build_parser() -> argparse.ArgumentParser:
                                     "imports the new tracks and vias, saves and runs the board check.\n"
                                     "Locked copper stays as it is (lock the structure first). DSN, SES and\n"
                                     "log go to history/<stamp>_route/. Judge the result by check.unconnected\n"
-                                    "and check.islands, not by router.unrouted.\n"
+                                    "and check.islands, not by router.unrouted (the router's \"all routed\" is no\n"
+                                    "verdict).\n"
+                                    "Time grows steeply with nets, layers and pad density (a 4-layer SOIC-16 grid:\n"
+                                    "287 nets ~1.5 min, 510 nets ~3-4 min, 798 nets ~8 min; 2 more layers help\n"
+                                    "more than more passes). On a dense board route in chunks: constrained nets\n"
+                                    "first (--net, globs, --netclass), then groups by region or connector; after\n"
+                                    "each, kat pcb check and kat pcb lock, so the next run keeps it. --timeout\n"
+                                    "keeps a partial result; unrouted per pass shows a stall.\n"
                                     "Freerouting (Java 25+, GPL-3) is downloaded once by --install into kat's\n"
                                     "cache; KAT_FREEROUTING=/path/to.jar uses another copy.")
     s5.add_argument("pcb", metavar="PCB", nargs="?")
     s5.add_argument("--passes", type=int, default=20, help="router passes (default 20)")
-    s5.add_argument("--net", action="append", metavar="NAME", help="route only this net (repeatable)")
+    s5.add_argument("--net", action="append", metavar="NAME", help="route only this net, or a glob such as '/SPI_*' (repeatable)")
+    s5.add_argument("--netclass", action="append", metavar="NAME", help="route only this net class's nets (repeatable)")
     s5.add_argument("--skip-class", action="append", metavar="NAME",
                     help="leave this net class out; its pads stay obstacles (repeatable)")
     s5.add_argument("--no-optimize", action="store_true", help="skip the router's optimizer stage")
@@ -1005,6 +1016,12 @@ def build_parser() -> argparse.ArgumentParser:
     s5.add_argument("--timeout", type=int, default=1800,
                     help="seconds (default 1800): the router stops there and what it has is kept (timed_out)")
     s5.add_argument("--install", action="store_true", help="download Freerouting first if missing")
+    s34 = psp.add_parser("lock", formatter_class=_Fmt, help="lock tracks and vias (all, or one net's)",
+                         description="Locked copper stays when the router runs again: lock each accepted chunk\n"
+                                     "of routing, then route the next.")
+    s34.add_argument("pcb", metavar="PCB")
+    s34.add_argument("--net", help="only this net")
+    s34.add_argument("--unlock", action="store_true", help="unlock instead")
     s6 = psp.add_parser("fab", formatter_class=_Fmt, help="fabrication files",
                         description="fab/<name>-<rev>/: gerbers/ (copper, paste, silk, mask, outline, drill\n"
                                     "files and drill map) and a zip of them, assembly/ (position file, BOM\n"

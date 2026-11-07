@@ -212,6 +212,14 @@ with kat.pcb.edit(PCB) as b:
 - Pins that may be swapped, as on a connector: `kat pcb escape PCB pins.json` chooses the assignment
   and tracks together, without vias on one layer. Give its `assignment` to `kat back-annotate`, then run
   it again with `--apply`.
+- Routing time grows steeply with nets, layers and pad density. On the benchmark (a 4-layer
+  SOIC-16 grid, Freerouting 2.5.0) 287 nets took about 1.5 min, 510 about 3-4 min and 798
+  about 8 min; two more layers help more than more passes, and a 2-layer board can stall.
+  On a dense board route in chunks: the constrained nets first (`--net NAME`, `--net '/SPI_*'`,
+  `--netclass NAME`), then groups by region or connector. After each chunk run `kat pcb check`,
+  and if it is right, `kat pcb lock PCB` (or `--net`): locked copper stays when the router runs
+  again. `--timeout` keeps a partial result, `--passes` bounds the passes, and the router's
+  "all routed" is no verdict: `check.unconnected` and `check.islands` are.
 - A route that stopped converging shows in `unrouted` per pass, a slow stage in `stages`.
   `--skip-class NAME` leaves a class out; `--no-optimize` skips the optimizer. Look at `settings`
   after `--router-option`: Freerouting exits 0 even on settings it ignores.

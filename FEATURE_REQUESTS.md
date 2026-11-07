@@ -53,15 +53,6 @@ and journalled. Report (also `--dry-run`) per layer: corner-angle histogram, sho
 segments, reversals, length change per net, gap histogram before and after. The same
 metrics as `kat pcb check` warnings would let a review find untidy routing without images.
 
-### FR-050: Guide routing in chunks
-
-**Partial.** `kat pcb route --net NAME` (repeatable), `--skip-class` and
-`route(pcb, nets=[...])` exist. Remaining, in the kicad-layout skill and the `route`
-help: Freerouting time grows steeply with nets, layers and pad density (give a rule of
-thumb); route constrained nets first, then groups by region or connector, `lock` each
-accepted chunk and run `kat pcb check` after it; the timeout and pass knobs; the
-router's "all routed" is not the verdict. Optionally `--nets GLOB` / `--netclass NAME`.
-
 ### FR-051: Grid-router capabilities
 
 **Open, waiting** (decided 2026-11-06: like FR-006, until a benchmark board fails with
@@ -557,3 +548,15 @@ was already there, within 3 mm and reachable by a clear stub (`reused`), before 
 new one. A pad whose net has no pour on another copper layer is named in `warnings`. Both
 commands save and report the board check. Test:
 `test_plane_stubs_reuse_a_near_via_and_say_when_no_plane_is_there`.
+
+### FR-050: Guide routing in chunks
+
+The kicad-layout skill, SPEC §4.10 and `kat pcb route --help` now give a rule of thumb from
+the FR-018 benchmark (4-layer SOIC-16 grid on Freerouting 2.5.0: 287 nets about 1.5 min,
+510 about 3-4 min, 798 about 8 min; two more layers help more than more passes). They also
+give the chunking order (constrained nets first, then groups by region or connector),
+`kat pcb check` and then `kat pcb lock` after each chunk, the timeout and pass knobs, and
+that the router's "all routed" is no verdict. New: `--net` takes globs (`'/SPI_*'`),
+`--netclass NAME` (`kat.pcb.route(classes=[...])`, `router.select_nets`), and
+`kat pcb lock PCB [--net N] [--unlock]` (`kat.pcb.lock`). Test:
+`test_nets_by_glob_and_class_and_locking_a_chunk`.
