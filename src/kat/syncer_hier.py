@@ -509,8 +509,71 @@ def run(root: Path, design_path: Path, sheets: list[str] | None = None, dry_run:
     remember(root, sheets=sorted(sheets))
     refs = _design_refs(root, design)
     hierarchy.annotate(root, refs=refs)
+    flags, unresolved = _root_flags(root, design)
+    if flags:
+        hierarchy.annotate(root, refs=refs)         # the new power symbols and flags too
+    report["flags"] += [f"{root.name}: {n}" for n in flags]
+    report["unresolved"] += unresolved
     report["check"] = verify(root, design)
     return dict(report, dry_run=False)
+
+
+def _root_flags(root: Path, design: Design) -> tuple[list[str], list[dict]]:
+    """One PWR_FLAG per power net that the whole hierarchy's ERC finds undriven, on the root
+    sheet, never in a block sheet (a block used many times would drive the net many times).
+    The root's own sync only sees its own parts, so a supply that reaches blocks only
+    through their ports needs this. Returns the nets flagged and those without room."""
+    import re
+    from .checks import erc
+    from .syncer import Syncer
+    undriven: list[str] = []
+    values: dict[str, str] = {}
+    def refs(node):                     # the symbol's own reference and one per sheet instance
+        for c in node[1:] if isinstance(node, list) else ():
+            if isinstance(c, list):
+                if head(c) == "reference" and len(c) > 1:
+                    yield str(c[1])
+                yield from refs(c)
+    files, todo = [], [Path(root).resolve()]
+    while todo:                         # every sheet file below the root, library blocks too
+        f = todo.pop()
+        if f in files or not f.exists():
+            continue
+        files.append(f)
+        todo += [Path(sh["path"]).resolve() for sh in hierarchy.sheets(Schematic(f))]
+    for f in files:
+        for sym in Schematic(f).symbols():
+            if sym.ref.startswith("#"):
+                for r in {sym.ref, *refs(find(sym.node, "instances") or [])}:
+                    values.setdefault(r, sym.field("Value") or "")
+    for v in erc(root)["violations"]:
+        m = re.match(r"Symbol (\S+) Pin (\S+)", v["items"][0]["description"]) if v["items"] else None
+        if v["type"] != "power_pin_not_driven" or not m:
+            continue
+        ref, pin = m.groups()
+        net = values.get(ref) if ref.startswith("#") else design.net_of.get((ref, pin))
+        if net and net not in undriven:
+            undriven.append(net)
+    if not undriven:
+        return [], []
+    s = Schematic(root)
+    flagged, unresolved = [], []
+    back = _without_sheets(s)
+    try:
+        with tempfile.TemporaryDirectory() as d:
+            sync = Syncer(s, design.reduced(design.scope(""), {}, Path(d) / "scope.net"), design.no_connect)
+            sync.obstacles = []
+            for net in undriven:
+                if sync._flag_apart(net, label=True):
+                    flagged.append(net)
+                else:
+                    unresolved.append({"net": net, "reason": "no room for a PWR_FLAG on the root sheet "
+                                       "(ERC power_pin_not_driven): add one by hand"})
+    finally:
+        back()
+    if flagged:
+        s.save()
+    return flagged, unresolved
 
 
 def _clean_name(n: str) -> str:

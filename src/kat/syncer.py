@@ -546,13 +546,15 @@ class Syncer:
                 self.report["unresolved"].append({"net": net, "reason": "no room for a PWR_FLAG "
                                                   "(ERC power_pin_not_driven): add one by hand"})
 
-    def _flag_apart(self, net: str) -> bool:
-        """A PWR_FLAG on a power symbol of its own in a free spot near the net's symbols
-        (power symbols of one name are one net), for a symbol in a dense pin row where
-        no stub fits."""
+    def _flag_apart(self, net: str, label: bool = False) -> bool:
+        """A PWR_FLAG in a free spot near the net's symbols, for a symbol in a dense pin row
+        where no stub fits: on a global label of the net's name, which joins its power
+        symbols (a power symbol wired only to the flag is "not connected" to KiCad's ERC,
+        which does not count power-symbol pins). ``label``: a net without a power symbol
+        gets a local label instead (it joins the sheet's labels of that name)."""
         from .sch_room import free_spot
         s = self.s
-        if net not in self.power:
+        if net not in self.power and not label:
             return False
         near = [s.pins(o)[0] for o in s.symbols() if o.ref.startswith("#PWR") and o.field("Value") == net]
         try:
@@ -562,7 +564,7 @@ class Syncer:
         d = (0, 1) if net.upper().startswith(("GND", "-", "0")) else (0, -1)
         a, b = (x + 2.54, y + 5.08), (x + 10.16, y + 5.08)
         s.add_wire([a, b], junctions=False)
-        self._power_symbol(net, a, d)
+        s.add_label(net, a[0], a[1], 180, kind="global_label" if net in self.power else "label")
         flag = self._power_symbol("PWR_FLAG", b, d, "power:PWR_FLAG")
         s.set_field(flag.ref, "Value", hide=True)
         return True

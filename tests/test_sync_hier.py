@@ -317,6 +317,83 @@ def test_many_boxes_grow_the_paper(lib, tmp_path):
     assert not changed, changed
 
 
+TM_PY = '''"""Block TM: an op-amp follower on a divider, with its supply (power input pins:
+ERC wants them driven)."""
+import sys
+from skidl import KICAD10, Net, Part, generate_netlist, set_default_tool, subcircuit
+
+
+@subcircuit
+def tm(out, vs, gnd):
+    u = Part("Amplifier_Operational", "MCP6001-OT", footprint="Package_TO_SOT_SMD:SOT-23-5", tag="u")
+    r1, r2 = (Part("Device", "R", value="10k", footprint="Resistor_SMD:R_0603_1608Metric", tag=t)
+              for t in ("r1", "r2"))
+    u[5] += vs
+    u[2] += gnd
+    vs += r1[1]
+    r1[2] += u[3]
+    u[3] += r2[1]
+    r2[2] += gnd
+    u[1] += out
+    u[4] += out
+
+
+if __name__ == "__main__":
+    import kat
+    set_default_tool(KICAD10)
+    out, vs, gnd = Net("OUT"), Net("VSUP"), Net("GND")      # not a power symbol: vs is a port
+    j = Part("Connector_Generic", "Conn_01x03", tag="j",
+             footprint="Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical")
+    j[1] += vs
+    j[2] += out
+    j[3] += gnd
+    tm(out=out, vs=vs, gnd=gnd, tag="DUT")
+    net = sys.argv[1] if len(sys.argv) > 1 else "TM.net"
+    generate_netlist(file_=net)
+    kat.skidl_blocks.write(net)
+'''
+
+SUPPLIES_PY = '''from skidl import KICAD10, Net, Part, generate_netlist, set_default_tool
+import kat
+set_default_tool(KICAD10)
+tm = kat.blocks.use("TM")
+gnd = Net("GND")
+j = Part("Connector_Generic", "Conn_01x03", tag="j",
+         footprint="Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical")
+j[3] += gnd
+for i, supply in enumerate(("+5V", "VBAT_SW")):     # a power-library name and another one
+    o = Net(f"OUT_{i}")
+    j[1 + i] += o
+    tm(out=o, vs=Net(supply), gnd=gnd, tag=f"T{i}")
+generate_netlist(file_="design.net")
+kat.skidl_blocks.write("design.net")
+'''
+
+
+def test_supplies_reaching_only_blocks_get_one_flag_at_the_top(lib, tmp_path):
+    """FR-031: a supply that reaches the blocks only through their ports has no part on the
+    root sheet, so the root's own ERC never sees it undriven: the whole hierarchy's ERC
+    does, and the flag goes on the root sheet, once, never into the block's sheet."""
+    blocks.new("TM")
+    (lib / "TM" / "TM.py").write_text(TM_PY)
+    blocks.build("TM", force=True)
+    d = tmp_path / "design"
+    d.mkdir()
+    (d / "design.py").write_text(SUPPLIES_PY)
+    subprocess.run([sys.executable, "design.py"], cwd=d, check=True, capture_output=True)
+    sch = d / "top" / "top.kicad_sch"
+    assert cli.main(["new", str(sch)]) == 0
+    rep = kat.sync(sch, d / "design.net", sheets=["tm"])
+    assert sorted(rep["flags"]) == ["top.kicad_sch: +5V", "top.kicad_sch: GND", "top.kicad_sch: VBAT_SW"], rep
+    c = kat.check(sch, d / "design.net")
+    assert c["erc"]["errors"] == 0, [v for v in c["erc"]["violations"] if v["severity"] == "error"]
+    assert c["netlist_vs_expected"]["match"]
+    flags = lambda f: sum(x.field("Value") == "PWR_FLAG" for x in Schematic(f).symbols())
+    assert flags(sch) == 3 and flags(lib / "TM" / "TM_block.kicad_sch") == 0
+    again = kat.sync(sch, d / "design.net")
+    assert not again["flags"] and flags(sch) == 3, again
+
+
 def test_boxes_are_arranged_and_keep_hand_changes(lib, tmp_path):
     blocks.build("RC", force=True)
     d = tmp_path / "design"

@@ -25,14 +25,6 @@ by the collision checks of `move` and `stamp`.
 
 ## Schematic sync and blocks
 
-### FR-031: Add one PWR_FLAG per label-driven power net at the top level
-
-**Needs reproduction.** Reported: nets driven only through labels into blocks needed
-manually placed flags, and flags inside a block conflict when the block is used many
-times. The flat sync places a `PWR_FLAG` where ERC reports an undriven power net
-(`src\kat\syncer.py`); check whether hierarchical designs get one flag per net at the
-top level, and none from the block sheets.
-
 ### FR-033: Per-project reference prefixes
 
 **Open.** Generic connectors get `J`; some projects use another prefix (e.g. `CON`).
@@ -499,3 +491,16 @@ repeated power symbol could have gone unnoticed. They are now reported, and
 `test_many_boxes_grow_the_paper` requires a repeated sync to report nothing at all. Reopen
 with the design if it recurs: the likeliest remaining path is a lone power pin whose drawn
 net KiCad names differently from the design net (`Syncer.reconcile`).
+
+### FR-031: Add one PWR_FLAG per label-driven power net at the top level
+
+Reproduced: a supply that reached the blocks only through their ports (no root part on it)
+stayed undriven, because the root's own ERC runs without the sheets. After a hierarchical
+sync, kat now runs ERC on the whole hierarchy and puts one PWR_FLAG per undriven power net on
+the root sheet, never in a block sheet (`syncer_hier._root_flags`, reported in `flags`).
+A power-library name gets a global label with the flag; another name gets a local label,
+joining the labels at the sheet pins. Checking this found that a flag placed apart on a power
+symbol of its own was "pin not connected" to ERC (it does not count power-symbol pins), so
+the flat sync's `_flag_apart` uses the global label as well. Test:
+`test_supplies_reaching_only_blocks_get_one_flag_at_the_top` (one block twice, on `+5V` and
+`VBAT_SW`; ERC clean, three flags at the top, none in the block, none added again).
