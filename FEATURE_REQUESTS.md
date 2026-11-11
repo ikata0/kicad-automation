@@ -18,6 +18,19 @@ file or its eventual tests.
 
 ## Schematic sync and blocks
 
+### FR-059: Carry assembly exclusions through schematic and board sync
+
+**Partial.** Carry netlist `exclude_from_bom` into the schematic symbol's
+`in_bom`, and keep BOM, position-file and DNP attributes consistent through
+schematic sync, board sync and `add_board_part`. Mechanical or otherwise
+non-fitted items need explicit BOM and position-file exclusions.
+`src\kat\pcb\syncer.py` already copies netlist DNP and BOM exclusion flags to
+footprints, and schematic sync already handles DNP; preserve that behaviour.
+The remaining gaps include schematic BOM exclusion and footprint
+`exclude_from_pos_files`. See `src\kat\syncer.py`, `src\kat\schematic.py` and
+`src\kat\pcb\setup.py`; acceptance should inspect KiCad's BOM and position exports,
+not only kat's model.
+
 ## Electrical checks
 
 ### FR-006: Estimate coupling across repeated blocks in 3D
@@ -27,6 +40,16 @@ specified pitch, including vias and copper extending beyond its outline. Report
 mutual capacitance per net pair. The existing parallel-plate and 2D cross-section
 estimates in `src\kat\pcb\coupling.py` and `src\kat\pcb\field2d.py` do not provide
 a tiled 3D field solution.
+
+### FR-055: Investigate reported same-net via/zone errors
+
+**Needs reproduction.** Downstream reports `kat pcb check` errors for vias
+inside their own net's pours despite a clean standalone KiCad DRC. Obtain a
+generic reproducer and identify the finding's source before changing filters:
+`src\kat\pcb\checks.py` forwards KiCad DRC findings and separately adds net-rule
+findings. Same-net copper inside a pour is not by itself an error; genuine
+foreign-net clearance violations and applicable keep-out violations must remain.
+This is distinct from FR-039's reported foreign-copper fill problem.
 
 ## Routing and board-editing APIs
 
@@ -44,6 +67,88 @@ Downstream grid routers since needed, on dense multi-layer boards:
 - failed nets retried with a permuted order automatically.
 
 Single tracks and vias can already be removed with `kat pcb remove --uuid / --at`.
+
+### FR-053: Preserve stamp records across KiCad refill saves
+
+**Partial; reported data loss needs reproduction.** Downstream reports that
+`kicad-cli pcb drc --refill-zones --save-board` drops `kat.stamp.*` board
+properties, leaving `ports()` empty on an already routed board. Preserve or
+restore records across kat-managed refill saves, including the retry path, and
+provide a durable recovery path for external KiCad saves. A missing record on a
+stamped board must produce an actionable warning rather than silently returning
+no ports; recovery must not require restamping routed copper.
+
+FR-043 already provides explicit `stamps --rebuild` recovery and reads legacy
+sidecars, but saves migrate and remove those sidecars. Reuse that recovery where
+possible rather than introducing a second stamp format. `kat pcb refill`
+already saves; the gap is preservation, not a missing `--save` flag. See
+`src\kat\pcb\stamping.py` and `src\kat\pcb\checks.py`. Recheck FR-043's normal-save
+claim specifically against KiCad's DRC save path.
+
+### FR-054: Choose the board-view output filename
+
+**Partial.** Add an explicit output filename to `kat pcb view` (requested
+`-o FILE`, with `--out` consistent with other commands), so scripts need not
+search timestamped view files. `src\kat\pcb\views.py` already accepts `out`;
+the CLI in `src\kat\cli.py` does not expose it. Keep the current timestamped
+default, JSON result and image journaling.
+
+### FR-056: List and link disconnected copper clusters
+
+**Partial.** Proposed `kat pcb clusters NET` should list every electrically
+connected cluster with pads, layers, bounds and main/non-main identification,
+using KiCad connectivity after zone refill. Proposed `kat pcb link NET` should
+join non-main clusters to main copper or a plane via. An explicit opt-in may
+cross unlocked tracks of selected nets, reporting the affected copper for
+rerouting; locked tracks must remain protected.
+
+FR-038's `isolated_pads` identifies pads on some isolated pour fragments, and
+FR-048 provides stitching and plane stubs, but none is a complete connectivity
+cluster inventory or linker. Zone-origin DRC coordinates alone are insufficient
+to locate a fragment. See `src\kat\pcb\checks.py` and
+`src\kat\pcb\placement.py`; judge any applied links by KiCad's DRC and connectivity.
+
+### FR-057: Guard every board-saving path against KiCad locks
+
+**Open.** Refuse `kat pcb refill` while the board is open in KiCad, before
+the first write, and audit other commands that save through external tools.
+`Board.save` in `src\kat\pcb\board.py` already calls `gui.guard`, but
+`checks.refill` in `src\kat\pcb\checks.py` invokes DRC with `--save-board`
+before reaching any guarded save. Apply the same protection to the initial fill
+and retry paths; a refusal must leave the board and project files unchanged.
+
+## Fabrication and assembly
+
+### FR-058: Versioned supplier rule profiles and fabrication checks
+
+**Partial.** Extend FR-037's via-type/minimum-clearance profile with versioned
+supplier/process profiles and a proposed `kat pcb fab-check --profile NAME`.
+Profiles should apply KiCad constraints and custom DRC rules for hole-to-copper,
+copper-to-edge, drill spacing and annular rings, plus checks outside KiCad's
+custom-rule coverage such as silkscreen line width and coverage. Record the
+profile version and rule source. Routers and zone helpers must use the board's
+effective edge clearance instead of independent constants.
+
+`src\kat\pcb\fabprofile.py` currently covers via types and minimum copper
+clearance only. Extend the existing profile mechanism rather than treating it
+as absent; keep assembly-data validation (FR-060) separately identifiable.
+
+### FR-060: Check assembly exports before release
+
+**Open.** Validate KiCad's exported BOM and position data, not just DRC and
+schematic/board parity. Require a real MPN (not blank or a placeholder such as
+`-`) and any profile-required fields for fitted BOM items. Flag non-fitted
+mechanical items missing BOM or position exclusions; use explicit metadata
+where needed rather than treating every missing MPN as proof an item is mechanical.
+Check BOM/position reference consistency with declared exclusions and DNP
+policy accounted for, and agreement between symbol `in_bom`/`dnp` and footprint
+attributes. A value containing "DNP" alone is not a DNP flag.
+
+`src\kat\pcb\fabrication.py` exports these files and checks release-set
+completeness, but does not validate their assembly semantics. A proposed
+`kat fab-check`, or assembly section of FR-058's fabrication check, should name
+the offending references and fields. FR-059 covers propagating the attributes;
+this request is the independent release check that catches incorrect inputs too.
 
 
 ## Resolved
