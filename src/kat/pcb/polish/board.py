@@ -102,7 +102,7 @@ def extract(pcb: Path | str, nets: list[str], out: Path | str, layer: str | None
         raise KatError(f"no copper layer {layer!r} (have {', '.join(b.copper_layers())})")
     chains = [c for c in tc.chains(b, nets, [layer] if layer else None, region, include_locked=True)]
     if not chains:
-        raise KatError(f"no straight track runs of {', '.join(nets)}" + (f" on {layer}" if layer else ""))
+        raise KatError(_why_none(b, nets, layer, region))
     layers = sorted({c.layer for c in chains})
     if len(layers) > 1:
         raise KatError(f"tracks on {', '.join(layers)}: choose one with --layer")
@@ -309,6 +309,30 @@ def extract(pcb: Path | str, nets: list[str], out: Path | str, layer: str | None
             "context": {"fixed_copper": len(copper), "holes": len(holes), "keepouts": len(keepouts)},
             "rules": {"copper": base, "edge": edge, "hole": hole_cl, "pairs": len(pairs)},
             "unmodelled": unmodelled}
+
+
+def _why_none(b: Board, nets: list[str], layer: str | None, region) -> str:
+    """Why ``nets`` gave no track runs: no such net, no tracks, or none on the layer / in the
+    region."""
+    import difflib
+    import fnmatch
+    tracks = b.tracks()
+    known = sorted({p.net for p in b.pads()} | {t["net"] for t in tracks} | {v["net"] for v in b.vias()} - {""})
+    missing = [g for g in nets if not any(fnmatch.fnmatch(n, g) for n in known)]
+    if missing:
+        hints = sorted({h for g in missing for h in difflib.get_close_matches(g, known, n=3, cutoff=0.5)})
+        return (f"no net on the board matches {', '.join(missing)}"
+                + (f" (similar: {', '.join(hints)})" if hints else ""))
+    mine = [t for t in tracks if any(fnmatch.fnmatch(t["net"], g) for g in nets)]
+    if not mine:
+        return f"{', '.join(nets)}: the nets exist but have no tracks (route them first)"
+    layers = sorted({t["layer"] for t in mine})
+    if layer and layer not in layers:
+        return f"{', '.join(nets)}: no tracks on {layer} (they run on {', '.join(layers)})"
+    if region:
+        x0, y0, x1, y1 = region
+        return f"{', '.join(nets)}: no track lies wholly inside the region {x0:g},{y0:g},{x1 - x0:g},{y1 - y0:g} (X,Y,W,H)"
+    return f"{', '.join(nets)}: only arcs, no straight track runs"
 
 
 def _nm(x: float) -> Sym:
