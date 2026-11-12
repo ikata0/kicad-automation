@@ -22,7 +22,7 @@ field = ["numpy>=1.24", "scipy>=1.10"]
 # `kat pcb polish`: route polishing (numpy constraints, PyTorch merit gradients). BSD.
 polish = ["numpy>=1.24", "torch>=2.9"]
 # `kat pcb polish run --gui`: the inspection window. LGPL-3.0.
-polish-gui = ["PySide6>=6.8"]
+polish-gui = ["PySide6-Essentials>=6.8"]
 
 [project.scripts]
 kat = "kat.cli:main"

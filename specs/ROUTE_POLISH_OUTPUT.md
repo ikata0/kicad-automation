@@ -40,7 +40,8 @@ itself private. This covers its history, screenshots and logs (input §3).
 - `merit` is the version of the merit definition. Scores are only comparable
   between runs that share the same `solver.name`, `version` and `merit`.
 - `termination` is one of `all-snapped`, `stagnated`, `max-iterations`,
-  `user-stop`.
+  `user-stop`, or `paused` for an export from the inspection window before the
+  run ended.
 
 ## 2 `history.jsonl`
 

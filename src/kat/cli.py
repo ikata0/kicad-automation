@@ -170,7 +170,7 @@ def _cmd_polish(a):
         return kat.pcb.polish_run(a.case, a.out, a.group, weights or None, options or None, limits or None,
                                   a.force, a.gui)
     if a.polish_cmd == "replay":
-        return kat.pcb.polish_replay(a.run, a.gui)
+        return kat.pcb.polish_replay(a.run, a.case, a.gui)
     raise env.KatError(f"polish {a.polish_cmd}: not implemented")
 
 
@@ -1105,6 +1105,7 @@ def build_parser() -> argparse.ArgumentParser:
                           description="Counts per event type, rejection reasons, initial and result score.\n"
                                       "--gui browses the recorded history; nothing is written.")
     pl3.add_argument("run", metavar="RUN_DIR")
+    pl3.add_argument("--case", metavar="CASE.json", help="the run's input (needed with --gui)")
     pl3.add_argument("--gui", action="store_true")
     s34 = psp.add_parser("lock", formatter_class=_Fmt, help="lock tracks and vias (all, or one net's)",
                          description="Locked copper stays when the router runs again: lock each accepted chunk\n"

@@ -1,0 +1,496 @@
+"""The polisher's inspection window (``kat pcb polish run --gui`` / ``replay --gui``), Qt
+(PySide6, extra ``kat[polish-gui]``).
+
+The solver runs in a worker thread and only ever moves on when the window lets it (Step
+releases one event, Run releases all, Pause none), so the window never freezes and a pause
+keeps the last accepted state. The window only *browses* the recorded history: Back and
+Forward move a cursor through it, Reset shows the original geometry; none of them creates a
+new solver branch. Nothing is written except on Export (the best feasible state, or the
+state shown), into a directory chosen then.
+
+``Controller`` holds the history, the cursor and the export logic without Qt, for tests.
+"""
+
+from __future__ import annotations
+
+import json
+import threading
+from pathlib import Path
+
+from ...env import KatError
+from . import history as _hist, require
+from .case import Case
+from .constraints import Model
+from .solver import Solver, result_doc
+
+
+class Controller:
+    """History and cursor of an inspection: ``events`` are event JSON objects (as in
+    ``history.jsonl``); ``follow`` keeps the cursor on the newest event."""
+
+    def __init__(self, case: Case, group: str | None, events: list[dict] | None = None, solver: Solver | None = None,
+                 result: dict | None = None):
+        self.case, self.solver = case, solver
+        self.model = solver.model if solver else Model(case, group)
+        self.group = self.model.group
+        self.events: list[dict] = list(events or [])
+        self.result = result
+        self.cursor = len(self.events) - 1 if self.events else -1
+        self.follow = True
+        self.finished = solver is None
+
+    def add(self, ev: dict) -> None:
+        """A new event from the solver."""
+        self.events.append(ev)
+        if self.follow:
+            self.cursor = len(self.events) - 1
+        if ev["type"] == "stop":
+            self.finished = True
+
+    def current(self) -> dict | None:
+        """The event under the cursor."""
+        return self.events[self.cursor] if 0 <= self.cursor < len(self.events) else None
+
+    def back(self) -> None:
+        """One event back (stops following the solver)."""
+        self.follow = False
+        self.cursor = max(0, self.cursor - 1)
+
+    def forward(self) -> bool:
+        """One event forward in the recorded history; False at its end."""
+        if self.cursor < len(self.events) - 1:
+            self.cursor += 1
+            self.follow = self.cursor == len(self.events) - 1
+            return True
+        self.follow = True
+        return False
+
+    def reset(self) -> None:
+        """Show the original geometry (the start event); the history stays."""
+        self.follow = False
+        self.cursor = 0
+
+    def select(self, i: int) -> None:
+        """Show event ``i``."""
+        self.cursor = max(0, min(i, len(self.events) - 1))
+        self.follow = self.cursor == len(self.events) - 1
+
+    def best_seq(self) -> int:
+        """The event holding the best feasible state."""
+        if self.solver is not None:
+            return self.solver.best[2]
+        if self.result is not None:
+            return self.result["seq"]
+        return min((e for e in self.events if e["accepted"]), key=lambda e: e["total"])["seq"]
+
+    def export(self, out: Path | str, which: str = "best", force: bool = False) -> dict:
+        """Write run.json, history.jsonl (the events so far) and result.json (``which``:
+        "best" feasible state or the "current" one) into ``out``; refused over an existing
+        run unless ``force``. Returns the run record."""
+        if not self.events:
+            raise KatError("nothing to export yet")
+        d = _hist.prepare(out, force)
+        ev = self.events[self.best_seq() if which == "best" else self.cursor]
+        first = self.events[0]
+        solver_id = (self.solver.info()["solver"] if self.solver else {"name": "kat-polish", "version": "?", "merit": "?"})
+        termination = (self.solver.termination if self.solver else None) or ("paused" if not self.finished else
+                                                                              self.events[-1]["reason"])
+        res = result_doc(self.case, self.group, ev["seq"], {k: v for k, v in ev["traces"].items()}, ev["snapped"],
+                         ev["total"], ev["terms"], (first["total"], first["terms"]),
+                         self.model.min_slack({k: _np().asarray(v, float) for k, v in ev["traces"].items()}),
+                         termination, solver_id)
+        with open(d / "history.jsonl", "w", encoding="utf-8") as f:
+            for e in self.events:
+                f.write(json.dumps(e) + "\n")
+        rec = {"format": "route-polish-run", "version": 1,
+               "input": {"sha256": self.case.sha256, "format_version": self.case.version}, "group": self.group,
+               **(self.solver.info() if self.solver else {"solver": solver_id, "options": None}),
+               "termination": termination, "events": len(self.events), "best_seq": ev["seq"]}
+        (d / "result.json").write_text(json.dumps(res, indent=1) + "\n", encoding="utf-8")
+        (d / "run.json").write_text(json.dumps(rec, indent=1) + "\n", encoding="utf-8")
+        return rec
+
+
+def _np():
+    return require("numpy")
+
+
+# --- Qt ------------------------------------------------------------------------------------
+
+def _qt():
+    require("PySide6.QtWidgets")
+    from PySide6 import QtCore, QtGui, QtWidgets
+    return QtCore, QtGui, QtWidgets
+
+
+def _classes():
+    QtCore, QtGui, QtWidgets = _qt()
+
+    class Worker(QtCore.QThread):
+        """Runs ``solver.events()``, waiting for a permit between events."""
+        produced = QtCore.Signal(dict)
+
+        def __init__(self, solver: Solver):
+            super().__init__()
+            self.solver = solver
+            self.cond = threading.Condition()
+            self.permits, self.free, self.quitting = 0, False, False
+
+        def run(self):
+            for ev in self.solver.events():
+                self.produced.emit(ev.to_json())
+                with self.cond:
+                    while not (self.free or self.permits > 0 or self.quitting):
+                        self.cond.wait()
+                    if self.permits > 0 and not self.free:
+                        self.permits -= 1
+
+        def allow(self, n: int = 1, free: bool | None = None):
+            with self.cond:
+                self.permits += n
+                if free is not None:
+                    self.free = free
+                self.cond.notify_all()
+
+        def quit_run(self):
+            self.solver.stop()
+            with self.cond:
+                self.quitting = True
+                self.cond.notify_all()
+
+    class View(QtWidgets.QGraphicsView):
+        def __init__(self, scene):
+            super().__init__(scene)
+            self.setRenderHint(QtGui.QPainter.Antialiasing)
+            self.setDragMode(QtWidgets.QGraphicsView.ScrollHandDrag)
+            self.setTransformationAnchor(QtWidgets.QGraphicsView.AnchorUnderMouse)
+
+        def wheelEvent(self, e):
+            f = 1.2 if e.angleDelta().y() > 0 else 1 / 1.2
+            self.scale(f, f)
+
+    class Window(QtWidgets.QMainWindow):
+        """Board view, controls, event list and the details of the event shown."""
+
+        COLORS = {"board": "#f4f1e8", "edge": "#6b6b6b", "region": "#3a7bd5", "keepout": "#d9534f",
+                  "fixed": "#9a8f80", "hole": "#222222", "orig": "#c9a46a", "cur": "#c46a00",
+                  "snapped": "#2e8b57", "cand": "#d0021b", "env": "#f0ad4e", "anchor": "#1f4e79"}
+
+        def __init__(self, ctl: Controller, worker: Worker | None, out: Path | None, force: bool):
+            super().__init__()
+            self.ctl, self.worker, self.out, self.force = ctl, worker, out, force
+            self.exported: list[str] = []
+            self.running = False
+            self.dirty = True
+            self.setWindowTitle(f"kat pcb polish - group {ctl.group}")
+            self.scene = QtWidgets.QGraphicsScene()
+            self.view = View(self.scene)
+            self.view.scale(30, 30)
+            self.dynamic: list = []
+            self.context: list = []
+            self._draw_static()
+
+            bar = QtWidgets.QHBoxLayout()
+            self.buttons = {}
+            for name, fn in (("Step", self.step), ("Run", self.toggle_run), ("Back", self.back),
+                             ("Forward", self.forward), ("Reset", self.reset), ("Export...", self.export_dialog)):
+                b = QtWidgets.QPushButton(name)
+                b.clicked.connect(fn)
+                bar.addWidget(b)
+                self.buttons[name] = b
+            self.checks = {}
+            for name, on in (("original", True), ("candidate", True), ("clearance envelope", False), ("context", True)):
+                c = QtWidgets.QCheckBox(name)
+                c.setChecked(on)
+                c.toggled.connect(self.redraw)
+                bar.addWidget(c)
+                self.checks[name] = c
+            bar.addStretch()
+            self.which = QtWidgets.QComboBox()
+            self.which.addItems(["export best feasible", "export shown state"])
+            bar.addWidget(self.which)
+
+            self.list = QtWidgets.QListWidget()
+            self.list.currentRowChanged.connect(self._pick)
+            self.details = QtWidgets.QPlainTextEdit()
+            self.details.setReadOnly(True)
+            self.details.setFont(QtGui.QFontDatabase.systemFont(QtGui.QFontDatabase.FixedFont))
+            side = QtWidgets.QSplitter(QtCore.Qt.Vertical)
+            side.addWidget(self.details)
+            side.addWidget(self.list)
+            split = QtWidgets.QSplitter()
+            split.addWidget(self.view)
+            split.addWidget(side)
+            split.setSizes([900, 380])
+            box = QtWidgets.QWidget()
+            lay = QtWidgets.QVBoxLayout(box)
+            lay.addLayout(bar)
+            lay.addWidget(split)
+            self.setCentralWidget(box)
+            self.resize(1300, 850)
+            for e in ctl.events:
+                self._list_add(e)
+            if worker is not None:
+                worker.produced.connect(self.on_event)
+            self.timer = QtCore.QTimer(self)
+            self.timer.timeout.connect(self._tick)
+            self.timer.start(40)
+            self.fitted = False
+
+        def showEvent(self, e):
+            super().showEvent(e)
+            if not self.fitted:
+                self.fitted = True
+                QtCore.QTimer.singleShot(0, lambda: self.view.fitInView(
+                    self.scene.itemsBoundingRect().adjusted(-1, -1, 1, 1), QtCore.Qt.KeepAspectRatio))
+
+        # drawing; scene units are mm with y flipped (the input's y points up)
+        def _pen(self, color, width, style=None, alpha=255):
+            c = QtGui.QColor(color)
+            c.setAlpha(alpha)
+            p = QtGui.QPen(c, width)
+            p.setCapStyle(QtCore.Qt.RoundCap)
+            p.setJoinStyle(QtCore.Qt.RoundJoin)
+            if style is not None:
+                p.setStyle(style)
+            return p
+
+        def _poly(self, pts):
+            return QtGui.QPolygonF([QtCore.QPointF(x, -y) for x, y in pts])
+
+        def _path(self, pts):
+            path = QtGui.QPainterPath(QtCore.QPointF(pts[0][0], -pts[0][1]))
+            for x, y in pts[1:]:
+                path.lineTo(x, -y)
+            return path
+
+        def _draw_static(self):
+            c, col, s = self.ctl.case, self.COLORS, self.scene
+            nobrush = QtGui.QBrush(QtCore.Qt.NoBrush)
+            s.addPolygon(self._poly(c.outline), self._pen(col["edge"], 0.05), QtGui.QBrush(QtGui.QColor(col["board"])))
+            for cut in c.cutouts:
+                s.addPolygon(self._poly(cut), self._pen(col["edge"], 0.05), QtGui.QBrush(QtGui.QColor("white")))
+            s.addPolygon(self._poly(c.region), self._pen(col["region"], 0.04, QtCore.Qt.DashLine), nobrush)
+            for k in c.keepouts.values():
+                s.addPolygon(self._poly(k.points), self._pen(col["keepout"], 0.04),
+                             QtGui.QBrush(QtGui.QColor(col["keepout"]), QtCore.Qt.BDiagPattern))
+            fixed = QtGui.QColor(col["fixed"])
+            for o in c.copper.values():
+                if o.kind == "polyline":
+                    it = s.addPath(self._path(o.points), self._pen(col["fixed"], o.width), nobrush)
+                elif o.kind == "circle":
+                    r = o.radius
+                    it = s.addEllipse(o.center[0] - r, -o.center[1] - r, 2 * r, 2 * r, QtGui.QPen(QtCore.Qt.NoPen),
+                                      QtGui.QBrush(fixed))
+                else:
+                    it = s.addPolygon(self._poly(o.points), QtGui.QPen(QtCore.Qt.NoPen), QtGui.QBrush(fixed))
+                self.context.append(it)
+            for t in c.traces.values():
+                if t.id not in self.ctl.model.ids:
+                    self.context.append(s.addPath(self._path(t.points), self._pen(col["fixed"], t.width), nobrush))
+            for h in c.holes.values():
+                r = h.radius
+                s.addEllipse(h.center[0] - r, -h.center[1] - r, 2 * r, 2 * r, QtGui.QPen(QtCore.Qt.NoPen),
+                             QtGui.QBrush(QtGui.QColor(col["hole"])))
+            self.orig_items = []
+            for t in self.ctl.model.ids:
+                tr = c.traces[t]
+                self.orig_items.append(s.addPath(self._path(tr.points), self._pen(col["orig"], tr.width, alpha=110), nobrush))
+                for p in (tr.points[0], tr.points[-1]):
+                    s.addEllipse(p[0] - 0.08, -p[1] - 0.08, 0.16, 0.16, QtGui.QPen(QtCore.Qt.NoPen),
+                                 QtGui.QBrush(QtGui.QColor(col["anchor"])))
+
+        def redraw(self, *_):
+            self.dirty = True
+
+        def _tick(self):
+            if self.running and self.worker is None:          # replay: play the recorded history
+                if not self.ctl.forward():
+                    self.toggle_run()
+                self.dirty = True
+            if self.dirty:
+                self.dirty = False
+                self._render()
+
+        def _render(self):
+            for it in self.dynamic:
+                self.scene.removeItem(it)
+            self.dynamic = []
+            for it in self.context:
+                it.setVisible(self.checks["context"].isChecked())
+            for it in self.orig_items:
+                it.setVisible(self.checks["original"].isChecked())
+            ev = self.ctl.current()
+            if ev is None:
+                return
+            col, nobrush, case = self.COLORS, QtGui.QBrush(QtCore.Qt.NoBrush), self.ctl.case
+            for t, pts in ev["traces"].items():
+                w = case.traces[t].width
+                if self.checks["clearance envelope"].isChecked():
+                    self.dynamic.append(self.scene.addPath(self._path(pts), self._pen(col["env"], w + 2 * case.copper_clearance,
+                                                                                     alpha=70), nobrush))
+                self.dynamic.append(self.scene.addPath(self._path(pts), self._pen(col["cur"], w), nobrush))
+                for i in ev["snapped"].get(t, []):
+                    self.dynamic.append(self.scene.addPath(self._path(pts[i:i + 2]), self._pen(col["snapped"], w * 0.45), nobrush))
+            if ev.get("candidate") and self.checks["candidate"].isChecked():
+                for t, pts in ev["candidate"].items():
+                    self.dynamic.append(self.scene.addPath(self._path(pts), self._pen(col["cand"], case.traces[t].width * 0.6,
+                                                                                     QtCore.Qt.DashLine), nobrush))
+            if ev.get("target"):
+                t, i = ev["target"].split("#")
+                pts = (ev.get("candidate") or ev["traces"]).get(t) or ev["traces"][t]
+                i = int(i)
+                if i + 1 < len(pts):
+                    self.dynamic.append(self.scene.addPath(self._path(pts[i:i + 2]),
+                                                           self._pen("#7b2cbf", case.traces[t].width * 2.2, alpha=90), nobrush))
+            self._details(ev)
+            if self.list.currentRow() != self.ctl.cursor:
+                self.list.blockSignals(True)
+                self.list.setCurrentRow(self.ctl.cursor)
+                self.list.blockSignals(False)
+
+        def _details(self, ev):
+            ms = ev["min_slack"]
+            lines = [f"event {ev['seq']}   iteration {ev['iter']}   {ev['type']}   "
+                     f"{'accepted' if ev['accepted'] else 'REJECTED'}",
+                     f"reason   {ev['reason'] or '-'}", f"target   {ev['target'] or '-'}", "",
+                     f"total    {ev['total']:.5f}"]
+            w = self.ctl.solver.objectives["weights"] if self.ctl.solver else self.ctl.case.objectives["weights"]
+            first = self.ctl.events[0]["terms"]
+            for k, v in ev["terms"].items():
+                lines.append(f"  {k:<13}{v:9.5f}  x{w[k]:<5g} (start {first[k]:.5f})")
+            lines += ["", f"min slack {ms['value']:.4f} mm   {ms['a']} - {ms['b']}",
+                      "constraints  all hard constraints hold (state after the event)", "",
+                      f"history  {len(self.ctl.events)} events"
+                      + ("" if self.ctl.finished else (", running" if self.running else ", paused")),
+                      f"best     event {self.ctl.best_seq()}"]
+            self.details.setPlainText("\n".join(lines))
+
+        def _list_add(self, e):
+            mark = "+" if e["accepted"] else "x"
+            text = f"{e['seq']:>5} {e['iter']:>5} {mark} {e['type']:<7} {e['target'] or ''} {e['reason'] or ''}"
+            item = QtWidgets.QListWidgetItem(text)
+            if not e["accepted"]:
+                item.setForeground(QtGui.QColor(self.COLORS["cand"]))
+            self.list.addItem(item)
+
+        def _pick(self, row):
+            if row >= 0:
+                self.ctl.select(row)
+                self.redraw()
+
+        # controls
+        def on_event(self, ev):
+            self.ctl.add(ev)
+            self._list_add(ev)
+            if self.ctl.finished:
+                self.running = False
+                self.buttons["Run"].setText("Run")
+            self.redraw()
+
+        def step(self):
+            if not self.ctl.forward() and self.worker is not None and not self.ctl.finished:
+                self.worker.allow(1)
+            self.redraw()
+
+        def toggle_run(self):
+            if self.running:
+                self.running = False
+                if self.worker is not None:
+                    self.worker.allow(0, free=False)
+                self.buttons["Run"].setText("Run")
+            else:
+                self.running = True
+                self.ctl.follow = True
+                if self.worker is not None and not self.ctl.finished:
+                    self.worker.allow(0, free=True)
+                self.buttons["Run"].setText("Pause")
+            self.redraw()
+
+        def back(self):
+            self.ctl.back()
+            self.redraw()
+
+        def forward(self):
+            self.ctl.forward()
+            self.redraw()
+
+        def reset(self):
+            if self.running:
+                self.toggle_run()
+            self.ctl.reset()
+            self.redraw()
+
+        def export_dialog(self):
+            if self.running:
+                self.toggle_run()
+            start = str(self.out) if self.out else str(Path.cwd())
+            d = QtWidgets.QFileDialog.getExistingDirectory(self, "Export the candidate into", start)
+            if not d:
+                return
+            force = self.force
+            if any((Path(d) / f).exists() for f in _hist.FILES) and not force:
+                ok = QtWidgets.QMessageBox.question(self, "Overwrite?", f"{d} already holds a run. Overwrite it?")
+                if ok != QtWidgets.QMessageBox.Yes:
+                    return
+                force = True
+            which = "best" if self.which.currentIndex() == 0 else "current"
+            try:
+                self.ctl.export(d, which, force)
+                self.exported.append(d)
+                self.statusBar().showMessage(f"exported the {which} state to {d}", 8000)
+            except KatError as e:
+                QtWidgets.QMessageBox.warning(self, "Export failed", str(e))
+
+        def closeEvent(self, e):
+            if self.worker is not None:
+                self.worker.quit_run()
+                self.worker.wait(10000)
+            super().closeEvent(e)
+
+    return Worker, Window
+
+
+def _app():
+    _, _, QtWidgets = _qt()
+    return QtWidgets.QApplication.instance() or QtWidgets.QApplication(["kat"])
+
+
+def open_window(ctl: Controller, solver: Solver | None = None, out: Path | None = None, force: bool = False):
+    """The window on ``ctl`` (live when ``solver`` is given; its worker thread is started),
+    without entering the event loop: (app, window)."""
+    Worker, Window = _classes()
+    app = _app()
+    worker = Worker(solver) if solver is not None else None
+    win = Window(ctl, worker, out, force)
+    if worker is not None:
+        worker.start()
+    return app, win
+
+
+def run_live(case: Case, out: Path, group=None, weights=None, options=None, limits=None, force=False) -> dict:
+    """Open the window on a new run of ``case`` (paused after the start event) and block
+    until it closes. Returns the export directories and the history length."""
+    solver = Solver(case, group, weights, options, limits)
+    ctl = Controller(case, group, solver=solver)
+    app, win = open_window(ctl, solver, out, force)
+    win.show()
+    app.exec()
+    return {"exported": win.exported, "events": len(ctl.events), "termination": solver.termination or "user-stop"}
+
+
+def run_replay(run_dir: Path, case: Case) -> dict:
+    """Open the window on a finished run's history (``case``: its input) and block until it
+    closes."""
+    rec, events, res = _hist.load(run_dir)
+    if rec["input"]["sha256"] != case.sha256:
+        raise KatError("the case file is not the input of this run (sha256 differs)")
+    ctl = Controller(case, rec["group"], events, result=res)
+    ctl.select(0)
+    app, win = open_window(ctl)
+    win.show()
+    app.exec()
+    return {"exported": win.exported, "events": len(events)}
+
+
+__all__ = ["Controller", "open_window", "run_live", "run_replay"]

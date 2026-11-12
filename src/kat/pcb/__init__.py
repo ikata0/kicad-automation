@@ -233,16 +233,18 @@ def polish_run(case: Path | str, out: Path | str, group: str | None = None, weig
     return tidy({"out": str(d), **_hist.summary(rec, *_hist.load(d)[1:])})
 
 
-def polish_replay(run_dir: Path | str, gui: bool = False) -> dict:
+def polish_replay(run_dir: Path | str, case: Path | str | None = None, gui: bool = False) -> dict:
     """A finished polishing run (``polish_run``'s directory): its summary (termination,
     events per type, rejections, initial and result score), or with ``gui`` the inspection
-    window browsing its recorded history (needs the case file named on the way in). Writes
-    nothing."""
+    window browsing its recorded history; that needs the run's input ``case`` (checked by
+    sha256), since a run stores no paths. Writes nothing unless exported from the window."""
     from .polish import history as _hist
     rec, events, res = _hist.load(run_dir)
     if gui:
-        from .polish import gui as _gui
-        return tidy(_gui.run_replay(Path(run_dir)))
+        if case is None:
+            raise KatError("replay --gui needs the case file the run was made from (--case)")
+        from .polish import case as _case, gui as _gui
+        return tidy(_gui.run_replay(Path(run_dir), _case.load(case)))
     return tidy({"run": str(run_dir), "group": rec["group"], "solver": rec["solver"], **_hist.summary(rec, events, res)})
 
 
