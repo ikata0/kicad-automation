@@ -318,6 +318,43 @@ arrangement, re-sync); `tests/test_e2e_led_matrix.py` (marker `slow`, about 75 s
 for a 200-part LED matrix on A2. Set `KAT_E2E_OUT=dir` to keep their snapshots for
 inspection; `pytest -m 'not slow'` skips the large one.
 
+## Route polishing (prototype)
+
+`kat pcb polish` improves a group of routed traces without rerouting them: directions toward
+multiples of 45 degrees, even spacing, more distance from the board edge. Hard clearances and
+the route's topology are never given up for that. Specification:
+`specs/ROUTE_POLISH_SPEC.md`. To run it on the synthetic example
+`specs/route_polish_example.json` (five traces beside a curved board edge):
+
+```sh
+.venv/bin/pip install -e '.[polish,polish-gui]'    # numpy, PyTorch; PySide6 for the window
+# on Linux the CPU-only PyTorch wheel is much smaller:
+#   .venv/bin/pip install torch --index-url https://download.pytorch.org/whl/cpu
+kat pcb polish check specs/route_polish_example.json            # format and feasibility
+kat pcb polish run specs/route_polish_example.json --out polish_run
+kat pcb polish replay polish_run                                 # summary of the run
+kat pcb polish run specs/route_polish_example.json --out polish_run2 --gui   # step through it
+kat pcb polish replay polish_run --case specs/route_polish_example.json --gui
+```
+
+`run` writes `run.json`, `history.jsonl` (every event) and `result.json` (the best feasible
+state) into `--out`. It refuses a directory that already holds a run, unless `--force` is
+given. It prints the score terms before and after. `--max-iterations N`,
+`--weight angle=2` and so on override the case's settings.
+
+In the window:
+- **Step** advances one event and **Run** / **Pause** let the solver go.
+- **Back** / **Forward** and the event list browse the history.
+- **Reset** shows the original state.
+- **Export...** writes the best (or the shown) state. The window writes nothing else.
+
+Original traces are drawn faintly, current ones in copper, snapped segments green, and
+rejected candidates red and dashed.
+
+On a real board: `kat pcb polish extract PCB --net A --net B ... --out case.json`, `run`,
+then `kat pcb polish apply PCB run/result.json --map case.map.json --out copy.kicad_pcb`.
+`apply` writes into a copy and compares KiCad's DRC with the original.
+
 ## Design decisions
 
 - **SKiDL for connectivity, not for drawing** — its own schematic generator is not readable
