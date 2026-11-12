@@ -36,7 +36,8 @@ itself private. This covers its history, screenshots and logs (input §3).
   `objectives` and `limits` use the input's field names. `solver` holds the
   solver's own knobs: `learning_rate`, `settle_iterations`,
   `stagnation_window`, `stagnation_tolerance`, `snap_slack`, `bend_gain`,
-  `max_attempts_per_segment`, `max_substeps` and `barrier_margin_mm`.
+  `max_attempts_per_segment`, `max_substeps`, `barrier_margin_mm`,
+  `adjust_boost` and `blocked_bend_after`.
 - `merit` is the version of the merit definition. Scores are only comparable
   between runs that share the same `solver.name`, `version` and `merit`.
 - `termination` is one of `all-snapped`, `stagnated`, `max-iterations`,
@@ -51,7 +52,7 @@ Every line is one event object:
 |---|---|
 | `seq` | 0, 1, 2, …: position in the history. |
 | `iter` | Solver iterations (optimiser steps) so far. |
-| `type` | `start`, `step`, `snap`, `adjust`, `bend`, `merge`, `commit`, `stop`. |
+| `type` | `start`, `step`, `snap`, `adjust`, `bend`, `rescue`, `merge`, `commit`, `stop`. A `rescue` is a bend split where a segment comes closest to the obstacle it is short of (or keeps running into). |
 | `accepted` | Whether the event's candidate became the current state. |
 | `reason` | Why a candidate was rejected or a trial was reverted, else `null`. Examples: `sweep`, `clearance t02#3-h01`, `displacement`, `vertex limit`, `merit worse`, `no gain`, `inconsistent directions`. |
 | `target` | The segment the event is about, `"<trace>#<index>"`, else `null`. |
@@ -61,10 +62,11 @@ Every line is one event object:
 | `terms` | Merit terms of the current state: `angle`, `spacing`, `edge`, `displacement`, `length`, `complexity`. These are unweighted and dimensionless. |
 | `total` | Weighted sum of the terms. |
 | `min_slack` | `{"value": mm, "a": ref, "b": ref}`: the smallest clearance margin (distance minus required distance) in the current state, and its pair of objects. |
+| `shortfall` | How far the current state is short of clearance, in mm summed over (trace, obstacle) pairs. It is 0 unless the run started short (recovery). |
 
 Segment indices refer to the geometry stored in the same event.
 
-Trials are bracketed. A `snap`, `adjust` or `bend` event starts a trial,
+Trials are bracketed. A `snap`, `adjust`, `bend` or `rescue` event starts a trial,
 `step` events settle it, and a `commit` event ends it. `commit` with
 `accepted: false` restores the state from before the trial, and its `traces`
 holds that restored state. `step` events with `accepted: false` record a
@@ -93,5 +95,11 @@ move back and forth without re-running the solver.
 
 `seq` is the history event whose state was exported. `apply` refuses a result
 whose `input_sha256` does not match the case that the map file belongs to.
+
+`constraints.feasible` is the polisher's own hard check of the exported state.
+A run that started short of clearance (recovery) also lists the start's
+failures as `initial_violations`. A state still short lists `violations` and
+has `feasible: false`. The best state is then the least short one, not
+a feasible one.
 A result says that its traces passed the polisher's own hard check. It is not
 DRC and not a board-level safety certificate.

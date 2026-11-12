@@ -33,6 +33,7 @@ class Controller:
         self.case, self.solver = case, solver
         self.model = solver.model if solver else Model(case, group)
         self.group = self.model.group
+        self.judge = Model(case, self.group) if solver else self.model   # no recovery floors: plain hard check
         self.events: list[dict] = list(events or [])
         self.result = result
         self.cursor = len(self.events) - 1 if self.events else -1
@@ -95,10 +96,11 @@ class Controller:
         solver_id = (self.solver.info()["solver"] if self.solver else {"name": "kat-polish", "version": "?", "merit": "?"})
         termination = (self.solver.termination if self.solver else None) or ("paused" if not self.finished else
                                                                               self.events[-1]["reason"])
+        pts = {k: _np().asarray(v, float) for k, v in ev["traces"].items()}
+        start = {k: _np().asarray(v, float) for k, v in first["traces"].items()}
         res = result_doc(self.case, self.group, ev["seq"], {k: v for k, v in ev["traces"].items()}, ev["snapped"],
-                         ev["total"], ev["terms"], (first["total"], first["terms"]),
-                         self.model.min_slack({k: _np().asarray(v, float) for k, v in ev["traces"].items()}),
-                         termination, solver_id)
+                         ev["total"], ev["terms"], (first["total"], first["terms"]), self.model.min_slack(pts),
+                         termination, solver_id, self.judge.violations(pts), self.judge.violations(start))
         with open(d / "history.jsonl", "w", encoding="utf-8") as f:
             for e in self.events:
                 f.write(json.dumps(e) + "\n")
@@ -366,7 +368,8 @@ def _classes():
             for k, v in ev["terms"].items():
                 lines.append(f"  {k:<13}{v:9.5f}  x{w[k]:<5g} (start {first[k]:.5f})")
             lines += ["", f"min slack {ms['value']:.4f} mm   {ms['a']} - {ms['b']}",
-                      "constraints  all hard constraints hold (state after the event)", "",
+                      ("constraints  all hard constraints hold (state after the event)" if not ev.get("shortfall") else
+                       f"constraints  {ev['shortfall']:.4f} mm short of clearance in total (recovering)"), "",
                       f"history  {len(self.ctl.events)} events"
                       + ("" if self.ctl.finished else (", running" if self.running else ", paused")),
                       f"best     event {self.ctl.best_seq()}"]

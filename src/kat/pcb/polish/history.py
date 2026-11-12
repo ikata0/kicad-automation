@@ -65,7 +65,7 @@ def load(run_dir: Path | str) -> tuple[dict, list[dict], dict | None]:
 
 def summary(rec: dict, events: list[dict], result: dict | None) -> dict:
     """Counts per event type (accepted / rejected), rejection reasons, the initial and the
-    exported score."""
+    exported score, and for a run that started short of clearance its ``recovery``."""
     kinds: dict = {}
     reasons: dict = {}
     for e in events:
@@ -78,6 +78,12 @@ def summary(rec: dict, events: list[dict], result: dict | None) -> dict:
     if result:
         out["initial"] = result["initial_score"]
         out["result"] = {"seq": result["seq"], **result["score"], "min_slack": result["constraints"]["min_slack"]}
+        cons = result["constraints"]
+        if cons.get("initial_violations"):
+            short = {e["seq"]: e.get("shortfall", 0.0) for e in events}
+            out["recovery"] = {"recovered": cons["feasible"], "shortfall_start": events[0].get("shortfall", 0.0) if events else None,
+                               "shortfall_result": short.get(result["seq"]), "initial_violations": len(cons["initial_violations"]),
+                               "violations": cons.get("violations", [])}
     return out
 
 

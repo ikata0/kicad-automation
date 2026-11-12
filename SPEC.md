@@ -383,8 +383,11 @@ written beside it. Custom DRC or kat net rules it cannot model stop it unless
 `run CASE --out DIR [--gui] [--weight T=W]` minimises a weighted merit (angle to 45-degree
 multiples, spacing to neighbours, edge margin, displacement, length, complexity; PyTorch
 gradients). Snapped segments stay exact, and bends are bounded. Every change is a straight
-move of the vertices, split into steps smaller than the clearance margin, so nothing ever
-passes through an obstacle or another trace. DIR gets `run.json`, `history.jsonl` and
+move of the vertices, split into steps smaller than the centrelines' distance to contact, so nothing ever
+passes through an obstacle or another trace; clearance is required of every state a move ends in.
+An input only short of clearance (`check` says `recoverable`) is run anyway: no shortfall may
+grow, the solver works it off and bends a segment where it stalls (`rescue`), and the run's
+`recovery` and the result's `feasible` say whether it got clear. DIR gets `run.json`, `history.jsonl` and
 `result.json` (best feasible state). `replay DIR [--case CASE --gui]` summarises or browses a
 run. `apply PCB RESULT --map CASE.map.json --out NEW.kicad_pcb` writes into a **copy**, never
 the input. It reads the copy back against the hard constraints and compares DRC with the
@@ -1270,6 +1273,7 @@ column in place of the net.
 | `route --timeout` killed the router and lost all its work | the limit is now the router's own (`job_timeout`): it stops, what it has is kept, and `timed_out` says so |
 | Pins that could be swapped were routed in the order the design happened to give, with crossings and vias a different assignment does not need | `kat pcb escape` chooses assignment and tracks together, then `kat back-annotate` carries the assignment through the design |
 | kat writes coordinates with 4 decimals (`sexpr.num`), so polished vertices moved by up to 0.05 µm: exact 45-degree segments bent and small clearance margins could vanish. KiCad itself keeps 6 decimals (nm) | `pcb polish apply` writes its segments to the nanometre and checks the saved copy against the hard constraints again |
+| Router output often sits at exactly its clearance (slack 0 up to float noise). A topology check that bounds each sub-step by the clearance slack then lets such a segment move nowhere, not even away, and one trace at a limit stopped the whole group's step | `pcb polish` bounds sub-steps by the centrelines' distance to contact and requires clearance of the end state only; a failing step keeps the named vertices (else the trace) in place |
 | A track ends over the drill of its own pad or via; a hole-clearance rule without nets made every extracted trace infeasible | in the polish case a trace's end pads, vias **and their drills** are its anchors, exempt from its own clearance only |
 | Polished geometry was first judged only by the polisher's own model | `apply` refuses a changed board or case, reads the copy back, and compares KiCad's DRC with the original per net |
 | Escaping a SKiDL pin name with `+` or brackets (`u[r"IN\+"]`) finds no pin: names match exactly unless `match_pin_regex` is set | write the name literally, `u["IN+"]`; a name with a space takes the pin number (`tests/test_skidl_blocks.py` pins this down) |

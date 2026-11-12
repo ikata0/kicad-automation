@@ -159,6 +159,12 @@ class Model:
         n = len(self.ids)
         self.mreq = np.array([[self.half[i] + self.half[j] + case.clearance(self.ids[i], self.ids[j], case.copper_clearance)
                                for j in range(n)] for i in range(n)]).reshape(n, n)
+        # clearance floors per (trace, obstacle owner): 0 normally; a run that starts short of
+        # clearance (``allow``) may stay as short as it is, never shorter (``tighten``)
+        self.owners = sorted(set(self.fowner))
+        self.own = np.array([self.owners.index(o) for o in self.fowner], int)
+        self.floor_f = np.zeros((n, len(self.owners)))
+        self.floor_m = np.zeros((n, n))
         self.polys = [(c.id, np.asarray(c.points, float)) for c in case.copper.values() if c.kind == "polygon"]
         self.keep_polys = [(k.id, np.asarray(k.points, float)) for k in case.keepouts.values()]
 
@@ -193,6 +199,87 @@ class Model:
         ms[adjacent] = np.inf
         return fs, ms, (tr, ix)
 
+    def pair_slack(self, state) -> tuple[np.ndarray, np.ndarray]:
+        """The least clearance slack (mm) per (movable trace, obstacle owner) and per pair of
+        movable traces (diagonal +inf)."""
+        fs, ms, (tr, ix) = self.slacks(state)
+        n = len(self.ids)
+        g = np.full((len(tr), len(self.owners)), np.inf)
+        if fs.size:
+            np.minimum.at(g.T, self.own, fs.T)
+        f = np.full((n, len(self.owners)), np.inf)
+        np.minimum.at(f, tr, g)
+        mm = np.full((len(tr), n), np.inf)
+        same = tr[:, None] == tr[None, :]
+        np.minimum.at(mm.T, tr, np.where(same, np.inf, ms).T)
+        m = np.full((n, n), np.inf)
+        np.minimum.at(m, tr, mm)
+        return f, m
+
+    def allow(self, state) -> None:
+        """Let a run start from ``state`` although it is short of clearance: each (trace,
+        obstacle) pair may stay as short as it is in ``state``, not shorter."""
+        f, m = self.pair_slack(state)
+        self.floor_f, self.floor_m = np.minimum(f, 0.0), np.minimum(m, 0.0)
+
+    @property
+    def recovering(self) -> bool:
+        """Whether some floor still allows a shortfall."""
+        return bool(self.floor_f.any() or self.floor_m.any())
+
+    def tighten(self, state) -> None:
+        """Raise the floors to what ``state`` reaches (a shortfall once reduced stays
+        reduced)."""
+        if self.recovering:
+            f, m = self.pair_slack(state)
+            self.floor_f = np.maximum(self.floor_f, np.minimum(f, 0.0))
+            self.floor_m = np.maximum(self.floor_m, np.minimum(m, 0.0))
+
+    def shortfall(self, state) -> float:
+        """How far ``state`` is short of clearance in total (mm, summed over (trace,
+        obstacle) pairs; 0 when every clearance holds)."""
+        f, m = self.pair_slack(state)
+        return float(np.maximum(-f, 0.0).sum() + np.triu(np.maximum(-m, 0.0), 1).sum())
+
+    def short_pairs(self, state) -> list[tuple[str, int, str]]:
+        """The segments short of clearance, worst first, as (trace, segment index, obstacle:
+        an owner or a movable trace id); one entry per (segment, obstacle)."""
+        fs, ms, (tr, ix) = self.slacks(state)
+        ms = np.where(tr[:, None] == tr[None, :], np.inf, ms)
+        out = {}
+        for k, j in zip(*np.nonzero(fs < -TOL)):
+            key = (self.ids[tr[k]], int(ix[k]), self.fowner[j])
+            out[key] = min(out.get(key, 0.0), float(fs[k, j]))
+        for k, j in zip(*np.nonzero(ms < -TOL)):
+            key = (self.ids[tr[k]], int(ix[k]), self.ids[tr[j]])
+            out[key] = min(out.get(key, 0.0), float(ms[k, j]))
+        return sorted(out, key=out.get)
+
+    def closest(self, state, t: str, k: int, obstacle: str) -> np.ndarray:
+        """The point of segment ``k`` of trace ``t`` nearest to ``obstacle`` (an owner or a
+        movable trace id), kept off the segment's ends."""
+        a, b = state[t][k], state[t][k + 1]
+        u = np.linspace(0.05, 0.95, 91)
+        pts = a + u[:, None] * (b - a)
+        if obstacle in self.ids:
+            q = state[obstacle]
+            d = point_seg(pts[:, None], q[None, :-1], q[None, 1:]).min(1)
+        else:
+            j = np.nonzero(self.own == self.owners.index(obstacle))[0]
+            d = (point_seg(pts[:, None], self.fa[j][None], self.fb[j][None]) - self.fr[j][None]).min(1)
+        return pts[int(np.argmin(d))]
+
+    def blocking(self, state) -> list[str]:
+        """What no move can repair in ``state``: every hard-constraint failure except a
+        clearance shortfall whose centreline is still clear of the obstacle."""
+        bad = [v for v in self.violations(state) if not v.startswith("clearance")]
+        fs, ms, (tr, ix) = self.slacks(state, topology=True)
+        for k, j in zip(*np.nonzero(fs <= TOL)):
+            bad.append(f"{self._ref(tr, ix, k)} touches {self.fowner[j]}")
+        for k, j in zip(*np.nonzero(np.triu(ms <= TOL))):
+            bad.append(f"{self._ref(tr, ix, k)} touches {self._ref(tr, ix, j)}")
+        return bad
+
     def _ref(self, tr, ix, k) -> str:
         return f"{self.ids[tr[k]]}#{ix[k]}"
 
@@ -211,7 +298,8 @@ class Model:
 
     def violations(self, state) -> list[str]:
         """Every hard-constraint failure of ``state`` as text; empty when feasible.
-        Independent of how the state was reached (the sweep checks the way)."""
+        Independent of how the state was reached (the sweep checks the way). Clearance is
+        measured against the floors (``allow``): 0 unless the run started short."""
         out = []
         for t in self.ids:
             p, o = state[t], self.orig[t]
@@ -220,9 +308,10 @@ class Model:
             if np.any(np.linalg.norm(np.diff(p, axis=0), axis=1) <= TOL):
                 out.append(f"{t}: zero-length segment")
         fs, ms, (tr, ix) = self.slacks(state)
-        for k, j in zip(*np.nonzero(fs < -TOL)):
+        for k, j in zip(*np.nonzero(fs < self.floor_f[tr][:, self.own] - TOL)):
             out.append(f"clearance {self._ref(tr, ix, k)}-{self.fowner[j]} short by {-fs[k, j]:.4f} mm")
-        for k, j in zip(*np.nonzero(np.triu(ms < -TOL))):
+        floor = np.where(tr[:, None] == tr[None, :], 0.0, self.floor_m[tr][:, tr])
+        for k, j in zip(*np.nonzero(np.triu(ms < floor - TOL))):
             out.append(f"clearance {self._ref(tr, ix, k)}-{self._ref(tr, ix, j)} short by {-ms[k, j]:.4f} mm")
         for i, t in enumerate(self.ids):
             p = state[t]

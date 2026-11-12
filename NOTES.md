@@ -119,3 +119,9 @@ Copper to edge clearance should be 0.5 mm by default.
 
 We must make Java 25 a minimum because Freerouting requires it.
 
+---
+
+I have added an example where the pcb polish fails: specs/route-polish
+The problem is that hard trace distance constraints are already violated right at the beginning, please inspect.
+Can we solve this by turning the distance hard-constraint into a soft-constraint so the state gets accepted, but make the merit function contribution steeper for distances below the min distance?
+Or rather detect if a hard constraint is violated at the initial condition, and allow the optimizer to move out of the forbidden parameter area?

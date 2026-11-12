@@ -263,8 +263,10 @@ configurable.
   including across discrete edits. Clearance is checked on the state a move ends
   in, not on the way: a trace that sits exactly at its clearance (common on
   router output) can still move away. A step whose end state fails the hard check
-  for some traces is retried with those traces held where they are, so one trace
-  at a limit (for example `max_displacement_mm`) does not stop the group.
+  is retried with what the failure names kept where it is: the vertices of a
+  segment short of clearance, or those at the `max_displacement_mm` limit, and
+  only when that cannot help, the whole trace. One trace at a limit does not stop
+  the group.
 - **Solver.** The merit terms are computed in PyTorch (float64, autograd).
   `torch.optim.Adam` proposes each step, and projection keeps snapped directions
   exact. Backtracking continues until the sweep and the independent hard check
@@ -285,6 +287,23 @@ configurable.
   is accepted only on a gain. Snapped segments are never unsnapped. Each
   segment gets one failed attempt (configurable), and inserted vertices count
   cumulatively per trace.
+- **Recovery from a start short of clearance.** `check` reports such an input as
+  not ok, and says whether it is `recoverable`: every violation is a clearance
+  shortfall while the centrelines stay clear of the obstacles. Anything else (a
+  centreline in an obstacle's copper, off the board, inside a pad or keep-out)
+  is `blocking`, and `run` refuses it. `run` starts from a recoverable input
+  without relaxing anything silently: each (trace, obstacle) pair may stay as
+  short as it is but never get shorter, and once reduced a shortfall stays
+  reduced. The barrier pushes out of the shortfall. A smaller total shortfall
+  outranks a better merit for the best state and for committing a trial. When
+  the shortfall gains less than 1e-4 mm over 20 iterations, the worst short
+  segment not tried yet gets a `rescue` bend. It is split where it comes closest
+  to the obstacle (a snapped segment too), settled, and kept if the shortfall
+  dropped. The same bend is tried, once snapping has stagnated, on a segment that
+  steps kept running into an obstacle (`blocked_bend_after`, 5 times). Rescue
+  bends count against `max_added_vertices_per_trace`. The result lists the
+  start's violations and any that remain. A result that still has violations
+  says `feasible: false`, and `apply`'s read-back and DRC show the same.
 - **Stopping.** The run stops when all segments are snapped, when it has
   stagnated with no candidates left, at the iteration limit, or on user stop.
 - **Pours.** Copper pours are not obstacles, because they reflow after a refill

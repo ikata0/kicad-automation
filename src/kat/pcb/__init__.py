@@ -226,7 +226,9 @@ def polish_check(case: Path | str, group: str | None = None) -> dict:
     the input geometry of every trace against the hard constraints. ``group`` (default: each
     group) also lists its neighbour pairs in group order with their least copper gap (mm).
     Returns ok (feasible), version, sha256, groups, violations, min_slack {value mm, a, b}
-    and neighbours [{group, a, b, gap}]."""
+    and neighbours [{group, a, b, gap}]; when not ok, ``recoverable`` (every violation is a
+    clearance shortfall with the centrelines still clear: ``polish_run`` starts from it and
+    works the shortfall off) and ``blocking`` (what it cannot repair)."""
     from .polish import case as _case, require
     np = require("numpy")
     from .polish import constraints as _cs
@@ -241,9 +243,13 @@ def polish_check(case: Path | str, group: str | None = None) -> dict:
             pa, pb = np.asarray(ta.points, float), np.asarray(tb.points, float)
             d = _cs.seg_dist(pa[:-1, None], pa[1:, None], pb[None, :-1], pb[None, 1:]).min()
             neighbours.append({"group": g, "a": a, "b": b, "gap": float(d) - ta.width / 2 - tb.width / 2})
+    extra = {}
+    if not pre["feasible"]:
+        blocking = _cs.Model(c, movable=list(c.traces)).blocking(_cs.Model(c, movable=list(c.traces)).initial())
+        extra = {"recoverable": not blocking, "blocking": blocking}
     return tidy({"case": str(case), "ok": pre["feasible"], "version": c.version, "sha256": c.sha256,
                  "groups": c.groups, "violations": pre["violations"], "min_slack": pre["min_slack"],
-                 "neighbours": neighbours})
+                 "neighbours": neighbours, **extra})
 
 
 def polish_run(case: Path | str, out: Path | str, group: str | None = None, weights: dict | None = None,
@@ -255,14 +261,14 @@ def polish_run(case: Path | str, out: Path | str, group: str | None = None, weig
     solver ``options`` (``solver.DEFAULTS``) override the case. Writes run.json,
     history.jsonl and result.json (the best feasible state) into the run directory ``out``
     (refused when it holds them, unless ``force``); never touches the case. ``gui`` opens the
-    inspection window instead and writes only on its Export. Returns out, termination,
+    inspection window instead and writes only on its Export. An input short of clearance
+    (centrelines still clear) is recovered: no shortfall may grow, the solver works it off
+    and bends where steps stall; ``recovery`` then reports the shortfall (mm) at the start
+    and in the result, and the result's remaining violations. Returns out, termination,
     iterations, events per type, rejections, initial and result score."""
     from .polish import case as _case, constraints as _cs, history as _hist, require
     require("numpy")
     c = _case.load(case)
-    pre = _cs.preflight(c)
-    if not pre["feasible"]:
-        raise KatError(f"input infeasible, nothing optimised: {'; '.join(pre['violations'][:5])}")
     from .polish import solver as _solver
     if gui:
         from .polish import gui as _gui

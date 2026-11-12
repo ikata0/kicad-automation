@@ -11,6 +11,14 @@ segment's angle heavily for a while so that its neighbours make room, then snap)
 ``bend`` (split it, as an octilinear dog-leg or freely), each settled by some iterations and
 then committed or reverted. A collinear vertex is ``merge``d away. Snapped segments stay
 snapped. ``Solver.events`` yields every event; the best feasible state is kept apart.
+
+**Recovery.** A case that starts short of clearance (but with every centreline clear of
+every obstacle) is run all the same: no (trace, obstacle) pair may get shorter than it is,
+and once reduced a shortfall stays reduced (``Model.allow``/``tighten``). The barrier pushes
+out; a smaller shortfall outranks a better merit. When the steps stall while still short, the
+worst segment gets a ``rescue`` bend: split where it comes closest to the obstacle and
+settled. A segment that steps keep running into an obstacle gets the same bend once the
+snaps are tried.
 """
 
 from __future__ import annotations
@@ -25,15 +33,19 @@ import numpy as np
 from ..trackclean import _replacements
 from . import require
 from .case import Case
-from .constraints import Model
+from .constraints import Model, to_polyline
 from .merit import BEND, TERMS, VERSION as MERIT_VERSION, Merit, deviation_deg, turns_deg
 
 NAME, VERSION = "kat-polish", "0.1"
 DEFAULTS = {"learning_rate": 0.02, "settle_iterations": 20, "stagnation_window": 20, "stagnation_tolerance": 1e-4,
             "snap_slack": 0.001, "bend_gain": 0.005, "max_attempts_per_segment": 1, "max_substeps": 64,
-            "barrier_margin_mm": 0.05, "adjust_boost": 100.0}
+            "barrier_margin_mm": 0.05, "adjust_boost": 100.0, "blocked_bend_after": 5}
 BACKTRACK = (1.0, 0.5, 0.25, 0.125, 0.0625)
 EXACT = 1e-9                # degrees: a segment this close to 45-degree multiples counts as exact
+GAIN = 1e-6                 # mm: a shortfall reduced by this much counts as progress
+STALL = 1e-4                # mm: recovery has stalled when a window of steps gains less
+CLEARANCE = re.compile(r"clearance (\S+?)#(\d+)-(\S+?)(?:#(\d+))? short")
+PIN_ROUNDS = 8              # a failing step pins vertices this many times before giving up
 
 
 @dataclass
@@ -52,12 +64,13 @@ class Event:
     total: float
     min_slack: dict
     candidate: dict | None = None
+    shortfall: float = 0.0
 
     def to_json(self) -> dict:
         """The event as a JSON object (points as lists)."""
         d = {"seq": self.seq, "iter": self.iter, "type": self.type, "accepted": self.accepted, "reason": self.reason,
              "target": self.target, "traces": _lists(self.traces), "snapped": self.snapped, "terms": self.terms,
-             "total": self.total, "min_slack": self.min_slack}
+             "total": self.total, "min_slack": self.min_slack, "shortfall": self.shortfall}
         if self.candidate is not None:
             d["candidate"] = _lists(self.candidate)
         return d
@@ -86,10 +99,11 @@ def direction(a, b) -> int:
     return round(math.degrees(math.atan2(b[1] - a[1], b[0] - a[0])) / 45.0) % 4
 
 
-def project(pts: np.ndarray, snapped_idx: dict) -> np.ndarray | None:
-    """``pts`` moved as little as possible (least squares, interior vertices only) so that
-    each segment index in ``snapped_idx`` {index: direction 0-3} lies exactly on its
-    direction; None when the directions cannot all hold between the fixed ends."""
+def project(pts: np.ndarray, snapped_idx: dict, fixed=()) -> np.ndarray | None:
+    """``pts`` moved as little as possible (least squares, interior vertices only, not the
+    vertex indices in ``fixed``) so that each segment index in ``snapped_idx`` {index:
+    direction 0-3} lies exactly on its direction; None when the directions cannot all hold
+    between the fixed vertices."""
     if not snapped_idx:
         return pts
     n = len(pts)
@@ -104,6 +118,8 @@ def project(pts: np.ndarray, snapped_idx: dict) -> np.ndarray | None:
     A = np.array(rows)
     free = np.zeros(2 * n, bool)
     free[2:-2] = True
+    for v in fixed:
+        free[2 * v:2 * v + 2] = False
     x = pts.ravel().copy()
     Af, b = A[:, free], -A[:, ~free] @ x[~free]
     r = Af @ x[free] - b
@@ -133,6 +149,14 @@ class Solver:
         self.opt = {**DEFAULTS, **(options or {})}
         self.model = Model(case, group)
         self.group = self.model.group
+        start = self.model.initial()
+        self.initial_violations = self.model.violations(start)
+        if self.initial_violations:
+            blocking = self.model.blocking(start)
+            if blocking:
+                from ...env import KatError
+                raise KatError(f"input infeasible beyond recovery, nothing optimised: {'; '.join(blocking[:5])}")
+            self.model.allow(start)
         self.merit = Merit(self.model, self.objectives, self.opt["barrier_margin_mm"])
         self.torch.manual_seed(self.limits["seed"])
         ids = self.model.ids
@@ -149,14 +173,19 @@ class Solver:
         self.iter = self.seq = 0
         self.inserted = defaultdict(int)
         self.attempts = defaultdict(int)
+        self.rescues = defaultdict(int)               # rescue bends tried per (trace, segment id)
+        self.blocked = defaultdict(int)               # steps held per (trace, segment id, obstacle)
         self.no_merge: set = set()
         self.in_trial = False
         self.stop_requested = False
         self.termination: str | None = None
         self.lr = self.opt["learning_rate"]
         self.total, self.terms = self.merit.evaluate(self.state.pts)
+        self.short = self.model.shortfall(self.state.pts)
+        self.phase_short, self.since_short = self.short, 0
         self.initial = (self.total, dict(self.terms))
-        self.best = (self.total, self.state.copy(), 0, dict(self.terms))
+        self.initial_short = self.short
+        self.best = (self.total, self.state.copy(), 0, dict(self.terms), self.short)
         self._reset_stagnation()
         self._rebuild()
 
@@ -167,7 +196,7 @@ class Solver:
         return self._next
 
     def _reset_stagnation(self) -> None:
-        self.phase_best, self.since = self.total, 0
+        self.phase_best, self.since = self.total, 0     # the shortfall's own window runs on
 
     def _rebuild(self) -> None:
         torch = self.torch
@@ -213,13 +242,17 @@ class Solver:
 
     def _event(self, type_: str, accepted: bool, reason=None, target=None, candidate=None, known=None) -> Event:
         self.total, self.terms = known or self.merit.evaluate(self.state.pts)
-        if accepted and (not self.in_trial or type_ == "commit") and self._rank(self.total, self.state) < \
-                self._rank(self.best[0], self.best[1]) - 1e-12:
-            self.best = (self.total, self.state.copy(), self.seq, dict(self.terms))
+        if self.initial_short:
+            self.short = self.model.shortfall(self.state.pts) if self.model.recovering else 0.0
+        if accepted and (not self.in_trial or type_ == "commit"):
+            self.model.tighten(self.state.pts)
+            if self._better(self.short, self._rank(self.total, self.state), self.best[4],
+                            self._rank(self.best[0], self.best[1])):
+                self.best = (self.total, self.state.copy(), self.seq, dict(self.terms), self.short)
         ev = Event(self.seq, self.iter, type_, accepted, reason, target,
                    {k: v.copy() for k, v in self.state.pts.items()},
                    {t: sorted(v.values()) for t, v in self._snapped_idx().items()},
-                   dict(self.terms), self.total, self.model.min_slack(self.state.pts), candidate)
+                   dict(self.terms), self.total, self.model.min_slack(self.state.pts), candidate, self.short)
         self.seq += 1
         return ev
 
@@ -227,6 +260,13 @@ class Solver:
         """What "best" means: the merit, each snapped segment credited the snap allowance
         (``snap_slack``), consistent with accepting a snap that costs up to that much."""
         return total - self.opt["snap_slack"] * sum(len(v) for v in st.snapped.values())
+
+    @staticmethod
+    def _better(short: float, rank: float, short0: float, rank0: float) -> bool:
+        """Whether (shortfall, rank) beats (short0, rank0): less short first, then the rank."""
+        if short < short0 - GAIN:
+            return True
+        return short <= short0 + GAIN and rank < rank0 - 1e-12
 
     def _ref(self, t: str, s: int) -> str:
         return f"{t}#{self.state.sid[t].index(s)}"
@@ -250,17 +290,37 @@ class Solver:
         prop = self._project_all(self._from(self.X.detach().numpy()))
         reason = "projection"
         if prop is not None:
-            held: set = set()             # traces whose move fails a hard check stay put this step
+            snapped = self._snapped_idx()
             for alpha in BACKTRACK:
-                cand = {t: cur[t] if t in held else cur[t] + alpha * (prop[t] - cur[t]) for t in cur}
+                cand = {t: cur[t] + alpha * (prop[t] - cur[t]) for t in cur}
                 value, known = self._loss(cand, boost)
                 if value > level + 1e-12:
                     reason = "no descent"
                     continue
                 reason = self.model.sweep(cur, cand, self.opt["max_substeps"])
-                while reason is not None and (named := self._named(reason) - held) and len(held | named) < len(cur):
-                    held |= named
-                    cand = {t: cur[t] if t in held else cand[t] for t in cur}
+                # what fails a hard check stays put: the vertices it names, else its trace
+                held: set = set()
+                pins: dict = defaultdict(set)
+                if reason:
+                    self._note_blocked(reason)
+                for _ in range(PIN_ROUNDS):
+                    named = self._named(reason) - held if reason else set()
+                    if not named:
+                        break
+                    for t in named:
+                        more = self._pins(t, reason, cand[t]) - pins[t]
+                        q = None
+                        if more:
+                            pins[t] |= more
+                            q = cand[t].copy()
+                            q[sorted(pins[t])] = cur[t][sorted(pins[t])]
+                            q = project(q, snapped[t], pins[t])
+                        if q is None:
+                            held.add(t)
+                            q = cur[t]
+                        cand[t] = q
+                    if len(held) == len(cur):
+                        break
                     value, known = self._loss(cand, boost)
                     if value > level + 1e-12:
                         reason = "no descent"
@@ -273,10 +333,14 @@ class Solver:
                     self.lr = min(self.opt["learning_rate"], self.lr * 1.1)
                     self.adam.param_groups[0]["lr"] = self.lr
                     ev = self._event("step", True, known=known)
-                    if ev.total < self.phase_best - self.opt["stagnation_tolerance"]:
-                        self.phase_best, self.since = ev.total, 0
+                    if ev.shortfall < self.phase_short - STALL:
+                        self.phase_short, self.since, self.since_short = ev.shortfall, 0, 0
                     else:
-                        self.since += 1
+                        self.since_short += 1
+                        if ev.total < self.phase_best - self.opt["stagnation_tolerance"]:
+                            self.phase_best, self.since = ev.total, 0
+                        else:
+                            self.since += 1
                     yield ev
                     return True
         with self.torch.no_grad():
@@ -284,6 +348,7 @@ class Solver:
         self.lr *= 0.5
         self.adam.param_groups[0]["lr"] = self.lr
         self.since += 1
+        self.since_short += 1
         yield self._event("step", False, reason, candidate=prop)
         return False
 
@@ -291,6 +356,33 @@ class Solver:
         """The movable traces a hard-check failure names (``t13: displacement ...``,
         ``clearance t08#1-t10#2 ...``)."""
         return {t for t in self.model.ids if re.search(rf"(?<![\w]){re.escape(t)}(?=[:#])", reason)}
+
+    def _pins(self, t: str, reason: str, p: np.ndarray) -> set:
+        """Interior vertices of trace ``t`` (at ``p``) to keep where they are after the
+        failure ``reason``: a short segment's ends, or the vertices at the displacement
+        limit; empty when the failure names none."""
+        out = set()
+        m = CLEARANCE.match(reason)
+        if m:
+            if m.group(1) == t:
+                k = int(m.group(2))
+                out |= {k, k + 1}
+            if m.group(3) == t and m.group(4) is not None:
+                k = int(m.group(4))
+                out |= {k, k + 1}
+        elif reason.startswith(f"{t}: displacement"):
+            d = to_polyline(p, self.model.orig[t])
+            out |= set(np.nonzero(d > 0.98 * self.limits["max_displacement_mm"])[0].tolist())
+        return {v for v in out if 0 < v < len(p) - 1}
+
+    def _note_blocked(self, reason: str) -> None:
+        """Counts a step held back by a clearance (``clearance t08#1-c0546 short ...``) on
+        that segment, for a bend there later."""
+        m = CLEARANCE.match(reason)
+        if m and m.group(1) in self.state.sid:
+            t, k, obstacle = m.group(1), int(m.group(2)), m.group(3)
+            if k < len(self.state.sid[t]):
+                self.blocked[(t, self.state.sid[t][k], obstacle)] += 1
 
     def _loss(self, pts: dict, boost: dict | None = None) -> tuple[float, tuple | None]:
         """What the optimiser minimises (merit plus barrier) at numpy state ``pts``, and
@@ -318,15 +410,17 @@ class Solver:
         self.state = State(pts, st.sid, st.snapped)
         self._rebuild()
 
-    def _commit(self, before: State, total_before: float, need_gain: float, target: str):
-        """Ends a trial: kept when the merit is at most ``total_before - need_gain``."""
+    def _commit(self, before: State, total_before: float, need_gain: float, target: str, short_before: float = 0.0):
+        """Ends a trial: kept when the shortfall dropped below ``short_before`` (mm), or did
+        not grow and the merit is at most ``total_before - need_gain``."""
         if self.stop_requested:
             self._restore(before)
             self.in_trial = False
             yield self._event("commit", False, "user stop", target)
             return False
         total, _ = self.merit.evaluate(self.state.pts)
-        ok = total <= total_before - need_gain + 1e-12
+        short = self.model.shortfall(self.state.pts) if self.model.recovering else 0.0
+        ok = short < short_before - GAIN or (short <= short_before + GAIN and total <= total_before - need_gain + 1e-12)
         if not ok:
             self._restore(before)
         self.in_trial = False
@@ -356,12 +450,12 @@ class Solver:
         return True
 
     def _trial(self, t: str, s: int):
-        before, total_before = self.state.copy(), self.total
+        before, total_before, short_before = self.state.copy(), self.total, self.short
         target = self._ref(t, s)
         # 1: snap where it is
         if (yield from self._snap_move(t, s, "snap")):
             yield from self._settle()
-            if (yield from self._commit(before, total_before, -self.opt["snap_slack"], target)):
+            if (yield from self._commit(before, total_before, -self.opt["snap_slack"], target, short_before)):
                 return
         # 2: let the group make room, then snap
         if not self.stop_requested and self.iter < self.limits["max_iterations"]:
@@ -373,7 +467,7 @@ class Solver:
             yield from self._settle(boost)
             if (yield from self._snap_move(t, s, "snap")):
                 yield from self._settle()
-                if (yield from self._commit(before, total_before, -self.opt["snap_slack"], target)):
+                if (yield from self._commit(before, total_before, -self.opt["snap_slack"], target, short_before)):
                     return
             elif self.in_trial:
                 self._restore(before)
@@ -381,25 +475,29 @@ class Solver:
                 yield self._event("commit", False, "adjust did not make room", target)
         # 3: a bend
         if not self.stop_requested and self.iter < self.limits["max_iterations"]:
-            if (yield from self._bend(t, s, before, total_before)):
+            if (yield from self._bend(t, s, before, total_before, short_before)):
                 return
         self.attempts[(t, s)] += 1
         self._reset_stagnation()
 
-    def _bend(self, t: str, s: int, before: State, total_before: float):
+    def _bend(self, t: str, s: int, before: State, total_before: float, short_before: float = 0.0,
+              at: np.ndarray | None = None, type_: str = "bend"):
+        """Splits segment ``s`` of trace ``t``: octilinear dog-legs, then a free split in
+        the middle, or (``at``, a ``rescue``) only a free split at that point."""
         target = f"{t}#{before.sid[t].index(s)}"
         if self.inserted[t] >= self.limits["max_added_vertices_per_trace"]:
-            yield self._event("bend", False, "vertex limit", target)
+            yield self._event(type_, False, "vertex limit", target)
             return False
         i = before.sid[t].index(s)
         a, b = before.pts[t][i], before.pts[t][i + 1]
-        corners = [c[1] for c in _replacements(tuple(a), tuple(b))[1:]]
+        corners = [] if at is not None else [c[1] for c in _replacements(tuple(a), tuple(b))[1:]]
         for corner in [*corners, None]:                 # dog-legs, then a free split
             st = before.copy()
-            mid = (a + b) / 2
+            mid = (a + b) / 2 if at is None else np.asarray(at, float)
             st.pts[t] = np.insert(st.pts[t], i + 1, mid, axis=0)
             s1, s2 = self._new_id(), self._new_id()
             st.sid[t][i:i + 1] = [s1, s2]
+            st.snapped[t].pop(s, None)                  # a rescue may bend a snapped segment
             self._apply(st.pts, st)                     # geometrically the same path
             if corner is not None:
                 st = self.state.copy()
@@ -411,20 +509,23 @@ class Solver:
                 reason = "inconsistent directions" if prop is None else self.model.sweep(self.state.pts, prop, self.opt["max_substeps"])
                 if reason:
                     self._restore(before)
-                    yield self._event("bend", False, reason, target, candidate=prop)
+                    yield self._event(type_, False, reason, target, candidate=prop)
                     continue
                 self._apply(prop, st)
             self.in_trial = True
-            yield self._event("bend", True, None, target)
+            yield self._event(type_, True, None, target)
             yield from self._settle()
-            if turns_deg(self.state.pts[t])[i] <= BEND:      # settled straight: no bend, no credit
+            relieved = self.model.recovering and self.model.shortfall(self.state.pts) < short_before - GAIN
+            if turns_deg(self.state.pts[t])[i] <= BEND and not relieved:   # settled straight: no credit
                 self._restore(before)
                 self.in_trial = False
                 yield self._event("commit", False, "no bend formed", target)
                 continue
-            if (yield from self._commit(before, total_before, self.opt["bend_gain"], target)):
+            if (yield from self._commit(before, total_before, self.opt["bend_gain"], target, short_before)):
                 self.inserted[t] += 1
                 self.attempts[(t, s1)] = self.attempts[(t, s2)] = self.attempts[(t, s)]
+                for key in [k for k in self.blocked if k[:2] == (t, s)]:
+                    del self.blocked[key]
                 return True
             if self.stop_requested or self.iter >= self.limits["max_iterations"]:
                 break
@@ -479,6 +580,33 @@ class Solver:
                     best = (dev, t, s)
         return best[1:] if best else None
 
+    def _rescue_target(self, stagnated: bool):
+        """(trace, segment id, obstacle) for a rescue bend: while short of clearance and
+        the shortfall stalls (``stagnation_window`` steps), the worst short pair not tried
+        yet; else, once ``stagnated``, a segment that steps kept running into an obstacle.
+        None when there is none with a try and a vertex left."""
+        ok = lambda t, s: self.rescues[(t, s)] < 1 and \
+            self.inserted[t] < self.limits["max_added_vertices_per_trace"]   # noqa: E731
+        if self.short > GAIN and self.since_short >= self.opt["stagnation_window"]:
+            for t, k, obstacle in self.model.short_pairs(self.state.pts):
+                if ok(t, self.state.sid[t][k]):
+                    return t, self.state.sid[t][k], obstacle
+        if not stagnated:
+            return None
+        for (t, s, obstacle), n in sorted(self.blocked.items(), key=lambda kv: -kv[1]):
+            if n >= self.opt["blocked_bend_after"] and s in self.state.sid[t] and ok(t, s):
+                return t, s, obstacle
+        return None
+
+    def _rescue(self, t: str, s: int, obstacle: str):
+        """A ``rescue`` bend on segment ``s`` of trace ``t`` where it comes closest to
+        ``obstacle``."""
+        self.rescues[(t, s)] += 1
+        i = self.state.sid[t].index(s)
+        at = self.model.closest(self.state.pts, t, i, obstacle)
+        yield from self._bend(t, s, self.state.copy(), self.total, self.short, at=at, type_="rescue")
+        self._reset_stagnation()
+
     # --- the run ------------------------------------------------------------------------
 
     def stop(self) -> None:
@@ -500,9 +628,14 @@ class Solver:
             yield from self._step()
             yield from self._merge()
             stagnated = self.since >= self.opt["stagnation_window"]
+            if self.short > GAIN and (r := self._rescue_target(False)):
+                yield from self._rescue(*r)
+                continue
             cand = self._candidate(stagnated)
             if cand:
                 yield from self._trial(*cand)
+            elif (r := self._rescue_target(stagnated)):
+                yield from self._rescue(*r)
             elif stagnated:
                 self.termination = "all-snapped" if self.all_snapped() else "stagnated"
                 break
@@ -518,23 +651,29 @@ class Solver:
         """The candidate file (``route-polish-result``): the best feasible state, or the
         state after event ``which``."""
         if which is None:
-            total, st, seq, terms = self.best
+            total, st, seq, terms, _ = self.best
             traces = st.pts
             snapped = {t: sorted(st.sid[t].index(s) for s in st.snapped[t]) for t in self.model.ids}
         else:
             total, terms, seq, traces, snapped = which.total, which.terms, which.seq, which.traces, which.snapped
         return result_doc(self.case, self.group, seq, traces, snapped, total, terms, self.initial,
-                          self.model.min_slack(traces), self.termination, self.info()["solver"])
+                          self.model.min_slack(traces), self.termination, self.info()["solver"],
+                          Model(self.case, movable=self.model.ids).violations(traces), self.initial_violations)
 
 
-def result_doc(case, group, seq, traces, snapped, total, terms, initial, min_slack, termination, solver) -> dict:
-    """The ``route-polish-result`` document (``specs/ROUTE_POLISH_OUTPUT.md`` §3)."""
+def result_doc(case, group, seq, traces, snapped, total, terms, initial, min_slack, termination, solver,
+               violations=(), initial_violations=()) -> dict:
+    """The ``route-polish-result`` document (``specs/ROUTE_POLISH_OUTPUT.md`` §3);
+    ``violations`` are the state's hard-check failures (empty: feasible), and a run that
+    started short of clearance lists the start's as ``initial_violations``."""
     return {"format": "route-polish-result", "version": 1, "input_sha256": case.sha256, "group": group, "seq": seq,
             "traces": [{"id": t, "points": [[float(x), float(y)] for x, y in traces[t]], "snapped": list(snapped[t])}
                        for t in traces],
             "score": {"total": total, "terms": terms},
             "initial_score": {"total": initial[0], "terms": initial[1]},
-            "constraints": {"feasible": True, "min_slack": min_slack},
+            "constraints": {"feasible": not violations, "min_slack": min_slack,
+                            **({"violations": list(violations)} if violations else {}),
+                            **({"initial_violations": list(initial_violations)} if initial_violations else {})},
             "termination": termination, "solver": {k: solver[k] for k in ("name", "version", "merit")}}
 
 

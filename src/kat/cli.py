@@ -1128,7 +1128,9 @@ def build_parser() -> argparse.ArgumentParser:
     pl1 = plsp.add_parser("check", formatter_class=_Fmt, help="preflight a case file",
                           description="The format strictly (every problem listed), then the input geometry of\n"
                                       "every trace against the hard constraints; neighbour gaps in group order.\n"
-                                      "ok is false (exit 1) when a trace is already infeasible.")
+                                      "ok is false (exit 1) when a trace is already infeasible; recoverable then\n"
+                                      "says whether run can start from it (only clearance shortfalls, centrelines\n"
+                                      "clear), blocking lists what it cannot repair.")
     pl1.add_argument("case", metavar="CASE.json")
     pl1.add_argument("--group", metavar="G", help="only this group's neighbour pairs")
     pl2 = plsp.add_parser("run", formatter_class=_Fmt, help="optimise one group of a case",
@@ -1136,6 +1138,8 @@ def build_parser() -> argparse.ArgumentParser:
                                       "multiples, bounded bend insertion; every change is checked against the\n"
                                       "hard constraints all the way (nothing jumps over an obstacle). Writes\n"
                                       "run.json, history.jsonl and result.json (best feasible state) into OUT.\n"
+                                      "A case short of clearance is recovered: no shortfall may grow, rescue\n"
+                                      "bends where it stalls; 'recovery' and the result's feasible tell.\n"
                                       "The case is never changed. Needs kat[polish] (torch); --gui kat[polish-gui].")
     pl2.add_argument("case", metavar="CASE.json")
     pl2.add_argument("--out", required=True, metavar="DIR", help="run directory (refused if it holds a run)")

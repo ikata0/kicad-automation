@@ -94,6 +94,17 @@ def test_an_infeasible_input_fails_preflight():
     assert not res["feasible"] and any("h01" in v for v in res["violations"])
 
 
+@pytest.mark.parametrize("y, recoverable", [(10.7, True), (10.3, False)])
+def test_check_says_whether_a_run_can_recover(tmp_path, y, recoverable):
+    # 0.15 mm short of the hole clearance: the run may work it off; the centreline in the
+    # hole's copper: no move can repair that
+    f = tmp_path / "case.json"
+    f.write_text(json.dumps(tiny(points=((2, 10), (18, 10)), holes=((10, y, 0.5),))))
+    res = kat.pcb.polish_check(f)
+    assert not res["ok"] and res["recoverable"] is recoverable
+    assert bool(res["blocking"]) is not recoverable
+
+
 def test_v2_anchors_waive_only_their_own_copper():
     d = to_v2(example())
     d["fixed_copper"].append({"id": "p01", "net": "n01", "shape": {"type": "circle", "center": [3, 5], "radius_mm": 0.3}})

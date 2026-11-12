@@ -190,7 +190,9 @@ ordering. A collision-free candidate reached by jumping through an obstacle
 is invalid. The solver must establish topology preservation; this format does
 not prescribe a particular corridor or homotopy algorithm.
 
-Fail preflight on an initially infeasible movable trace. Fixed context is not
+Fail preflight on an initially infeasible movable trace. (kat's solver may still
+run from an input that is only short of clearance, never letting a shortfall grow;
+see `ROUTE_POLISH_SPEC.md` §11, Recovery.) Fixed context is not
 itself a board DRC target; overlapping fixed copper and holes can be intentional.
 Unsupported rules in a private board must not be dropped when creating input.
 An adapter approximating physical curves must account conservatively for its
