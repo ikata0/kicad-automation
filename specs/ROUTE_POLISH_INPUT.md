@@ -1,6 +1,6 @@
 # Route polisher input format
 
-**Version 1 - proposed contract, 2026-11-12.**
+**Version 1 - proposed contract, 2026-11-12. Version 2 (anchored paths): section 11.**
 
 This standalone document defines a small, board-independent input for
 developing and visualising a topology-preserving route polisher. It specifies
@@ -276,3 +276,36 @@ This fixture is not a golden optimised result or a substitute for tests of
 infeasible inputs, topology changes, malformed JSON or unsupported features.
 Only explicitly reviewed synthetic documents and fixture files should enter
 a public repository; do not copy neighbouring files or directories wholesale.
+
+## 11 Version 2: anchored paths
+
+Every trace on a real board ends on copper of its own net, such as a pad, a via or
+a stub that continues elsewhere. Version 1 forbids that contact. Version 2 is
+version 1 with exactly the following changes, and is the format that
+`kat pcb polish extract` writes. A reader accepts `version` 1 or 2 and applies
+each version's rules only to documents of that version.
+
+- `scope.profile` is exactly `single-layer-anchored-paths`.
+- Each entry in `traces` has exactly `id`, `net`, `width_mm`, `points` and
+  `anchors`. `anchors` is an array, possibly empty, of unique `fixed_copper`
+  IDs whose `net` equals the trace's `net`.
+- Every anchor must touch the trace's first or last point: that point lies
+  inside or on the anchor's copper (a polyline's copper is its buffered
+  centreline). An endpoint without an anchor is a virtual attachment, as in
+  version 1.
+- Clearance between a trace and its own anchors is not checked. A trace's
+  copper may overlap them anywhere, because same-net contact cannot short.
+  Every other fixed copper keeps the full copper clearance, including copper of
+  the same net that is not one of the trace's anchors. New same-net junctions
+  therefore remain impossible.
+- Several movable traces may carry the same net token. The copper clearance
+  still applies between them.
+- A `pair_clearances` entry between a trace and one of its own anchors is
+  invalid.
+- Traces still have distinct endpoints. Two traces that share an endpoint (a
+  branch) are outside this profile; the extractor refuses such a selection.
+
+`provenance.kind` of an extract is `private-board-extract`, and
+`public_fixture` is `false`. The mapping back to the board, including net names,
+segment UUIDs, the source path and its hash, lives in a separate private
+`*.map.json` file. It is never part of the case.

@@ -1,11 +1,13 @@
 # Topology-preserving route polishing - Specification
 
-Version: **0.2** (2026-11-12), discussion draft; no implementation authorised
-by this document. **[A]** denotes a proposed assumption, **[Q]** an open question.
+Version: **0.3** (2026-11-12). The open questions are resolved in section 11, and
+the implementation follows them. **[A]** denotes a proposed assumption, **[Q]** an
+open question.
 
-This is a tool specification, separate from the board requirements in
-[`SPEC.md`](SPEC.md). It does not change those requirements or authorise
-modification of either working board.
+This is a tool specification, separate from the board requirements in the
+board project's own `SPEC.md`, which is not kat's [`SPEC.md`](../SPEC.md). It
+does not change those requirements or authorise modification of either working
+board.
 
 ## 1 Purpose and scope
 
@@ -27,7 +29,7 @@ hole or other obstacle. Trace widths remain fixed **[A]**.
 
 ## 2 Input and working model
 
-Input shall be a set of traces and constraint-defining geometrical features, as specified in specs\ROUTE_POLISH_INPUT.md.
+Input shall be a set of traces and constraint-defining geometrical features, as specified in [`ROUTE_POLISH_INPUT.md`](ROUTE_POLISH_INPUT.md).
 Use an explicitly selected route group.
 A trace in this context is a connected, editable polyline between fixed
 anchors, not an individual KiCad track segment **[A]**.
@@ -60,7 +62,7 @@ No weighted improvement may compensate for violating a hard constraint.
 4. Preserve project-specific electrical restrictions, including input/output
    separation, guard coverage and adjacent-layer proximity constraints.
 
-For T0400, `SPEC.md` remains authoritative. Its current copper-to-board-edge
+For T0400, that board project's `SPEC.md` remains authoritative. Its current copper-to-board-edge
 minimum is **0.3 mm**; distances must be measured from the copper boundary,
 not the centreline. Use the actual rules applicable to each obstacle rather
 than treating all holes or copper as identical.
@@ -193,11 +195,21 @@ checks. A successful local optimisation is not a board-level safety certificate.
 ## 9 Open choices
 
 - **[Q]** Initial board, region and 5-10-trace selection mechanism.
+   A: Shall be given manually to the `kat` extract command. I think an LLM agent should choose the traces eventually. During testing, I may do it as a user.
 - **[Q]** Preferred spacing and edge margin; merit weights and normalisation.
+   A: Edge margin: 1.0 mm preferred, so there will be space left for guard rings if desired. 
+   Spacing: Not sure - e.g. twice the minimum trace distance preferred.
+   Merit weights: configurable. Make a reasonable default choice, we can optimize them later.
 - **[Q]** Solver, geometry representation and topology-preservation mechanism.
+   A: I would try making the merit function differentiable, then trying PyTorch's gradient descent optimizers.
 - **[Q]** Snap tolerance, bend/movement limits, stopping and acceptance policies.
-- **[Q]** Encoding of T0400 electrical restrictions and treatment of copper pours
-  whose shape may change after a refill.
+   A: Snap tolerance: 1° ? And if a snap fails and a new bend was created, we must give the algorithm some iterations to optimize with the new set of bends.
+   Stopping policy: Stop if all angles snapped sucessfully, or if no convergence could be seen. Also limit the number of bends.
+
+   
+- **[Q]** Encoding of electrical restrictions and treatment of copper pours whose shape may change after a refill.
+A: Copper pours may change, surrounding traces should be hard constraints, same for pads, vias, holes. 
+
 - **[Q]** GUI toolkit and history and candidate file formats. The proposed
   portable input format is defined in section 10.
 
@@ -208,7 +220,7 @@ to weaken the hard constraints.
 
 [`ROUTE_POLISH_INPUT.md`](ROUTE_POLISH_INPUT.md) defines a standalone JSON
 input contract, version 1, for an initial single-layer local polishing problem.
-[`specs/route_polish_example.json`](specs/route_polish_example.json) is its
+[`route_polish_example.json`](route_polish_example.json) is its
 complete, deliberately synthetic example: five movable traces bending around
 a polygonal curved-edge approximation, with unequal spacing, arbitrary angles,
 fixed surrounding copper, holes and a keep-out.
@@ -225,3 +237,54 @@ project electrical constraints or production-board safety have been checked.
 Later private board adapters may implement this contract without contributing
 their input boards, generated cases or company-specific constraints to the
 public repository.
+
+## 11 Implementation decisions (v0.3)
+
+These close the **[Q]**s of section 9 for the prototype. Weights and limits stay
+configurable.
+
+- **Commands.** `kat pcb polish extract|check|run|replay|apply`. The library is
+  `kat.pcb.polish_*`, and the code lives in `src/kat/pcb/polish/`. `extract`
+  takes nets, a layer and an optional region, and writes a version-2 case
+  ([`ROUTE_POLISH_INPUT.md`](ROUTE_POLISH_INPUT.md) §11) plus a private map file.
+  `apply` writes the result into a **new** board file, never the input. It
+  then runs DRC on that copy and compares it per net with the original.
+- **Endpoints.** A trace's own endpoint pads, vias and stubs are its `anchors`.
+  Clearance to them is waived, while all other copper of the same net keeps
+  full clearance.
+- **Group order.** It is inferred geometrically at extraction from the offset
+  across the bundle, reported, and can be overridden with `--order`.
+- **Topology.** Every change of state is a linear interpolation of vertex
+  coordinates. Such a move is split into sub-steps that are each shorter than
+  the current minimum clearance slack (conservative advancement). Nothing can
+  pass through anything while anchors stay fixed, so the obstacle side and the
+  route order are preserved, including across discrete edits.
+- **Solver.** The merit terms are computed in PyTorch (float64, autograd).
+  `torch.optim.Adam` proposes each step, and projection keeps snapped directions
+  exact. Backtracking continues until the sweep and the independent hard check
+  (numpy, no autograd) pass. One iteration is one optimiser step. A
+  solver-only barrier near the constraints is never reported as score.
+- **Spacing pairs.** These are adjacent traces in group order that run locally
+  parallel. The pairing is frozen from the original geometry, with samples
+  placed by arc-length fraction.
+- **Defaults for extracts.** Edge margin 1.0 mm; preferred spacing 2 × the copper
+  clearance; snap tolerance 1°; `max_added_vertices_per_trace` 2; `max_iterations`
+  300; weights as in the example fixture.
+- **Discrete edits.** Snap within tolerance or when progress stagnates (merit
+  improvement below 1e-4 over 20 iterations). A snap is followed by 20 settle
+  iterations and is accepted if the merit is not worse. If it fails, the group
+  is adjusted: the segment's angle weight is raised for 20 iterations and the
+  snap is retried. If that fails, one octilinear dogleg bend is inserted, and it
+  is accepted only on a gain. Snapped segments are never unsnapped. Each
+  segment gets at most 2 failed attempts, and inserted vertices count
+  cumulatively per trace.
+- **Stopping.** The run stops when all segments are snapped, when it has
+  stagnated with no candidates left, at the iteration limit, or on user stop.
+- **Pours.** Copper pours are not obstacles, because they reflow after a refill
+  and DRC on the applied copy judges them. They are listed as unmodelled.
+  Tracks, pads, vias and holes are hard constraints. Rules that cannot be
+  represented make `extract` fail.
+- **GUI.** Qt (PySide6, optional extra `kat[polish-gui]`). The solver runs in a
+  worker thread, and the window only browses the recorded history.
+- **Output.** Run record, history and result formats:
+  [`ROUTE_POLISH_OUTPUT.md`](ROUTE_POLISH_OUTPUT.md).
