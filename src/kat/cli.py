@@ -160,6 +160,21 @@ def _key_values(items, flag: str, conv) -> dict:
 
 
 def _cmd_polish(a):
+    if a.polish_cmd == "extract":
+        region = None
+        if a.region:
+            x, y, w, h = (float(v) for v in a.region.split(","))
+            region = (x, y, x + w, y + h)
+        objectives = {k: v for k, v in (("preferred_spacing_mm", a.spacing), ("preferred_edge_margin_mm", a.edge_margin))
+                      if v is not None}
+        limits = {k: v for k, v in (("max_displacement_mm", a.max_displacement), ("snap_tolerance_deg", a.snap_tolerance),
+                                    ("max_added_vertices_per_trace", a.max_bends), ("max_iterations", a.max_iterations))
+                  if v is not None}
+        return kat.pcb.polish_extract(a.pcb, a.net, a.out, a.layer, region, a.order.split(",") if a.order else None,
+                                      objectives or None, _key_values(a.weight, "--weight", float) or None,
+                                      limits or None, a.accept_unmodelled, a.force)
+    if a.polish_cmd == "apply":
+        return kat.pcb.polish_apply(a.pcb, a.result, a.map, a.out, a.force)
     if a.polish_cmd == "check":
         return kat.pcb.polish_check(a.case, a.group)
     if a.polish_cmd == "run":
@@ -1078,6 +1093,38 @@ def build_parser() -> argparse.ArgumentParser:
                                      "Works on a portable case file (specs/ROUTE_POLISH_INPUT.md); never writes\n"
                                      "to an input.")
     plsp = s36.add_subparsers(dest="polish_cmd", required=True, metavar="ACTION")
+    pl0 = plsp.add_parser("extract", formatter_class=_Fmt, help="write a case of a bundle of routed traces",
+                          description="The straight track runs of the nets (globs) on one layer become the movable\n"
+                                      "traces of one group, in neighbour order across the bundle (or --order);\n"
+                                      "their end pads and vias are anchors. Context within 3 mm of the movement\n"
+                                      "region (pads, vias, holes, other tracks, keep-outs, outline) is fixed. Writes\n"
+                                      "CASE.json and the private CASE.map.json; reads the board only. ok is false\n"
+                                      "(exit 1) when the input already breaks a hard constraint.")
+    pl0.add_argument("pcb", metavar="PCB")
+    pl0.add_argument("--net", action="append", required=True, metavar="GLOB", help="nets to polish (repeatable)")
+    pl0.add_argument("--out", required=True, metavar="CASE.json")
+    pl0.add_argument("--layer", metavar="L", help="copper layer (needed when the nets run on several)")
+    pl0.add_argument("--region", metavar="X,Y,W,H", help="only track runs inside this box (mm)")
+    pl0.add_argument("--order", metavar="NET,..", help="neighbour order instead of the geometric one")
+    pl0.add_argument("--spacing", type=float, metavar="MM", help="preferred gap (default 2 x clearance)")
+    pl0.add_argument("--edge-margin", type=float, metavar="MM", help="preferred edge margin (default 1.0)")
+    pl0.add_argument("--max-displacement", type=float, metavar="MM", help="hard movement limit (default 1.0)")
+    pl0.add_argument("--snap-tolerance", type=float, metavar="DEG", help="default 1")
+    pl0.add_argument("--max-bends", type=int, metavar="N", help="added vertices per trace (default 2)")
+    pl0.add_argument("--max-iterations", type=int, metavar="N", help="default 300")
+    pl0.add_argument("--weight", action="append", metavar="TERM=W", help="merit weight (repeatable)")
+    pl0.add_argument("--accept-unmodelled", action="store_true",
+                     help="go on despite custom or kat net rules the polisher cannot model")
+    pl0.add_argument("--force", action="store_true", help="overwrite the case and map")
+    pl4 = plsp.add_parser("apply", formatter_class=_Fmt, help="write a result into a copy of the board",
+                          description="Copies PCB (and its project files) to OUT, replaces the polished traces there,\n"
+                                      "reads it back against the hard constraints and compares KiCad's DRC with the\n"
+                                      "original per net. Never writes PCB. Then run kat pcb check on OUT.")
+    pl4.add_argument("pcb", metavar="PCB")
+    pl4.add_argument("result", metavar="RESULT.json")
+    pl4.add_argument("--map", required=True, metavar="CASE.map.json")
+    pl4.add_argument("--out", required=True, metavar="NEW.kicad_pcb")
+    pl4.add_argument("--force", action="store_true", help="overwrite OUT")
     pl1 = plsp.add_parser("check", formatter_class=_Fmt, help="preflight a case file",
                           description="The format strictly (every problem listed), then the input geometry of\n"
                                       "every trace against the hard constraints; neighbour gaps in group order.\n"

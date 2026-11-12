@@ -356,8 +356,12 @@ class _Reader:
         for t in traces.values():                                   # version 2 anchors
             for a in t.anchors:
                 c = copper.get(a)
-                if c is None:
-                    self.bad(f"trace {t.id}: anchor {a!r} is not fixed copper")
+                if a in holes:
+                    pads = [copper[x] for x in t.anchors if x in copper]
+                    if not any(copper_distance(o, holes[a].center) <= TOUCH for o in pads):
+                        self.bad(f"trace {t.id}: anchor hole {a} lies in none of its anchor copper")
+                elif c is None:
+                    self.bad(f"trace {t.id}: anchor {a!r} is neither fixed copper nor a hole")
                 elif c.net != t.net:
                     self.bad(f"trace {t.id}: anchor {a} has net {c.net}, not {t.net}")
                 elif t.points and not any(copper_distance(c, p) <= TOUCH for p in (t.points[0], t.points[-1])):

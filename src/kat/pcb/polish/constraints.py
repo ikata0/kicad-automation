@@ -142,7 +142,7 @@ class Model:
         for i, t in enumerate(self.ids):
             anchors = set(case.traces[t].anchors)
             for j, (kind, owner) in enumerate(zip(self.fkind, self.fowner)):
-                if kind == "copper" and owner in anchors:
+                if kind in ("copper", "hole") and owner in anchors:
                     self.req[i, j] = -np.inf                     # own anchor: no clearance
                     continue
                 if kind == "keepout":

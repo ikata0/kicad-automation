@@ -20,7 +20,7 @@ from .board import Board, Footprint, Pad
 
 __all__ = ["Board", "Footprint", "Pad", "block_environment", "block_port", "remove", "check", "clearance", "coupling_2d", "coupling_rule",
            "drc", "edit", "escape", "fab", "import_mechanics", "instances", "layer_roles", "layer_rule", "load", "mate", "net_rules", "odb_pinout", "plane_rule",
-           "pad_geometry", "polish_check", "polish_replay", "polish_run", "port_access", "ready", "refill", "route", "snapshot", "stack", "stamp", "stamp_preview", "sync", "view"]
+           "pad_geometry", "polish_apply", "polish_check", "polish_extract", "polish_replay", "polish_run", "port_access", "ready", "refill", "route", "snapshot", "stack", "stamp", "stamp_preview", "sync", "view"]
 
 
 def load(path: Path | str) -> Board:
@@ -178,6 +178,46 @@ def tidy_tracks(pcb: Path | str, nets: list[str] | None = None, layers: list[str
                  "length": {n: [res["length"][n][0], round(lengths.get(n, 0.0), 4)] for n in kept},
                  "after": tc.metrics(final, gaps=True), "dry_run": False,
                  "check": {"drc_errors": d["errors"], "unconnected": len(d["unconnected"])}})
+
+
+def polish_extract(pcb: Path | str, nets: list[str], out: Path | str, layer: str | None = None,
+                   region: tuple[float, float, float, float] | None = None, order: list[str] | None = None,
+                   objectives: dict | None = None, weights: dict | None = None, limits: dict | None = None,
+                   accept_unmodelled: bool = False, force: bool = False) -> dict:
+    """Write a route-polish case (format v2, ``specs/ROUTE_POLISH_INPUT.md``) of the straight
+    track runs of ``nets`` (globs) on one copper layer (``layer``, needed when they are on
+    several), optionally only inside ``region`` (x0, y0, x1, y1 board mm), plus the private
+    map file ``<out stem>.map.json`` that ``polish_apply`` needs. One group, in neighbour
+    order across the bundle (or ``order``, net names). Context within 3 mm of the movement
+    region: pads, vias, holes, other tracks, track keep-outs, the outline; the trace's own
+    end pads / vias are its anchors. Custom DRC or kat net rules the polisher cannot model
+    stop it unless ``accept_unmodelled``. ``objectives`` / ``weights`` / ``limits`` override
+    the defaults (edge margin 1 mm, spacing 2 x clearance, snap 1 degree, ...). The board is
+    only read. Returns case, map, layer, order, traces, context counts, rules, unmodelled and
+    the preflight (ok, violations)."""
+    from .polish import board as _pb, require
+    require("numpy")
+    from .polish import case as _case, constraints as _cs
+    report.touch(pcb)
+    res = _pb.extract(pcb, nets, out, layer, region, order, objectives, weights, limits, accept_unmodelled, force)
+    pre = _cs.preflight(_case.load(res["case"]))
+    return tidy({**res, "ok": pre["feasible"], "violations": pre["violations"], "min_slack": pre["min_slack"]})
+
+
+def polish_apply(pcb: Path | str, result: Path | str, mapping: Path | str, out: Path | str,
+                 force: bool = False) -> dict:
+    """Write a polishing result (``result.json`` of ``polish_run``) into a **copy** ``out``
+    of ``pcb`` (with its .kicad_pro, .kicad_dru and .kat.json); ``pcb`` itself is never
+    written. Refused when the board or the case changed since the extraction (``mapping``,
+    the case's map file) or ``out`` exists (unless ``force``). Reads the saved copy back and
+    checks it against the polisher's hard constraints (round_trip), then compares KiCad's
+    DRC (zones refilled) of copy and original per polished net. Returns board, traces,
+    round_trip, drc {before, after, worse_nets} and ok. A local result is no board-level
+    sign-off: run ``kat pcb check`` on the copy."""
+    from .polish import board as _pb, require
+    require("numpy")
+    report.touch(out)
+    return tidy(_pb.apply(pcb, result, mapping, out, force))
 
 
 def polish_check(case: Path | str, group: str | None = None) -> dict:

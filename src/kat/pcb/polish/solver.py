@@ -28,7 +28,7 @@ from .merit import BEND, TERMS, VERSION as MERIT_VERSION, Merit, deviation_deg, 
 
 NAME, VERSION = "kat-polish", "0.1"
 DEFAULTS = {"learning_rate": 0.02, "settle_iterations": 20, "stagnation_window": 20, "stagnation_tolerance": 1e-4,
-            "snap_slack": 0.0, "bend_gain": 0.005, "max_attempts_per_segment": 1, "max_substeps": 64,
+            "snap_slack": 0.001, "bend_gain": 0.005, "max_attempts_per_segment": 1, "max_substeps": 64,
             "barrier_margin_mm": 0.05, "adjust_boost": 100.0}
 BACKTRACK = (1.0, 0.5, 0.25, 0.125, 0.0625)
 EXACT = 1e-9                # degrees: a segment this close to 45-degree multiples counts as exact
@@ -211,7 +211,8 @@ class Solver:
 
     def _event(self, type_: str, accepted: bool, reason=None, target=None, candidate=None, known=None) -> Event:
         self.total, self.terms = known or self.merit.evaluate(self.state.pts)
-        if accepted and (not self.in_trial or type_ == "commit") and self.total < self.best[0] - 1e-12:
+        if accepted and (not self.in_trial or type_ == "commit") and self._rank(self.total, self.state) < \
+                self._rank(self.best[0], self.best[1]) - 1e-12:
             self.best = (self.total, self.state.copy(), self.seq, dict(self.terms))
         ev = Event(self.seq, self.iter, type_, accepted, reason, target,
                    {k: v.copy() for k, v in self.state.pts.items()},
@@ -219,6 +220,11 @@ class Solver:
                    dict(self.terms), self.total, self.model.min_slack(self.state.pts), candidate)
         self.seq += 1
         return ev
+
+    def _rank(self, total: float, st: State) -> float:
+        """What "best" means: the merit, each snapped segment credited the snap allowance
+        (``snap_slack``), consistent with accepting a snap that costs up to that much."""
+        return total - self.opt["snap_slack"] * sum(len(v) for v in st.snapped.values())
 
     def _ref(self, t: str, s: int) -> str:
         return f"{t}#{self.state.sid[t].index(s)}"

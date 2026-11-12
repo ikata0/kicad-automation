@@ -287,14 +287,17 @@ each version's rules only to documents of that version.
 
 - `scope.profile` is exactly `single-layer-anchored-paths`.
 - Each entry in `traces` has exactly `id`, `net`, `width_mm`, `points` and
-  `anchors`. `anchors` is an array, possibly empty, of unique `fixed_copper`
-  IDs whose `net` equals the trace's `net`.
-- Every anchor must touch the trace's first or last point: that point lies
-  inside or on the anchor's copper (a polyline's copper is its buffered
-  centreline). An endpoint without an anchor is a virtual attachment, as in
-  version 1.
-- Clearance between a trace and its own anchors is not checked. A trace's
-  copper may overlap them anywhere, because same-net contact cannot short.
+  `anchors`. `anchors` is an array, possibly empty, of unique IDs. Each ID
+  names either `fixed_copper` whose `net` equals the trace's `net`, or a
+  `holes` entry: the drill of a plated pad or via that the trace ends on.
+- Every copper anchor must touch the trace's first or last point: that point
+  lies inside or on the anchor's copper (a polyline's copper is its buffered
+  centreline). A hole anchor's centre must lie inside or on one of the same
+  trace's copper anchors. An endpoint without an anchor is a virtual
+  attachment, as in version 1.
+- Clearance between a trace and its own anchors is not checked, and that
+  includes hole clearance to an anchor drill. A trace's copper may overlap them
+  anywhere, because same-net contact cannot short.
   Every other fixed copper keeps the full copper clearance, including copper of
   the same net that is not one of the trace's anchors. New same-net junctions
   therefore remain impossible.
