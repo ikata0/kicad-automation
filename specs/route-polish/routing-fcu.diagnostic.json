@@ -1,0 +1,83 @@
+{
+  "format": "route-polish-private-diagnostic",
+  "version": 1,
+  "case": "routing-fcu.json",
+  "case_sha256": "50c3a4026da3bbeb5b3ec46e7f067c6fb1976cd5291aab3fa0e2e351f454a21e",
+  "public_fixture": false,
+  "board_application": "Unsupported. No board map is supplied. The abstract case is not suitable for applying changes or for board/electrical safety verification.",
+  "reduction": {
+    "trace_geometry_and_group_order": "Seven isolated block-internal stubs removed; remaining traces keep their relative order. Block-side endpoints trimmed clear of the stepped keepout and their generic anchors moved with them; the bottom trace's overlapping initial dogleg removed.",
+    "component_pad_shapes_removed": 186,
+    "endpoint_contacts": "generic discs, not original pads",
+    "block_interiors": "One stepped footprint-envelope keepout without internal routing corridors. Copper and drills inside it removed.",
+    "external_context": "Bottom oval keepout removed. Mid-height cutout reduced to its upper quarter-circle, continuing vertically south from the easternmost point to the bottom edge. Vias within 1.6 mm of the old or new perimeter, their drills, and off-board copper and drills removed. Other nearby routing context retained.",
+    "critical_zero_slack_obstacles": [
+      "c0544",
+      "c0546"
+    ],
+    "traces": 7,
+    "fixed_copper": 108,
+    "holes": 61,
+    "keepouts": 1
+  },
+  "solver": {
+    "name": "kat-polish",
+    "version": "0.1"
+  },
+  "checks": {
+    "before_cleanup": {
+      "case_sha256": "c5966f5b19ed1b4e4f280a6681a8378373efcfc085e8e72185c626e3977ec0a3",
+      "preflight_feasible": true,
+      "minimum_slack": {
+        "value": -5.689893001203927e-15,
+        "a": "t04#1",
+        "b": "c0546"
+      },
+      "first_three_continuous_steps": [
+        {
+          "iteration": 1,
+          "accepted": false,
+          "reason": "sweep"
+        },
+        {
+          "iteration": 2,
+          "accepted": false,
+          "reason": "sweep"
+        },
+        {
+          "iteration": 3,
+          "accepted": false,
+          "reason": "sweep"
+        }
+      ],
+      "clearance_increasing_move": {
+        "trace": "t04",
+        "interior_vertex_offset_mm": [
+          0.0,
+          -0.001
+        ],
+        "endpoint_violations": [],
+        "minimum_slack_after_mm": 0.000999999999999085,
+        "sweep_rejection": "sweep"
+      }
+    },
+    "cleaned": {
+      "preflight_feasible": true,
+      "minimum_slack": {
+        "value": -5.689893001203927e-15,
+        "a": "t04#1",
+        "b": "c0546"
+      },
+      "clearance_increasing_move": {
+        "trace": "t04",
+        "interior_vertex_offset_mm": [
+          0.0,
+          -0.001
+        ],
+        "endpoint_violations": [],
+        "minimum_slack_after_mm": 0.000999999999999085,
+        "sweep_rejection": "sweep"
+      }
+    }
+  }
+}
