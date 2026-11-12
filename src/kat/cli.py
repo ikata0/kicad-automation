@@ -149,6 +149,15 @@ def cmd_lib(a):
     return kat.lib_show(a.lib_id)
 
 
+def _polish_options_help() -> str:
+    from .pcb.polish import OPTIONS
+    rows = "\n".join(f"  {k:<25}{d!s:>6}  {m}" for k, (d, m) in OPTIONS.items())
+    return ("Solver options (--option KEY=V, repeatable; KEY, default, meaning; run.json records\n"
+            "the effective values under options.solver):\n" + rows +
+            "\n\nExamples:\n  kat pcb polish run CASE.json --out run1 --max-iterations 1000 \\\n"
+            "      --option settle_iterations=10 --option bend_gain=0.01 --weight angle=2")
+
+
 def _key_values(items, flag: str, conv) -> dict:
     out = {}
     for x in items or []:
@@ -1142,13 +1151,16 @@ def build_parser() -> argparse.ArgumentParser:
                                       "run.json, history.jsonl and result.json (best feasible state) into OUT.\n"
                                       "A case short of clearance is recovered: no shortfall may grow, rescue\n"
                                       "bends where it stalls; 'recovery' and the result's feasible tell.\n"
-                                      "The case is never changed. Needs kat[polish] (torch); --gui kat[polish-gui].")
+                                      "The case is never changed. Needs kat[polish] (torch); --gui kat[polish-gui].",
+                          epilog=_polish_options_help())
     pl2.add_argument("case", metavar="CASE.json")
     pl2.add_argument("--out", required=True, metavar="DIR", help="run directory (refused if it holds a run)")
     pl2.add_argument("--group", metavar="G", help="the group to optimise (needed when there are several)")
     pl2.add_argument("--weight", action="append", metavar="TERM=W",
                      help="override a merit weight: angle, spacing, edge, displacement, length, complexity")
-    pl2.add_argument("--option", action="append", metavar="KEY=V", help="solver knob, e.g. settle_iterations=10")
+    pl2.add_argument("--option", action="append", metavar="KEY=V",
+                     help="override a solver option, repeatable; every KEY with its default and meaning "
+                          "is listed under 'Solver options' below")
     pl2.add_argument("--max-iterations", type=int, metavar="N")
     pl2.add_argument("--snap-tolerance", type=float, metavar="DEG")
     pl2.add_argument("--max-bends", type=int, metavar="N", help="added vertices per trace")

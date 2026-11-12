@@ -107,3 +107,16 @@ def test_a_start_short_of_clearance_is_recovered_with_a_rescue_bend():
     assert all(not m.violations(e.traces) for e in evs if e.accepted)
     with pytest.raises(kat.KatError, match="beyond recovery.*touches h01"):
         sv.Solver(pc.loads(json.dumps(tiny(points=((2, 10), (18, 10)), holes=((10, 10.3, 0.5),)))))
+
+
+def test_solver_options_are_listed_in_help_and_typed(capsys):
+    with pytest.raises(SystemExit):
+        cli.main(["pcb", "polish", "run", "--help"])
+    out = capsys.readouterr().out.split("Solver options (")[1]
+    assert all(k in out for k in sv.DEFAULTS)
+    opt = sv.solver_options(None, {"settle_iterations": 10.0, "adjust_boost": 50.0})
+    assert opt["settle_iterations"] == 10 and type(opt["settle_iterations"]) is int
+    with pytest.raises(kat.KatError, match="whole number"):
+        sv.solver_options(None, {"max_substeps": 2.5})
+    with pytest.raises(kat.KatError, match="settle_iterations.*kat pcb polish run --help"):
+        sv.solver_options(None, {"settle": 1.0})

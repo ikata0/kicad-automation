@@ -287,7 +287,8 @@ configurable.
   snap is retried. If that fails, one octilinear dogleg bend is inserted, and it
   is accepted only on a gain. Snapped segments are never unsnapped. Each
   segment gets one failed attempt (configurable), and inserted vertices count
-  cumulatively per trace.
+  cumulatively per trace. These numbers are solver options (`--option KEY=V`):
+  `kat pcb polish run --help` lists each with its default and meaning.
 - **Recovery from a start short of clearance.** `check` reports such an input as
   not ok, and says whether it is `recoverable`: every violation is a clearance
   shortfall while the centrelines stay clear of the obstacles. Anything else (a

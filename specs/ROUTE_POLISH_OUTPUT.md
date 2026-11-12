@@ -37,7 +37,8 @@ itself private. This covers its history, screenshots and logs (input §3).
   solver's own knobs: `learning_rate`, `settle_iterations`,
   `stagnation_window`, `stagnation_tolerance`, `snap_slack`, `bend_gain`,
   `max_attempts_per_segment`, `max_substeps`, `barrier_margin_mm`,
-  `adjust_boost` and `blocked_bend_after`.
+  `adjust_boost` and `blocked_bend_after` (defaults and meanings:
+  `kat pcb polish run --help`, set with `--option KEY=V`).
 - `merit` is the version of the merit definition. Scores are only comparable
   between runs that share the same `solver.name`, `version` and `merit`.
 - `termination` is one of `all-snapped`, `stagnated`, `max-iterations`,

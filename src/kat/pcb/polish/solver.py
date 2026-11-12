@@ -31,15 +31,13 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from ..trackclean import _replacements
-from . import require
+from . import OPTIONS, require
 from .case import Case
 from .constraints import Model
 from .merit import BEND, TERMS, VERSION as MERIT_VERSION, Merit, deviation_deg, turns_deg
 
 NAME, VERSION = "kat-polish", "0.1"
-DEFAULTS = {"learning_rate": 0.02, "settle_iterations": 20, "stagnation_window": 20, "stagnation_tolerance": 1e-4,
-            "snap_slack": 0.001, "bend_gain": 0.005, "max_attempts_per_segment": 1, "max_substeps": 64,
-            "barrier_margin_mm": 0.05, "adjust_boost": 100.0, "blocked_bend_after": 5}
+DEFAULTS = {k: v for k, (v, _) in OPTIONS.items()}
 BACKTRACK = (1.0, 0.5, 0.25, 0.125, 0.0625)
 EXACT = 1e-9                # degrees: a segment this close to 45-degree multiples counts as exact
 GAIN = 1e-6                 # mm: a shortfall reduced by this much counts as progress
@@ -131,6 +129,24 @@ def project(pts: np.ndarray, snapped_idx: dict, fixed=()) -> np.ndarray | None:
     return x.reshape(n, 2)
 
 
+def solver_options(weights: dict | None, options: dict | None) -> dict:
+    """``DEFAULTS`` with ``options`` applied, each value of its default's type (a count must
+    be a whole number); ``KatError`` for an unknown weight or option, naming the valid ones."""
+    from ...env import KatError
+    bad = [k for k in (weights or {}) if k not in TERMS] + [k for k in (options or {}) if k not in DEFAULTS]
+    if bad:
+        raise KatError(f"unknown option(s) {', '.join(bad)}: weights {', '.join(TERMS)}; options "
+                       f"{', '.join(DEFAULTS)} (meanings and defaults: kat pcb polish run --help)")
+    out = dict(DEFAULTS)
+    for k, v in (options or {}).items():
+        if isinstance(DEFAULTS[k], int):
+            if not float(v).is_integer():
+                raise KatError(f"option {k}: a whole number, not {v}")
+            v = int(v)
+        out[k] = type(DEFAULTS[k])(v)
+    return out
+
+
 class Solver:
     """A polishing run on ``case``'s group ``group``: ``weights``, ``options`` (solver knobs,
     ``DEFAULTS``) and ``limits`` (the input's names) override the case's values."""
@@ -140,13 +156,8 @@ class Solver:
         self.torch = require("torch")
         self.case = case
         self.limits = {**case.limits, **(limits or {})}
-        case.limits = self.limits                     # the model's displacement limit reads it
         self.objectives = {**case.objectives, "weights": {**case.objectives["weights"], **(weights or {})}}
-        bad = [k for k in (weights or {}) if k not in TERMS] + [k for k in (options or {}) if k not in DEFAULTS]
-        if bad:
-            from ...env import KatError
-            raise KatError(f"unknown option(s) {', '.join(bad)}: weights {', '.join(TERMS)}; options {', '.join(DEFAULTS)}")
-        self.opt = {**DEFAULTS, **(options or {})}
+        self.opt = solver_options(weights, options)
         self.model = Model(case, group)
         self.group = self.model.group
         start = self.model.initial()
@@ -673,4 +684,4 @@ def result_doc(case, group, seq, traces, snapped, total, terms, initial, min_sla
             "termination": termination, "solver": {k: solver[k] for k in ("name", "version", "merit")}}
 
 
-__all__ = ["DEFAULTS", "Event", "Solver", "State", "direction", "project", "result_doc"]
+__all__ = ["DEFAULTS", "Event", "Solver", "State", "direction", "project", "result_doc", "solver_options"]

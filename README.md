@@ -340,7 +340,8 @@ kat pcb polish replay polish_run --case specs/route_polish_example.json --gui
 `run` writes `run.json`, `history.jsonl` (every event) and `result.json` (the best feasible
 state) into `--out`. It refuses a directory that already holds a run, unless `--force` is
 given. It prints the score terms before and after. `--max-iterations N`,
-`--weight angle=2` and so on override the case's settings.
+`--weight angle=2` and so on override the case's settings. `--option KEY=V` sets a
+solver knob; `kat pcb polish run --help` lists them all with defaults and meanings.
 
 In the window:
 - **Step** advances one event and **Run** / **Pause** let the solver go.

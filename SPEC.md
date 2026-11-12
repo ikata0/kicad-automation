@@ -382,7 +382,7 @@ constraints allow inside the movement region, their bounding box grown by `--mov
 Runs that share an end with a longer one stay fixed (`held`). A private `CASE.map.json` is
 written beside it. Custom DRC or kat net rules it cannot model stop it unless
 `--accept-unmodelled`. `check CASE` preflights.
-`run CASE --out DIR [--gui] [--weight T=W]` minimises a weighted merit (angle to 45-degree
+`run CASE --out DIR [--gui] [--weight T=W] [--option KEY=V]` minimises a weighted merit (angle to 45-degree
 multiples, spacing to neighbours, edge margin, displacement, length, complexity; PyTorch
 gradients). Snapped segments stay exact, and bends are bounded. Every change is a straight
 move of the vertices, split into steps smaller than the centrelines' distance to contact, so nothing ever
@@ -390,7 +390,8 @@ passes through an obstacle or another trace; clearance is required of every stat
 An input only short of clearance (`check` says `recoverable`) is run anyway: no shortfall may
 grow, the solver works it off and bends a segment where it stalls (`rescue`), and the run's
 `recovery` and the result's `feasible` say whether it got clear. DIR gets `run.json`, `history.jsonl` and
-`result.json` (best feasible state). `replay DIR [--case CASE --gui]` summarises or browses a
+`result.json` (best feasible state). `--option KEY=V` sets a solver knob; `run --help` lists
+every key with its default and meaning. `replay DIR [--case CASE --gui]` summarises or browses a
 run. `apply PCB RESULT --map CASE.map.json --out NEW.kicad_pcb` writes into a **copy**, never
 the input. It reads the copy back against the hard constraints and compares DRC with the
 original per net; `kat pcb check NEW` then gives the full verdict. Weights are a first guess:
@@ -1039,7 +1040,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `pcb stamp PCB BLOCK_PCB [INSTANCE...] --at X,Y --preview [...]` | origin, turned bounds and ports of a proposed stamp, board unchanged (§4.18) |
 | `pcb escape PCB SPEC.json [--apply] [--out FILE]` | route permutable pins, choosing the assignment with the tracks (§4.10) |
 | `pcb tidy PCB [--nets GLOB] [--layers L,..] [--region X,Y,W,H] [--steps S,..] [--corners 45/arc/keep] [--spread GAP] [--max-growth PCT] [--freeze-length NET] [--include-locked] [--dry-run]` | clean up routed tracks, judged by DRC per net (§4.10) |
-| `pcb polish extract PCB --net GLOB... --out CASE.json [--layer L] [--region X,Y,W,H] [--order NET,..] [--move-margin MM] [--accept-unmodelled]` / `check CASE` / `run CASE --out DIR [--gui] [--weight T=W] [--max-iterations N]` / `replay DIR [--case CASE --gui]` / `apply PCB RESULT --map MAP --out NEW` | topology-preserving polishing of a routed bundle; the result goes into a copy judged by DRC (§4.10) |
+| `pcb polish extract PCB --net GLOB... --out CASE.json [--layer L] [--region X,Y,W,H] [--order NET,..] [--move-margin MM] [--accept-unmodelled]` / `check CASE` / `run CASE --out DIR [--gui] [--weight T=W] [--option KEY=V] [--max-iterations N]` / `replay DIR [--case CASE --gui]` / `apply PCB RESULT --map MAP --out NEW` | topology-preserving polishing of a routed bundle; the result goes into a copy judged by DRC (§4.10) |
 | `pcb stitch PCB NET [--pitch MM] [--margin MM]` / `pcb plane-stub PCB REF... [--net N] [--skip-net N]` | stitching vias; SMD pads to their plane by stub and via (§4.9) |
 | `pcb profile PCB [--via-types KINDS] [--min-clearance MM] [--clear]` | the board's fabrication profile and its departures (§4.7) |
 | `pcb stamps PCB [--rebuild [INSTANCE...]]` | the board's stamp records; recover lost ones from the board (§4.18) |
@@ -1278,6 +1279,7 @@ column in place of the net.
 | Router output often sits at exactly its clearance (slack 0 up to float noise). A topology check that bounds each sub-step by the clearance slack then lets such a segment move nowhere, not even away, and one trace at a limit stopped the whole group's step | `pcb polish` bounds sub-steps by the centrelines' distance to contact and requires clearance of the end state only; a failing step keeps the named vertices (else the trace) in place |
 | A track ends over the drill of its own pad or via; a hole-clearance rule without nets made every extracted trace infeasible | in the polish case a trace's end pads, vias **and their drills** are its anchors, exempt from its own clearance only |
 | A hard distance limit (0.3-1 mm) on top of the clearances froze long segments 2-20 degrees off 45: the dogleg that straightens one puts its corner 1-3 mm off the line, and a bend in the middle of a segment with fixed ends gains nothing (one half turns towards 45, the other away) | `pcb polish` has no distance limit; the movement region (`--move-margin`) only bounds the context, the `displacement` weight keeps traces near the input |
+| `--option` values were all parsed as floats, so a count such as `settle_iterations=10` (the help's own example) crashed the run, and the help named only that one key | `polish_run` converts each option to its default's type and refuses a fractional count; `kat pcb polish run --help` lists every key with default and meaning, an unknown key's error points there |
 | Polished geometry was first judged only by the polisher's own model | `apply` refuses a changed board or case, reads the copy back, and compares KiCad's DRC with the original per net |
 | Escaping a SKiDL pin name with `+` or brackets (`u[r"IN\+"]`) finds no pin: names match exactly unless `match_pin_regex` is set | write the name literally, `u["IN+"]`; a name with a space takes the pin number (`tests/test_skidl_blocks.py` pins this down) |
 
