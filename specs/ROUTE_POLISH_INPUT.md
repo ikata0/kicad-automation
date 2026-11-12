@@ -249,9 +249,12 @@ The run record must store the solver identity and effective merit definition.
 |---|---|
 | `max_iterations` | Positive integer cap on solver iterations; solver must document its iteration unit. |
 | `max_added_vertices_per_trace` | Non-negative integer cap relative to the input point count. Removing/reinserting vertices must not evade it. |
-| `max_displacement_mm` | Positive maximum symmetric centreline Hausdorff distance from the input trace; applies to entire segments, not only vertices. |
 | `snap_tolerance_deg` | Positive angle deviation below which a snap may be attempted, less than half the angle step. Not a tolerance for claiming exact snapping. |
 | `seed` | Non-negative integer seed for any random decisions. |
+
+There is no distance limit: a trace may move anywhere in `movement_region` that the
+hard constraints allow, and the `displacement` weight is what keeps it near the input.
+Earlier drafts had `max_displacement_mm`; a reader refuses it with that explanation.
 
 The JSON is sufficient as a replay input only when accompanied by the solver
 version and effective options. Accepted/rejected event history and candidate

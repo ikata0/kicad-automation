@@ -139,7 +139,6 @@
   "limits": {
     "max_iterations": 300,
     "max_added_vertices_per_trace": 2,
-    "max_displacement_mm": 1.5,
     "snap_tolerance_deg": 6,
     "seed": 0
   }

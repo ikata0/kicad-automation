@@ -25,7 +25,7 @@ TOP = ("format", "version", "units", "provenance", "scope", "layer", "board", "m
        "traces", "fixed_copper", "holes", "keepouts", "groups", "objectives", "limits")
 OBJECTIVES = ("angle_step_deg", "preferred_spacing_mm", "preferred_edge_margin_mm", "parallel_tolerance_deg",
               "displacement_scale_mm", "short_segment_mm", "weights")
-LIMITS = ("max_iterations", "max_added_vertices_per_trace", "max_displacement_mm", "snap_tolerance_deg", "seed")
+LIMITS = ("max_iterations", "max_added_vertices_per_trace", "snap_tolerance_deg", "seed")
 TOUCH = 1e-6                # mm: an endpoint this close to an anchor's copper touches it
 
 Pt = tuple[float, float]
@@ -443,12 +443,15 @@ class _Reader:
                 if not any(objectives["weights"].values()):
                     self.bad("objectives.weights: at least one must be positive")
         lim = d["limits"]
+        if isinstance(lim, dict) and "max_displacement_mm" in lim:      # dropped: the hard constraints suffice
+            self.bad("limits.max_displacement_mm: no longer supported (traces move as far as the hard "
+                     "constraints and the movement region allow); remove it")
+            lim = {k: v for k, v in lim.items() if k != "max_displacement_mm"}
         limits: dict = {}
         if self.keys(lim, LIMITS, "limits"):
             limits = {"max_iterations": self.integer(lim["max_iterations"], "limits.max_iterations", 1),
                       "max_added_vertices_per_trace": self.integer(lim["max_added_vertices_per_trace"],
                                                                    "limits.max_added_vertices_per_trace", 0),
-                      "max_displacement_mm": self.num(lim["max_displacement_mm"], "limits.max_displacement_mm", positive=True),
                       "snap_tolerance_deg": self.num(lim["snap_tolerance_deg"], "limits.snap_tolerance_deg", positive=True),
                       "seed": self.integer(lim["seed"], "limits.seed", 0)}
             if limits["snap_tolerance_deg"] >= 22.5:

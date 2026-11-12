@@ -33,7 +33,7 @@ import numpy as np
 from ..trackclean import _replacements
 from . import require
 from .case import Case
-from .constraints import Model, to_polyline
+from .constraints import Model
 from .merit import BEND, TERMS, VERSION as MERIT_VERSION, Merit, deviation_deg, turns_deg
 
 NAME, VERSION = "kat-polish", "0.1"
@@ -353,14 +353,13 @@ class Solver:
         return False
 
     def _named(self, reason: str) -> set:
-        """The movable traces a hard-check failure names (``t13: displacement ...``,
+        """The movable traces a hard-check failure names (``t13: off the board``,
         ``clearance t08#1-t10#2 ...``)."""
         return {t for t in self.model.ids if re.search(rf"(?<![\w]){re.escape(t)}(?=[:#])", reason)}
 
     def _pins(self, t: str, reason: str, p: np.ndarray) -> set:
         """Interior vertices of trace ``t`` (at ``p``) to keep where they are after the
-        failure ``reason``: a short segment's ends, or the vertices at the displacement
-        limit; empty when the failure names none."""
+        failure ``reason``: a short segment's ends; empty when the failure names none."""
         out = set()
         m = CLEARANCE.match(reason)
         if m:
@@ -370,9 +369,6 @@ class Solver:
             if m.group(3) == t and m.group(4) is not None:
                 k = int(m.group(4))
                 out |= {k, k + 1}
-        elif reason.startswith(f"{t}: displacement"):
-            d = to_polyline(p, self.model.orig[t])
-            out |= set(np.nonzero(d > 0.98 * self.limits["max_displacement_mm"])[0].tolist())
         return {v for v in out if 0 < v < len(p) - 1}
 
     def _note_blocked(self, reason: str) -> None:

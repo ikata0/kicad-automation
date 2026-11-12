@@ -54,7 +54,7 @@ Every line is one event object:
 | `iter` | Solver iterations (optimiser steps) so far. |
 | `type` | `start`, `step`, `snap`, `adjust`, `bend`, `rescue`, `merge`, `commit`, `stop`. A `rescue` is a bend split where a segment comes closest to the obstacle it is short of (or keeps running into). |
 | `accepted` | Whether the event's candidate became the current state. |
-| `reason` | Why a candidate was rejected or a trial was reverted, else `null`. Examples: `sweep`, `clearance t02#3-h01`, `displacement`, `vertex limit`, `merit worse`, `no gain`, `inconsistent directions`. |
+| `reason` | Why a candidate was rejected or a trial was reverted, else `null`. Examples: `sweep`, `clearance t02#3-h01`, `vertex limit`, `merit worse`, `no gain`, `inconsistent directions`. |
 | `target` | The segment the event is about, `"<trace>#<index>"`, else `null`. |
 | `traces` | `{trace id: points}`: the **current accepted state after** the event, for every trace in the group. |
 | `snapped` | `{trace id: [segment indices]}` for that state. |

@@ -183,13 +183,14 @@ def tidy_tracks(pcb: Path | str, nets: list[str] | None = None, layers: list[str
 def polish_extract(pcb: Path | str, nets: list[str], out: Path | str, layer: str | None = None,
                    region: tuple[float, float, float, float] | None = None, order: list[str] | None = None,
                    objectives: dict | None = None, weights: dict | None = None, limits: dict | None = None,
-                   accept_unmodelled: bool = False, force: bool = False) -> dict:
+                   accept_unmodelled: bool = False, force: bool = False, move_margin: float = 2.0) -> dict:
     """Write a route-polish case (format v2, ``specs/ROUTE_POLISH_INPUT.md``) of the straight
     track runs of ``nets`` (globs) on one copper layer (``layer``, needed when they are on
     several), optionally only inside ``region`` (x0, y0, x1, y1 board mm), plus the private
     map file ``<out stem>.map.json`` that ``polish_apply`` needs. One group, in neighbour
-    order across the bundle (or ``order``, net names). Context within 3 mm of the movement
-    region: pads, vias, holes, other tracks, track keep-outs, the outline; the trace's own
+    order across the bundle (or ``order``, net names). The traces may move anywhere inside
+    the movement region, their bounding box grown by ``move_margin`` mm, as far as clearances,
+    edge, holes and keep-outs allow. Context within 3 mm of the movement region: pads, vias, holes, other tracks, track keep-outs, the outline; the trace's own
     end pads / vias are its anchors. Custom DRC or kat net rules the polisher cannot model
     stop it unless ``accept_unmodelled``. ``objectives`` / ``weights`` / ``limits`` override
     the defaults (edge margin 1 mm, spacing 2 x clearance, snap 1 degree, ...). The board is
@@ -199,7 +200,8 @@ def polish_extract(pcb: Path | str, nets: list[str], out: Path | str, layer: str
     require("numpy")
     from .polish import case as _case, constraints as _cs
     report.touch(pcb)
-    res = _pb.extract(pcb, nets, out, layer, region, order, objectives, weights, limits, accept_unmodelled, force)
+    res = _pb.extract(pcb, nets, out, layer, region, order, objectives, weights, limits, accept_unmodelled, force,
+                      move_margin)
     pre = _cs.preflight(_case.load(res["case"]))
     return tidy({**res, "ok": pre["feasible"], "violations": pre["violations"], "min_slack": pre["min_slack"]})
 

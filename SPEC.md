@@ -376,7 +376,9 @@ judged by DRC and a net with more findings or unconnected items than before is p
 `specs/ROUTE_POLISH_INPUT.md` and `ROUTE_POLISH_OUTPUT.md`; needs `kat[polish]`, the window
 `kat[polish-gui]`). `extract PCB --net GLOB... [--layer] [--region] --out CASE.json` writes a
 portable case of the straight runs on one layer, in neighbour order across the bundle (or
-`--order`). Their end pads, vias and drills are anchors, and context within 3 mm is fixed.
+`--order`). Their end pads, vias and drills are anchors. The traces may move anywhere the hard
+constraints allow inside the movement region, their bounding box grown by `--move-margin`
+(default 2 mm; there is no distance limit), and context within 3 mm of it is fixed.
 Runs that share an end with a longer one stay fixed (`held`). A private `CASE.map.json` is
 written beside it. Custom DRC or kat net rules it cannot model stop it unless
 `--accept-unmodelled`. `check CASE` preflights.
@@ -1037,7 +1039,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `pcb stamp PCB BLOCK_PCB [INSTANCE...] --at X,Y --preview [...]` | origin, turned bounds and ports of a proposed stamp, board unchanged (§4.18) |
 | `pcb escape PCB SPEC.json [--apply] [--out FILE]` | route permutable pins, choosing the assignment with the tracks (§4.10) |
 | `pcb tidy PCB [--nets GLOB] [--layers L,..] [--region X,Y,W,H] [--steps S,..] [--corners 45/arc/keep] [--spread GAP] [--max-growth PCT] [--freeze-length NET] [--include-locked] [--dry-run]` | clean up routed tracks, judged by DRC per net (§4.10) |
-| `pcb polish extract PCB --net GLOB... --out CASE.json [--layer L] [--region X,Y,W,H] [--order NET,..] [--accept-unmodelled]` / `check CASE` / `run CASE --out DIR [--gui] [--weight T=W] [--max-iterations N]` / `replay DIR [--case CASE --gui]` / `apply PCB RESULT --map MAP --out NEW` | topology-preserving polishing of a routed bundle; the result goes into a copy judged by DRC (§4.10) |
+| `pcb polish extract PCB --net GLOB... --out CASE.json [--layer L] [--region X,Y,W,H] [--order NET,..] [--move-margin MM] [--accept-unmodelled]` / `check CASE` / `run CASE --out DIR [--gui] [--weight T=W] [--max-iterations N]` / `replay DIR [--case CASE --gui]` / `apply PCB RESULT --map MAP --out NEW` | topology-preserving polishing of a routed bundle; the result goes into a copy judged by DRC (§4.10) |
 | `pcb stitch PCB NET [--pitch MM] [--margin MM]` / `pcb plane-stub PCB REF... [--net N] [--skip-net N]` | stitching vias; SMD pads to their plane by stub and via (§4.9) |
 | `pcb profile PCB [--via-types KINDS] [--min-clearance MM] [--clear]` | the board's fabrication profile and its departures (§4.7) |
 | `pcb stamps PCB [--rebuild [INSTANCE...]]` | the board's stamp records; recover lost ones from the board (§4.18) |
@@ -1275,6 +1277,7 @@ column in place of the net.
 | kat writes coordinates with 4 decimals (`sexpr.num`), so polished vertices moved by up to 0.05 µm: exact 45-degree segments bent and small clearance margins could vanish. KiCad itself keeps 6 decimals (nm) | `pcb polish apply` writes its segments to the nanometre and checks the saved copy against the hard constraints again |
 | Router output often sits at exactly its clearance (slack 0 up to float noise). A topology check that bounds each sub-step by the clearance slack then lets such a segment move nowhere, not even away, and one trace at a limit stopped the whole group's step | `pcb polish` bounds sub-steps by the centrelines' distance to contact and requires clearance of the end state only; a failing step keeps the named vertices (else the trace) in place |
 | A track ends over the drill of its own pad or via; a hole-clearance rule without nets made every extracted trace infeasible | in the polish case a trace's end pads, vias **and their drills** are its anchors, exempt from its own clearance only |
+| A hard distance limit (0.3-1 mm) on top of the clearances froze long segments 2-20 degrees off 45: the dogleg that straightens one puts its corner 1-3 mm off the line, and a bend in the middle of a segment with fixed ends gains nothing (one half turns towards 45, the other away) | `pcb polish` has no distance limit; the movement region (`--move-margin`) only bounds the context, the `displacement` weight keeps traces near the input |
 | Polished geometry was first judged only by the polisher's own model | `apply` refuses a changed board or case, reads the copy back, and compares KiCad's DRC with the original per net |
 | Escaping a SKiDL pin name with `+` or brackets (`u[r"IN\+"]`) finds no pin: names match exactly unless `match_pin_regex` is set | write the name literally, `u["IN+"]`; a name with a space takes the pin number (`tests/test_skidl_blocks.py` pins this down) |
 

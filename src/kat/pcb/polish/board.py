@@ -27,10 +27,10 @@ from . import case as pc
 
 ARC_ERROR = 0.001           # mm: chord error of arcs and round pads
 REACH = 3.0                 # mm around the movement region in which context is collected
+MARGIN = 2.0                # mm the movement region extends beyond the traces' bounding box
 OBJECTIVES = {"preferred_edge_margin_mm": 1.0, "parallel_tolerance_deg": 15, "displacement_scale_mm": 1.0}
 WEIGHTS = {"angle": 1, "spacing": 1, "edge": 0.8, "displacement": 0.25, "length": 0.1, "complexity": 0.3}
-LIMITS = {"max_iterations": 300, "max_added_vertices_per_trace": 2, "max_displacement_mm": 1.0,
-          "snap_tolerance_deg": 1.0, "seed": 0}
+LIMITS = {"max_iterations": 300, "max_added_vertices_per_trace": 2, "snap_tolerance_deg": 1.0, "seed": 0}
 SAFE_DRU = {"clearance", "edge_clearance", "hole_clearance", "track_width", "via_diameter", "hole_size",
             "annular_width", "via_count", "courtyard_clearance", "silk_clearance", "text_height",
             "text_thickness", "thermal_relief_gap", "thermal_spoke_width", "min_resolved_spokes",
@@ -88,9 +88,12 @@ def dru_constraints(text: str) -> list[tuple[str, str, float | None]]:
 
 def extract(pcb: Path | str, nets: list[str], out: Path | str, layer: str | None = None, region=None,
             order: list[str] | None = None, objectives: dict | None = None, weights: dict | None = None,
-            limits: dict | None = None, accept_unmodelled: bool = False, force: bool = False) -> dict:
+            limits: dict | None = None, accept_unmodelled: bool = False, force: bool = False,
+            move_margin: float = MARGIN) -> dict:
     """See ``kat.pcb.polish_extract``."""
     pcb, out = Path(pcb), Path(out)
+    if not (isinstance(move_margin, (int, float)) and 0 <= move_margin < math.inf):
+        raise KatError(f"move margin {move_margin!r}: a non-negative number of mm")
     mp = map_path(out)
     for f in (out, mp):
         if f.exists() and not force:
@@ -122,7 +125,7 @@ def extract(pcb: Path | str, nets: list[str], out: Path | str, layer: str | None
     lim = {**LIMITS, **(limits or {})}
     pts_all = [_c(p) for c in chains for p in c.pts]
     half = max(c.width for c in chains) / 2
-    g = lim["max_displacement_mm"] + half + 0.05
+    g = move_margin + half + 0.05
     x0, y0, x1, y1 = _box(pts_all)
     region_box = (x0 - g, y0 - g, x1 + g, y1 + g)
     reach = (region_box[0] - REACH, region_box[1] - REACH, region_box[2] + REACH, region_box[3] + REACH)

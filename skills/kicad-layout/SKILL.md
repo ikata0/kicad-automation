@@ -229,7 +229,9 @@ with kat.pcb.edit(PCB) as b:
   case.json`, then `kat pcb polish run case.json --out run`, then `kat pcb polish apply PCB
   run/result.json --map case.map.json --out polished.kicad_pcb`. The original is never written.
   Accept the copy only after `kat pcb check` on it. Needs `pip install 'kat[polish]'`; `--gui`
-  (with `kat[polish-gui]`) lets a person step through the run. Weights are `--weight T=W`.
+  (with `kat[polish-gui]`) lets a person step through the run. Weights are `--weight T=W`. No
+  distance limit: traces move as far as the hard constraints allow within `--move-margin` (2 mm)
+  of their bounding box; a larger `displacement` weight keeps them closer.
   A case already short of clearance runs too (`check` says `recoverable`); read the run's
   `recovery`: only a result with `feasible: true` is clear.
 - A route that stopped converging shows in `unrouted` per pass, a slow stage in `stages`.

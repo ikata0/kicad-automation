@@ -167,12 +167,11 @@ def _cmd_polish(a):
             region = (x, y, x + w, y + h)
         objectives = {k: v for k, v in (("preferred_spacing_mm", a.spacing), ("preferred_edge_margin_mm", a.edge_margin))
                       if v is not None}
-        limits = {k: v for k, v in (("max_displacement_mm", a.max_displacement), ("snap_tolerance_deg", a.snap_tolerance),
-                                    ("max_added_vertices_per_trace", a.max_bends), ("max_iterations", a.max_iterations))
-                  if v is not None}
+        limits = {k: v for k, v in (("snap_tolerance_deg", a.snap_tolerance), ("max_added_vertices_per_trace", a.max_bends),
+                                    ("max_iterations", a.max_iterations)) if v is not None}
         return kat.pcb.polish_extract(a.pcb, a.net, a.out, a.layer, region, a.order.split(",") if a.order else None,
                                       objectives or None, _key_values(a.weight, "--weight", float) or None,
-                                      limits or None, a.accept_unmodelled, a.force)
+                                      limits or None, a.accept_unmodelled, a.force, a.move_margin)
     if a.polish_cmd == "apply":
         return kat.pcb.polish_apply(a.pcb, a.result, a.map, a.out, a.force)
     if a.polish_cmd == "check":
@@ -1096,8 +1095,10 @@ def build_parser() -> argparse.ArgumentParser:
     pl0 = plsp.add_parser("extract", formatter_class=_Fmt, help="write a case of a bundle of routed traces",
                           description="The straight track runs of the nets (globs) on one layer become the movable\n"
                                       "traces of one group, in neighbour order across the bundle (or --order);\n"
-                                      "their end pads and vias are anchors. Context within 3 mm of the movement\n"
-                                      "region (pads, vias, holes, other tracks, keep-outs, outline) is fixed. Writes\n"
+                                      "their end pads and vias are anchors. They may move anywhere in the movement\n"
+                                      "region (their bounding box grown by --move-margin) that the hard constraints allow.\n"
+                                      "Context within 3 mm of that region (pads, vias, holes, other tracks,\n"
+                                      "keep-outs, outline) is fixed. Writes\n"
                                       "CASE.json and the private CASE.map.json; reads the board only. ok is false\n"
                                       "(exit 1) when the input already breaks a hard constraint.")
     pl0.add_argument("pcb", metavar="PCB")
@@ -1108,7 +1109,8 @@ def build_parser() -> argparse.ArgumentParser:
     pl0.add_argument("--order", metavar="NET,..", help="neighbour order instead of the geometric one")
     pl0.add_argument("--spacing", type=float, metavar="MM", help="preferred gap (default 2 x clearance)")
     pl0.add_argument("--edge-margin", type=float, metavar="MM", help="preferred edge margin (default 1.0)")
-    pl0.add_argument("--max-displacement", type=float, metavar="MM", help="hard movement limit (default 1.0)")
+    pl0.add_argument("--move-margin", type=float, default=2.0, metavar="MM",
+                     help="how far the traces may move beyond their bounding box (default 2.0)")
     pl0.add_argument("--snap-tolerance", type=float, metavar="DEG", help="default 1")
     pl0.add_argument("--max-bends", type=int, metavar="N", help="added vertices per trace (default 2)")
     pl0.add_argument("--max-iterations", type=int, metavar="N", help="default 300")
@@ -1241,7 +1243,7 @@ def build_parser() -> argparse.ArgumentParser:
     s32.add_argument("pcb", metavar="PCB")
     s32.add_argument("net", metavar="NET")
     s32.add_argument("--pitch", type=float, default=5.0, metavar="MM", help="grid pitch (default 5)")
-    s32.add_argument("--margin", type=float, default=2.0, metavar="MM", help="from the outline's box (default 2)")
+    s32.add_argument("--move-margin", type=float, default=2.0, metavar="MM", help="from the outline's box (default 2)")
     s32.add_argument("--no-lock", action="store_true", help="leave the vias unlocked")
     s33 = psp.add_parser("plane-stub", formatter_class=_Fmt, help="SMD pads to their plane by stub and via",
                          description="Each SMD pad of the parts gets a short stub to a via of its net: the nearest\n"

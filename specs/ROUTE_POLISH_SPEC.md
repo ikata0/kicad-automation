@@ -264,9 +264,10 @@ configurable.
   in, not on the way: a trace that sits exactly at its clearance (common on
   router output) can still move away. A step whose end state fails the hard check
   is retried with what the failure names kept where it is: the vertices of a
-  segment short of clearance, or those at the `max_displacement_mm` limit, and
-  only when that cannot help, the whole trace. One trace at a limit does not stop
-  the group.
+  segment short of clearance, and only when that cannot help, the whole trace.
+  One trace at a limit does not stop the group. There is no distance limit:
+  the extractor's movement region (the traces' bounding box grown by
+  `--move-margin`, default 2 mm) only bounds the context the case describes.
 - **Solver.** The merit terms are computed in PyTorch (float64, autograd).
   `torch.optim.Adam` proposes each step, and projection keeps snapped directions
   exact. Backtracking continues until the sweep and the independent hard check

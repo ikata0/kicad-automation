@@ -89,12 +89,12 @@ def test_a_trace_at_exactly_its_clearance_still_moves():
     assert any(not np.array_equal(e.traces["t04"], m.orig["t04"]) for e in evs if e.accepted)
     assert all(e.reason != "sweep" for e in evs)
     assert s._named("clearance t08#1-t10#2 short by 0.1 mm") == {"t08", "t10"}
-    assert s._named("t13: displacement 0.3001 mm over the limit") == {"t13"}
+    assert s._named("t13: off the board") == {"t13"}
 
 
 def test_a_start_short_of_clearance_is_recovered_with_a_rescue_bend():
     # one straight segment 0.15 mm short of a hole: no interior vertex, only a bend helps
-    c = pc.loads(json.dumps(tiny(points=((2, 10), (18, 10)), holes=((10, 10.7, 0.5),), max_disp=1.0)))
+    c = pc.loads(json.dumps(tiny(points=((2, 10), (18, 10)), holes=((10, 10.7, 0.5),))))
     s, evs = run(c, max_iterations=60)
     assert evs[0].shortfall == pytest.approx(0.15)
     rescue = [e for e in evs if e.type == "rescue"]

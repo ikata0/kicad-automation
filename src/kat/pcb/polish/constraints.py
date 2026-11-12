@@ -25,7 +25,6 @@ from ...env import KatError
 from .case import Case
 
 TOL = 1e-9                  # mm: numerical tolerance, never a clearance allowance
-SAMPLE = 0.05               # mm: sampling step of the displacement (Hausdorff) bound
 MAX_SUBSTEPS = 64
 
 
@@ -61,24 +60,9 @@ def inside(points: np.ndarray, ring: np.ndarray) -> np.ndarray:
     return (hit.sum(1) % 2) == 1
 
 
-def samples(pts: np.ndarray, step: float = SAMPLE) -> np.ndarray:
-    """Points along a polyline no farther apart than ``step``, vertices included."""
-    n = np.maximum(1, np.ceil(np.linalg.norm(np.diff(pts, axis=0), axis=1) / step).astype(int))
-    seg = np.repeat(np.arange(len(n)), n)
-    u = (np.arange(n.sum()) - np.repeat(np.cumsum(n) - n, n) + 1) / np.repeat(n, n)
-    return np.concatenate([pts[:1], pts[seg] + u[:, None] * (pts[seg + 1] - pts[seg])])
-
-
 def to_polyline(points: np.ndarray, pts: np.ndarray) -> np.ndarray:
     """Distance of each of ``points`` (N, 2) to the polyline ``pts``."""
     return point_seg(points[:, None], pts[None, :-1], pts[None, 1:]).min(1)
-
-
-def hausdorff(p: np.ndarray, q: np.ndarray) -> float:
-    """An upper bound of the symmetric Hausdorff distance of two polylines (mm): the largest
-    distance of samples at most ``SAMPLE`` apart, plus ``SAMPLE`` / 2 (distance to a set
-    changes at most as fast as the point moves), so the limit is never exceeded unseen."""
-    return float(max(to_polyline(samples(p), q).max(), to_polyline(samples(q), p).max())) + SAMPLE / 2
 
 
 def ring_edges(ring) -> tuple[np.ndarray, np.ndarray]:
@@ -324,9 +308,6 @@ class Model:
             for pid, ring in self.polys + self.keep_polys:
                 if pid not in anchors and inside(p, ring).any():
                     out.append(f"{t}: inside {pid}")
-            h = hausdorff(p, self.orig[t])
-            if h > self.case.limits["max_displacement_mm"] + TOL:
-                out.append(f"{t}: displacement {h:.4f} mm over the limit")
         return out
 
     def sweep(self, cur: dict, new: dict, max_substeps: int = MAX_SUBSTEPS) -> str | None:
@@ -375,4 +356,4 @@ def preflight(case: Case) -> dict:
     return {"feasible": not bad, "violations": bad, "min_slack": m.min_slack(s)}
 
 
-__all__ = ["Model", "hausdorff", "inside", "point_seg", "preflight", "samples", "seg_dist", "to_polyline"]
+__all__ = ["Model", "inside", "point_seg", "preflight", "seg_dist", "to_polyline"]

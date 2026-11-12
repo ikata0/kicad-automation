@@ -21,7 +21,7 @@ def example() -> dict:
     return json.loads(EXAMPLE.read_text())
 
 
-def tiny(points=((2, 10), (10, 10), (18, 10)), holes=((10, 12, 0.5),), max_disp=5.0) -> dict:
+def tiny(points=((2, 10), (10, 10), (18, 10)), holes=((10, 12, 0.5),)) -> dict:
     """One trace across a 20 x 20 board, a hole beside it."""
     d = example()
     d["board"] = {"outline": [[0, 0], [20, 0], [20, 20], [0, 20]], "cutouts": []}
@@ -31,7 +31,6 @@ def tiny(points=((2, 10), (10, 10), (18, 10)), holes=((10, 12, 0.5),), max_disp=
     d["fixed_copper"], d["keepouts"] = [], []
     d["holes"] = [{"id": f"h{i:02d}", "center": [x, y], "radius_mm": r} for i, (x, y, r) in enumerate(holes, 1)]
     d["groups"] = [{"id": "g01", "trace_ids": ["t01"]}]
-    d["limits"]["max_displacement_mm"] = max_disp
     return d
 
 
@@ -71,6 +70,7 @@ def _set(path, value):
     (_set(["traces", 0, "points", 1], [3, 5]), "zero length"),
     (_set(["groups"], []), "in no group"),
     (_set(["limits", "snap_tolerance_deg"], 30), "snap_tolerance_deg"),
+    (_set(["limits", "max_displacement_mm"], 1.5), "max_displacement_mm: no longer supported"),
 ])
 def test_malformed_inputs_are_rejected(edit, says):
     d = example()
@@ -133,7 +133,7 @@ def test_a_move_through_a_hole_is_refused_although_both_ends_are_clear():
     assert m.sweep(below, above) == "sweep"
     nudge = {"t01": np.array([[2, 10], [10, 9.5], [18, 10]], float)}
     assert m.sweep(below, nudge) is None
-    assert "displacement" in m.sweep(below, {"t01": np.array([[2, 10], [10, 4], [18, 10]], float)})
+    assert m.sweep(below, {"t01": np.array([[2, 10], [10, 4], [18, 10]], float)}) is None   # no distance limit
     d = tiny()                                                       # exactly at clearance: may move away
     d["holes"][0]["center"][1] = 10 + 0.1 + 0.5 + d["rules"]["hole_clearance_mm"]
     m = cs.Model(pc.loads(json.dumps(d)))
