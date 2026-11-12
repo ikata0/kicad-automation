@@ -224,6 +224,12 @@ with kat.pcb.edit(PCB) as b:
   detours (`--dry-run` first; `--include-locked` for locked copper; `--spread 0.25` moves runs off
   minimum clearance where it keeps 45-degree angles). DRC judges it, and nets it made worse are put
   back. `routing_shape` in `kat pcb check` counts 90-degree corners, short segments and reversals.
+- To even out a bundle of 5-10 routed traces (spacing, 45-degree directions, edge margin) without
+  rerouting: `kat pcb polish extract PCB --net A --net B ... [--layer L] [--region X,Y,W,H] --out
+  case.json`, then `kat pcb polish run case.json --out run`, then `kat pcb polish apply PCB
+  run/result.json --map case.map.json --out polished.kicad_pcb`. The original is never written.
+  Accept the copy only after `kat pcb check` on it. Needs `pip install 'kat[polish]'`; `--gui`
+  (with `kat[polish-gui]`) lets a person step through the run. Weights are `--weight T=W`.
 - A route that stopped converging shows in `unrouted` per pass, a slow stage in `stages`.
   `--skip-class NAME` leaves a class out; `--no-optimize` skips the optimizer. Look at `settings`
   after `--router-option`: Freerouting exits 0 even on settings it ignores.

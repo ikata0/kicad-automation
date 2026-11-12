@@ -152,7 +152,7 @@ class Merit:
             c, s = d[:, 0] / L, d[:, 1] / L
             c2, s2 = c * c - s * s, 2 * c * s
             c4, s4 = c2 * c2 - s2 * s2, 2 * c2 * s2
-            f = (1 - (c4 * c4 - s4 * s4)) / 2
+            f = ((1 - (c4 * c4 - s4 * s4)) / 2).clamp_min(0)
             wseg = L * (angle_boost[k] if angle_boost and k in angle_boost else 1.0)
             num, den = num + (wseg * f).sum(), den + L.sum()
         angle = num / den

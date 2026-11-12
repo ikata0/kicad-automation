@@ -249,9 +249,10 @@ configurable.
   ([`ROUTE_POLISH_INPUT.md`](ROUTE_POLISH_INPUT.md) §11) plus a private map file.
   `apply` writes the result into a **new** board file, never the input. It
   then runs DRC on that copy and compares it per net with the original.
-- **Endpoints.** A trace's own endpoint pads, vias and stubs are its `anchors`.
-  Clearance to them is waived, while all other copper of the same net keeps
-  full clearance.
+- **Endpoints.** A trace's own endpoint pads, vias, their drills and stubs are its
+  `anchors`. Clearance to them is waived, while all other copper of the same net
+  keeps full clearance. When selected runs share an end, the longer one moves and
+  the others stay fixed (`held`).
 - **Group order.** It is inferred geometrically at extraction from the offset
   across the bundle, reported, and can be overridden with `--order`.
 - **Topology.** Every change of state is a linear interpolation of vertex
@@ -272,7 +273,8 @@ configurable.
   300; weights as in the example fixture.
 - **Discrete edits.** Snap within tolerance or when progress stagnates (merit
   improvement below 1e-4 over 20 iterations). A snap is followed by 20 settle
-  iterations and is accepted if the merit is not worse. If it fails, the group
+  iterations. It is accepted if the merit is at most `snap_slack` (0.001) worse,
+  and the best feasible state credits each snapped segment by that allowance. If it fails, the group
   is adjusted: the segment's angle weight is raised for 20 iterations and the
   snap is retried. If that fails, one octilinear dogleg bend is inserted, and it
   is accepted only on a gain. Snapped segments are never unsnapped. Each

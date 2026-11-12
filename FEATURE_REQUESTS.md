@@ -671,3 +671,22 @@ gives the shape without gaps as `routing_shape`. Running it again changes nothin
 On the routed LED matrix with locked copper included: 17 s, 136 nets, 90-degree corners
 196 -> 0, DRC clean (`../kicad-sandbox/experiments/2026-11-07-batch-speed/`).
 Not done: `--move-vias`, since vias stay fixed.
+
+### FR-061: Topology-preserving route polishing (`kat pcb polish`)
+
+Specified in `specs/ROUTE_POLISH_SPEC.md` (v0.3), `ROUTE_POLISH_INPUT.md` (formats 1 and 2,
+anchors) and `ROUTE_POLISH_OUTPUT.md`. The prototype covers the following:
+- `kat pcb polish extract|check|run|replay|apply`, with library functions `kat.pcb.polish_*`
+  and package `kat.pcb.polish`.
+- The merit is computed in PyTorch, with projected Adam steps and monotone backtracking.
+- Snap, adjust and bend trials are settled and then committed or reverted.
+- Every state change is swept with conservative advancement, so no step can jump an obstacle.
+- A Qt inspection window (PySide6) runs the solver in a worker thread.
+- `apply` writes a copy at nanometre precision, checks the round trip, and compares DRC per
+  net.
+
+Tests: `tests/test_polish_{case,solver,gui,board}.py`. First real-board trial on the LED matrix
+(`../kicad-sandbox/experiments/2026-11-12-route-polish/`): 6 SPI/chain traces, spacing term
+0.169 -> 0.069, DRC unchanged and clean. Open: default weights need tuning on more groups,
+and an agent-side bundle finder. Branches, multilayer and changing pours are left to later
+format versions.

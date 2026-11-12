@@ -241,8 +241,14 @@ def _classes():
             super().showEvent(e)
             if not self.fitted:
                 self.fitted = True
-                QtCore.QTimer.singleShot(0, lambda: self.view.fitInView(
-                    self.scene.itemsBoundingRect().adjusted(-1, -1, 1, 1), QtCore.Qt.KeepAspectRatio))
+                QtCore.QTimer.singleShot(0, self.fit)
+
+        def fit(self):
+            """Zoom to the movement region and a little around it."""
+            xs = [p[0] for p in self.ctl.case.region]
+            ys = [-p[1] for p in self.ctl.case.region]
+            rect = QtCore.QRectF(min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)).adjusted(-1, -1, 1, 1)
+            self.view.fitInView(rect, QtCore.Qt.KeepAspectRatio)
 
         # drawing; scene units are mm with y flipped (the input's y points up)
         def _pen(self, color, width, style=None, alpha=255):

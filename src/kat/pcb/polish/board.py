@@ -107,14 +107,13 @@ def extract(pcb: Path | str, nets: list[str], out: Path | str, layer: str | None
     if len(layers) > 1:
         raise KatError(f"tracks on {', '.join(layers)}: choose one with --layer")
     layer = layers[0]
-    ends: dict = {}
-    for c in chains:
-        for p in (c.pts[0], c.pts[-1]):
-            k = tc._key(p)
-            if k in ends and ends[k] is not c:
-                raise KatError(f"{ends[k].net} and {c.net} share an end at {p[0]:g},{p[1]:g} (a branch): "
-                               "select fewer tracks or a region")
-            ends[k] = c
+    held = []                                          # runs sharing an end: the longer one moves
+    for c in sorted(chains, key=lambda c: -c.length):
+        mine = {tc._key(c.pts[0]), tc._key(c.pts[-1])}
+        if any(mine & {tc._key(o.pts[0]), tc._key(o.pts[-1])} for o in chains if o is not c and o not in held
+               and o.length >= c.length and (o.length > c.length or id(o) < id(c))):
+            held.append(c)
+    chains = [c for c in chains if c not in held]
     chains = _ordered(chains, order)
     uuids = {str(find(n, "uuid")[1]) for c in chains for n in c.nodes}
     lim = {**LIMITS, **(limits or {})}
@@ -304,6 +303,7 @@ def extract(pcb: Path | str, nets: list[str], out: Path | str, layer: str | None
                "unmodelled": unmodelled}
     mp.write_text(json.dumps(mapping, indent=1) + "\n", encoding="utf-8")
     return {"case": str(out), "map": str(mp), "layer": layer, "order": [c.net for c in chains],
+            "held": [{"net": c.net, "from": list(c.pts[0]), "to": list(c.pts[-1])} for c in held],
             "traces": [{"id": t["id"], "net": c.net, "points": len(c.pts), "length": round(c.length, 4),
                         "anchors": len(t["anchors"])} for t, c in zip(traces, chains)],
             "context": {"fixed_copper": len(copper), "holes": len(holes), "keepouts": len(keepouts)},

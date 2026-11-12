@@ -370,6 +370,26 @@ clearances, keep-outs and edge distance; steps 1-4 never lengthen a net. The boa
 judged by DRC and a net with more findings or unconnected items than before is put back
 (`rolled_back`). `--nets`, `--layers`, `--region`, `--include-locked`, `--dry-run`; `before` and
 `after` give per layer the corners (45, 90, acute, other), short segments, reversals and gaps.
+
+**Polishing a bundle (prototype).** `kat pcb polish` improves the geometry of a group of about
+5-10 routed traces without rerouting them (`specs/ROUTE_POLISH_SPEC.md`; formats in
+`specs/ROUTE_POLISH_INPUT.md` and `ROUTE_POLISH_OUTPUT.md`; needs `kat[polish]`, the window
+`kat[polish-gui]`). `extract PCB --net GLOB... [--layer] [--region] --out CASE.json` writes a
+portable case of the straight runs on one layer, in neighbour order across the bundle (or
+`--order`). Their end pads, vias and drills are anchors, and context within 3 mm is fixed.
+Runs that share an end with a longer one stay fixed (`held`). A private `CASE.map.json` is
+written beside it. Custom DRC or kat net rules it cannot model stop it unless
+`--accept-unmodelled`. `check CASE` preflights.
+`run CASE --out DIR [--gui] [--weight T=W]` minimises a weighted merit (angle to 45-degree
+multiples, spacing to neighbours, edge margin, displacement, length, complexity; PyTorch
+gradients). Snapped segments stay exact, and bends are bounded. Every change is a straight
+move of the vertices, split into steps smaller than the clearance margin, so nothing ever
+passes through an obstacle or another trace. DIR gets `run.json`, `history.jsonl` and
+`result.json` (best feasible state). `replay DIR [--case CASE --gui]` summarises or browses a
+run. `apply PCB RESULT --map CASE.map.json --out NEW.kicad_pcb` writes into a **copy**, never
+the input. It reads the copy back against the hard constraints and compares DRC with the
+original per net; `kat pcb check NEW` then gives the full verdict. Weights are a first guess:
+on boards already tidied to 45 degrees mostly spacing changes.
 Running it again changes nothing. `kat pcb check` reports the same shape (`routing_shape`,
 no gaps), which changes neither `ok` nor `clean`.
 
@@ -1014,6 +1034,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `pcb stamp PCB BLOCK_PCB [INSTANCE...] --at X,Y --preview [...]` | origin, turned bounds and ports of a proposed stamp, board unchanged (§4.18) |
 | `pcb escape PCB SPEC.json [--apply] [--out FILE]` | route permutable pins, choosing the assignment with the tracks (§4.10) |
 | `pcb tidy PCB [--nets GLOB] [--layers L,..] [--region X,Y,W,H] [--steps S,..] [--corners 45/arc/keep] [--spread GAP] [--max-growth PCT] [--freeze-length NET] [--include-locked] [--dry-run]` | clean up routed tracks, judged by DRC per net (§4.10) |
+| `pcb polish extract PCB --net GLOB... --out CASE.json [--layer L] [--region X,Y,W,H] [--order NET,..] [--accept-unmodelled]` / `check CASE` / `run CASE --out DIR [--gui] [--weight T=W] [--max-iterations N]` / `replay DIR [--case CASE --gui]` / `apply PCB RESULT --map MAP --out NEW` | topology-preserving polishing of a routed bundle; the result goes into a copy judged by DRC (§4.10) |
 | `pcb stitch PCB NET [--pitch MM] [--margin MM]` / `pcb plane-stub PCB REF... [--net N] [--skip-net N]` | stitching vias; SMD pads to their plane by stub and via (§4.9) |
 | `pcb profile PCB [--via-types KINDS] [--min-clearance MM] [--clear]` | the board's fabrication profile and its departures (§4.7) |
 | `pcb stamps PCB [--rebuild [INSTANCE...]]` | the board's stamp records; recover lost ones from the board (§4.18) |
@@ -1248,6 +1269,9 @@ column in place of the net.
 | Freerouting sends analytics to `api.freerouting.app` by default | `route` always passes `usage_and_diagnostic_data.disable_analytics=true`; a test with no network checks that the router then tries to send nothing |
 | `route --timeout` killed the router and lost all its work | the limit is now the router's own (`job_timeout`): it stops, what it has is kept, and `timed_out` says so |
 | Pins that could be swapped were routed in the order the design happened to give, with crossings and vias a different assignment does not need | `kat pcb escape` chooses assignment and tracks together, then `kat back-annotate` carries the assignment through the design |
+| kat writes coordinates with 4 decimals (`sexpr.num`), so polished vertices moved by up to 0.05 µm: exact 45-degree segments bent and small clearance margins could vanish. KiCad itself keeps 6 decimals (nm) | `pcb polish apply` writes its segments to the nanometre and checks the saved copy against the hard constraints again |
+| A track ends over the drill of its own pad or via; a hole-clearance rule without nets made every extracted trace infeasible | in the polish case a trace's end pads, vias **and their drills** are its anchors, exempt from its own clearance only |
+| Polished geometry was first judged only by the polisher's own model | `apply` refuses a changed board or case, reads the copy back, and compares KiCad's DRC with the original per net |
 | Escaping a SKiDL pin name with `+` or brackets (`u[r"IN\+"]`) finds no pin: names match exactly unless `match_pin_regex` is set | write the name literally, `u["IN+"]`; a name with a space takes the pin number (`tests/test_skidl_blocks.py` pins this down) |
 
 ## 8. Open points
