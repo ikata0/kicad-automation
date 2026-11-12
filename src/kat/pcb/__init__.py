@@ -20,7 +20,7 @@ from .board import Board, Footprint, Pad
 
 __all__ = ["Board", "Footprint", "Pad", "block_environment", "block_port", "remove", "check", "clearance", "coupling_2d", "coupling_rule",
            "drc", "edit", "escape", "fab", "import_mechanics", "instances", "layer_roles", "layer_rule", "load", "mate", "net_rules", "odb_pinout", "plane_rule",
-           "pad_geometry", "port_access", "ready", "refill", "route", "snapshot", "stack", "stamp", "stamp_preview", "sync", "view"]
+           "pad_geometry", "polish_check", "port_access", "ready", "refill", "route", "snapshot", "stack", "stamp", "stamp_preview", "sync", "view"]
 
 
 def load(path: Path | str) -> Board:
@@ -178,6 +178,32 @@ def tidy_tracks(pcb: Path | str, nets: list[str] | None = None, layers: list[str
                  "length": {n: [res["length"][n][0], round(lengths.get(n, 0.0), 4)] for n in kept},
                  "after": tc.metrics(final, gaps=True), "dry_run": False,
                  "check": {"drc_errors": d["errors"], "unconnected": len(d["unconnected"])}})
+
+
+def polish_check(case: Path | str, group: str | None = None) -> dict:
+    """Preflight a route-polish input (``specs/ROUTE_POLISH_INPUT.md``, versions 1 and 2):
+    the format strictly (a malformed file raises ``KatError`` listing every problem), then
+    the input geometry of every trace against the hard constraints. ``group`` (default: each
+    group) also lists its neighbour pairs in group order with their least copper gap (mm).
+    Returns ok (feasible), version, sha256, groups, violations, min_slack {value mm, a, b}
+    and neighbours [{group, a, b, gap}]."""
+    from .polish import case as _case, require
+    np = require("numpy")
+    from .polish import constraints as _cs
+    c = _case.load(case)
+    pre = _cs.preflight(c)
+    neighbours = []
+    for g in ([group] if group else list(c.groups)):
+        if g not in c.groups:
+            raise KatError(f"no group {g!r} (have {', '.join(c.groups)})")
+        for a, b in zip(c.groups[g], c.groups[g][1:]):
+            ta, tb = c.traces[a], c.traces[b]
+            pa, pb = np.asarray(ta.points, float), np.asarray(tb.points, float)
+            d = _cs.seg_dist(pa[:-1, None], pa[1:, None], pb[None, :-1], pb[None, 1:]).min()
+            neighbours.append({"group": g, "a": a, "b": b, "gap": float(d) - ta.width / 2 - tb.width / 2})
+    return tidy({"case": str(case), "ok": pre["feasible"], "version": c.version, "sha256": c.sha256,
+                 "groups": c.groups, "violations": pre["violations"], "min_slack": pre["min_slack"],
+                 "neighbours": neighbours})
 
 
 def lock(pcb: Path | str, net: str | None = None, locked: bool = True) -> dict:

@@ -149,6 +149,12 @@ def cmd_lib(a):
     return kat.lib_show(a.lib_id)
 
 
+def _cmd_polish(a):
+    if a.polish_cmd == "check":
+        return kat.pcb.polish_check(a.case, a.group)
+    raise env.KatError(f"polish {a.polish_cmd}: not implemented")
+
+
 def cmd_pcb(a):
     if a.pcb_cmd == "sync":
         return kat.pcb.sync(a.pcb, a.sch, a.dry_run, a.force, a.rip_stale,
@@ -187,6 +193,8 @@ def cmd_pcb(a):
                                    a.freeze_length or [], a.include_locked, a.dry_run)
     if a.pcb_cmd == "lock":
         return kat.pcb.lock(a.pcb, a.net, not a.unlock)
+    if a.pcb_cmd == "polish":
+        return _cmd_polish(a)
     if a.pcb_cmd == "stamp":
         names = "all" if a.instance == ["all"] else a.instance
         if a.preview:
@@ -1045,6 +1053,18 @@ def build_parser() -> argparse.ArgumentParser:
     s35.add_argument("--freeze-length", action="append", metavar="NET", help="never lengthen this net (repeatable)")
     s35.add_argument("--include-locked", action="store_true", help="also locked tracks")
     s35.add_argument("--dry-run", action="store_true", help="report only, save nothing")
+    s36 = psp.add_parser("polish", formatter_class=_Fmt, help="topology-preserving route polishing (prototype)",
+                         description="Polish a group of 5-10 routed traces without rerouting them: 45-degree\n"
+                                     "directions, even spacing, edge margin, judged by hard constraints first.\n"
+                                     "Works on a portable case file (specs/ROUTE_POLISH_INPUT.md); never writes\n"
+                                     "to an input.")
+    plsp = s36.add_subparsers(dest="polish_cmd", required=True, metavar="ACTION")
+    pl1 = plsp.add_parser("check", formatter_class=_Fmt, help="preflight a case file",
+                          description="The format strictly (every problem listed), then the input geometry of\n"
+                                      "every trace against the hard constraints; neighbour gaps in group order.\n"
+                                      "ok is false (exit 1) when a trace is already infeasible.")
+    pl1.add_argument("case", metavar="CASE.json")
+    pl1.add_argument("--group", metavar="G", help="only this group's neighbour pairs")
     s34 = psp.add_parser("lock", formatter_class=_Fmt, help="lock tracks and vias (all, or one net's)",
                          description="Locked copper stays when the router runs again: lock each accepted chunk\n"
                                      "of routing, then route the next.")
