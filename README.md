@@ -343,6 +343,13 @@ given. It prints the score terms before and after. `--max-iterations N`,
 `--weight angle=2` and so on override the case's settings. `--option KEY=V` sets a
 solver knob; `kat pcb polish run --help` lists them all with defaults and meanings.
 
+
+Test a more complicated example with
+```
+.venv/bin/kat pcb polish run specs/route-polish/routing-fcu.json --out tmp/out.json --gui
+```
+
+
 In the window:
 - **Step** advances one event and **Run** / **Pause** let the solver go.
 - **Back** / **Forward** and the event list browse the history.
@@ -356,7 +363,8 @@ On a real board: `kat pcb polish extract PCB --net A --net B ... --out case.json
 then `kat pcb polish apply PCB run/result.json --map case.map.json --out copy.kicad_pcb`.
 `apply` writes into a copy and compares KiCad's DRC with the original.
 
-## Design decisions
+
+# Design decisions
 
 - **SKiDL for connectivity, not for drawing** — its own schematic generator is not readable
   for real circuits. atopile was not chosen: it has no schematic at all.
