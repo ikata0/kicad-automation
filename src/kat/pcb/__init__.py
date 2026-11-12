@@ -20,7 +20,7 @@ from .board import Board, Footprint, Pad
 
 __all__ = ["Board", "Footprint", "Pad", "block_environment", "block_port", "remove", "check", "clearance", "coupling_2d", "coupling_rule",
            "drc", "edit", "escape", "fab", "import_mechanics", "instances", "layer_roles", "layer_rule", "load", "mate", "net_rules", "odb_pinout", "plane_rule",
-           "pad_geometry", "polish_check", "port_access", "ready", "refill", "route", "snapshot", "stack", "stamp", "stamp_preview", "sync", "view"]
+           "pad_geometry", "polish_check", "polish_replay", "polish_run", "port_access", "ready", "refill", "route", "snapshot", "stack", "stamp", "stamp_preview", "sync", "view"]
 
 
 def load(path: Path | str) -> Board:
@@ -204,6 +204,46 @@ def polish_check(case: Path | str, group: str | None = None) -> dict:
     return tidy({"case": str(case), "ok": pre["feasible"], "version": c.version, "sha256": c.sha256,
                  "groups": c.groups, "violations": pre["violations"], "min_slack": pre["min_slack"],
                  "neighbours": neighbours})
+
+
+def polish_run(case: Path | str, out: Path | str, group: str | None = None, weights: dict | None = None,
+               options: dict | None = None, limits: dict | None = None, force: bool = False, gui: bool = False) -> dict:
+    """Polish one group of a route-polish case (``kat.pcb.polish``): continuous moves on the
+    merit's gradient (PyTorch) and snaps / bends, every state change checked against the hard
+    constraints along the way. ``weights`` {angle, spacing, edge, displacement, length,
+    complexity}, ``limits`` (the input's names, e.g. max_iterations, snap_tolerance_deg) and
+    solver ``options`` (``solver.DEFAULTS``) override the case. Writes run.json,
+    history.jsonl and result.json (the best feasible state) into the run directory ``out``
+    (refused when it holds them, unless ``force``); never touches the case. ``gui`` opens the
+    inspection window instead and writes only on its Export. Returns out, termination,
+    iterations, events per type, rejections, initial and result score."""
+    from .polish import case as _case, constraints as _cs, history as _hist, require
+    require("numpy")
+    c = _case.load(case)
+    pre = _cs.preflight(c)
+    if not pre["feasible"]:
+        raise KatError(f"input infeasible, nothing optimised: {'; '.join(pre['violations'][:5])}")
+    from .polish import solver as _solver
+    if gui:
+        from .polish import gui as _gui
+        return tidy(_gui.run_live(c, Path(out), group, weights, options, limits, force))
+    d = _hist.prepare(out, force)
+    s = _solver.Solver(c, group, weights, options, limits)
+    rec = _hist.write(d, s, s.events())
+    return tidy({"out": str(d), **_hist.summary(rec, *_hist.load(d)[1:])})
+
+
+def polish_replay(run_dir: Path | str, gui: bool = False) -> dict:
+    """A finished polishing run (``polish_run``'s directory): its summary (termination,
+    events per type, rejections, initial and result score), or with ``gui`` the inspection
+    window browsing its recorded history (needs the case file named on the way in). Writes
+    nothing."""
+    from .polish import history as _hist
+    rec, events, res = _hist.load(run_dir)
+    if gui:
+        from .polish import gui as _gui
+        return tidy(_gui.run_replay(Path(run_dir)))
+    return tidy({"run": str(run_dir), "group": rec["group"], "solver": rec["solver"], **_hist.summary(rec, events, res)})
 
 
 def lock(pcb: Path | str, net: str | None = None, locked: bool = True) -> dict:

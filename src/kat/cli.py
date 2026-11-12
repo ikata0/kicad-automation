@@ -149,9 +149,28 @@ def cmd_lib(a):
     return kat.lib_show(a.lib_id)
 
 
+def _key_values(items, flag: str, conv) -> dict:
+    out = {}
+    for x in items or []:
+        k, sep, v = x.partition("=")
+        if not sep:
+            raise env.KatError(f"{flag} {x!r}: give KEY=VALUE")
+        out[k] = conv(v)
+    return out
+
+
 def _cmd_polish(a):
     if a.polish_cmd == "check":
         return kat.pcb.polish_check(a.case, a.group)
+    if a.polish_cmd == "run":
+        weights = _key_values(a.weight, "--weight", float)
+        options = _key_values(a.option, "--option", float)
+        limits = {k: v for k, v in (("max_iterations", a.max_iterations), ("snap_tolerance_deg", a.snap_tolerance),
+                                    ("max_added_vertices_per_trace", a.max_bends)) if v is not None}
+        return kat.pcb.polish_run(a.case, a.out, a.group, weights or None, options or None, limits or None,
+                                  a.force, a.gui)
+    if a.polish_cmd == "replay":
+        return kat.pcb.polish_replay(a.run, a.gui)
     raise env.KatError(f"polish {a.polish_cmd}: not implemented")
 
 
@@ -1065,6 +1084,28 @@ def build_parser() -> argparse.ArgumentParser:
                                       "ok is false (exit 1) when a trace is already infeasible.")
     pl1.add_argument("case", metavar="CASE.json")
     pl1.add_argument("--group", metavar="G", help="only this group's neighbour pairs")
+    pl2 = plsp.add_parser("run", formatter_class=_Fmt, help="optimise one group of a case",
+                          description="Continuous moves on the merit's gradient (PyTorch), snaps to 45-degree\n"
+                                      "multiples, bounded bend insertion; every change is checked against the\n"
+                                      "hard constraints all the way (nothing jumps over an obstacle). Writes\n"
+                                      "run.json, history.jsonl and result.json (best feasible state) into OUT.\n"
+                                      "The case is never changed. Needs kat[polish] (torch); --gui kat[polish-gui].")
+    pl2.add_argument("case", metavar="CASE.json")
+    pl2.add_argument("--out", required=True, metavar="DIR", help="run directory (refused if it holds a run)")
+    pl2.add_argument("--group", metavar="G", help="the group to optimise (needed when there are several)")
+    pl2.add_argument("--weight", action="append", metavar="TERM=W",
+                     help="override a merit weight: angle, spacing, edge, displacement, length, complexity")
+    pl2.add_argument("--option", action="append", metavar="KEY=V", help="solver knob, e.g. settle_iterations=10")
+    pl2.add_argument("--max-iterations", type=int, metavar="N")
+    pl2.add_argument("--snap-tolerance", type=float, metavar="DEG")
+    pl2.add_argument("--max-bends", type=int, metavar="N", help="added vertices per trace")
+    pl2.add_argument("--gui", action="store_true", help="inspection window; writes only on Export")
+    pl2.add_argument("--force", action="store_true", help="overwrite a run in OUT")
+    pl3 = plsp.add_parser("replay", formatter_class=_Fmt, help="summary of a finished run, or browse it",
+                          description="Counts per event type, rejection reasons, initial and result score.\n"
+                                      "--gui browses the recorded history; nothing is written.")
+    pl3.add_argument("run", metavar="RUN_DIR")
+    pl3.add_argument("--gui", action="store_true")
     s34 = psp.add_parser("lock", formatter_class=_Fmt, help="lock tracks and vias (all, or one net's)",
                          description="Locked copper stays when the router runs again: lock each accepted chunk\n"
                                      "of routing, then route the next.")

@@ -276,7 +276,7 @@ configurable.
   is adjusted: the segment's angle weight is raised for 20 iterations and the
   snap is retried. If that fails, one octilinear dogleg bend is inserted, and it
   is accepted only on a gain. Snapped segments are never unsnapped. Each
-  segment gets at most 2 failed attempts, and inserted vertices count
+  segment gets one failed attempt (configurable), and inserted vertices count
   cumulatively per trace.
 - **Stopping.** The run stops when all segments are snapped, when it has
   stagnated with no candidates left, at the iteration limit, or on user stop.

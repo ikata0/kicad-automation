@@ -25,7 +25,7 @@ from ...env import KatError
 from .case import Case
 
 TOL = 1e-9                  # mm: numerical tolerance, never a clearance allowance
-SAMPLE = 0.02               # mm: sampling step of the displacement (Hausdorff) limit
+SAMPLE = 0.05               # mm: sampling step of the displacement (Hausdorff) bound
 MAX_SUBSTEPS = 64
 
 
@@ -75,9 +75,10 @@ def to_polyline(points: np.ndarray, pts: np.ndarray) -> np.ndarray:
 
 
 def hausdorff(p: np.ndarray, q: np.ndarray) -> float:
-    """Symmetric Hausdorff distance of two polylines, from samples at most ``SAMPLE`` apart
-    (mm)."""
-    return float(max(to_polyline(samples(p), q).max(), to_polyline(samples(q), p).max()))
+    """An upper bound of the symmetric Hausdorff distance of two polylines (mm): the largest
+    distance of samples at most ``SAMPLE`` apart, plus ``SAMPLE`` / 2 (distance to a set
+    changes at most as fast as the point moves), so the limit is never exceeded unseen."""
+    return float(max(to_polyline(samples(p), q).max(), to_polyline(samples(q), p).max())) + SAMPLE / 2
 
 
 def ring_edges(ring) -> tuple[np.ndarray, np.ndarray]:
