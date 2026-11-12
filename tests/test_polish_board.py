@@ -77,7 +77,7 @@ def test_rules_it_cannot_model_stop_the_extraction(tmp_path):
 def test_an_empty_selection_says_why(tmp_path):
     pcb = bundle(tmp_path / "bundle.kicad_pcb")
     for nets, kw, says in ((["B7"], {}, "no net on the board matches B7"),
-                           (["/B1"], {}, r"matches /B1 \(similar: B1\)"),
+                           (["/B1", "B2"], {}, r"matches /B1 \(similar: B1\)"),   # not silently B2 only
                            (["M*"], {}, "exist but have no tracks"),
                            (["B*"], {"layer": "B.Cu"}, "no tracks on B.Cu .they run on F.Cu"),
                            (["B*"], {"region": (0, 0, 5, 5)}, "inside the region")):

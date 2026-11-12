@@ -100,6 +100,9 @@ def extract(pcb: Path | str, nets: list[str], out: Path | str, layer: str | None
     b = Board(pcb)
     if layer and layer not in b.copper_layers():
         raise KatError(f"no copper layer {layer!r} (have {', '.join(b.copper_layers())})")
+    unknown = _unknown_nets(b, nets)
+    if unknown:
+        raise KatError(unknown)
     chains = [c for c in tc.chains(b, nets, [layer] if layer else None, region, include_locked=True)]
     if not chains:
         raise KatError(_why_none(b, nets, layer, region))
@@ -311,18 +314,24 @@ def extract(pcb: Path | str, nets: list[str], out: Path | str, layer: str | None
             "unmodelled": unmodelled}
 
 
-def _why_none(b: Board, nets: list[str], layer: str | None, region) -> str:
-    """Why ``nets`` gave no track runs: no such net, no tracks, or none on the layer / in the
-    region."""
+def _unknown_nets(b: Board, nets: list[str]) -> str | None:
+    """An error naming each of ``nets`` (globs) that matches no net on the board, with similar
+    names; None when all match. A misspelled net must not silently drop out of a selection."""
     import difflib
     import fnmatch
-    tracks = b.tracks()
-    known = sorted({p.net for p in b.pads()} | {t["net"] for t in tracks} | {v["net"] for v in b.vias()} - {""})
+    known = sorted(({p.net for p in b.pads()} | {t["net"] for t in b.tracks()} | {v["net"] for v in b.vias()}) - {""})
     missing = [g for g in nets if not any(fnmatch.fnmatch(n, g) for n in known)]
-    if missing:
-        hints = sorted({h for g in missing for h in difflib.get_close_matches(g, known, n=3, cutoff=0.5)})
-        return (f"no net on the board matches {', '.join(missing)}"
-                + (f" (similar: {', '.join(hints)})" if hints else ""))
+    if not missing:
+        return None
+    hints = sorted({h for g in missing for h in difflib.get_close_matches(g, known, n=3, cutoff=0.5)})
+    return f"no net on the board matches {', '.join(missing)}" + (f" (similar: {', '.join(hints)})" if hints else "")
+
+
+def _why_none(b: Board, nets: list[str], layer: str | None, region) -> str:
+    """Why ``nets`` (all existing) gave no track runs: no tracks, or none on the layer / in
+    the region."""
+    import fnmatch
+    tracks = b.tracks()
     mine = [t for t in tracks if any(fnmatch.fnmatch(t["net"], g) for g in nets)]
     if not mine:
         return f"{', '.join(nets)}: the nets exist but have no tracks (route them first)"
