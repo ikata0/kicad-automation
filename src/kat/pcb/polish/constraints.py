@@ -152,6 +152,10 @@ class Model:
                 else:
                     cl = case.clearance(t, owner, base[kind])
                 self.req[i, j] = self.half[i] + self.fr[j] + cl
+        # what a move must never do on the way: the centreline touches an obstacle (or own
+        # anchors, waived). Feasible states keep half width + clearance > 0 of this slack,
+        # so a trace exactly at its clearance can still move.
+        self.treq = np.where(np.isinf(self.req), -np.inf, np.broadcast_to(self.fr, self.req.shape))
         n = len(self.ids)
         self.mreq = np.array([[self.half[i] + self.half[j] + case.clearance(self.ids[i], self.ids[j], case.copper_clearance)
                                for j in range(n)] for i in range(n)]).reshape(n, n)
@@ -174,16 +178,17 @@ class Model:
             ix += list(range(len(p) - 1))
         return np.concatenate(a), np.concatenate(b), np.array(tr), np.array(ix)
 
-    def slacks(self, state) -> tuple[np.ndarray, np.ndarray, tuple]:
+    def slacks(self, state, topology: bool = False) -> tuple[np.ndarray, np.ndarray, tuple]:
         """Slack (mm) of every movable segment against every fixed primitive (M, F) and
         against every other movable segment (M, M; +inf where not constrained), and the
-        segments' (trace index, segment index)."""
+        segments' (trace index, segment index). With ``topology`` the slack is to contact
+        of the centreline instead of to the clearance."""
         a, b, tr, ix = self._segments(state)
-        fs = seg_dist(a[:, None], b[:, None], self.fa[None], self.fb[None]) - self.req[tr]
+        fs = seg_dist(a[:, None], b[:, None], self.fa[None], self.fb[None]) - (self.treq if topology else self.req)[tr]
         ms = seg_dist(a[:, None], b[:, None], a[None], b[None])
         same = tr[:, None] == tr[None, :]
-        need = np.where(same, 0.0, self.mreq[tr][:, tr])             # own segments: no crossing
-        ms = ms - need
+        if not topology:
+            ms = ms - np.where(same, 0.0, self.mreq[tr][:, tr])         # own segments: no crossing
         adjacent = same & (np.abs(ix[:, None] - ix[None, :]) <= 1)
         ms[adjacent] = np.inf
         return fs, ms, (tr, ix)
@@ -237,8 +242,10 @@ class Model:
 
     def sweep(self, cur: dict, new: dict, max_substeps: int = MAX_SUBSTEPS) -> str | None:
         """Check the straight move from state ``cur`` to ``new`` (same vertex counts): None
-        when every intermediate state keeps every slack and ``new`` is feasible, else the
-        reason (``sweep``, or the first violation of ``new``)."""
+        when no centreline touches an obstacle or another trace on the way (which keeps the
+        topology) and ``new`` is feasible, else the reason (``sweep``, or the first
+        violation of ``new``). Clearance is required of ``new`` only, so a trace at exactly
+        its clearance, or short of it, can move away."""
         disp = []
         for t in self.ids:
             if cur[t].shape != new[t].shape:
@@ -250,7 +257,7 @@ class Model:
             tau = 0.0
             for _ in range(max_substeps):
                 pos = {t: cur[t] + tau * (new[t] - cur[t]) for t in self.ids}
-                fs, ms, _ = self.slacks(pos)
+                fs, ms, _ = self.slacks(pos, topology=True)
                 if (fs.size and fs.min() < -TOL) or (ms.size and ms.min() < -TOL):
                     return "sweep"
                 with np.errstate(divide="ignore", invalid="ignore"):

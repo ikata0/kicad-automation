@@ -257,9 +257,14 @@ configurable.
   across the bundle, reported, and can be overridden with `--order`.
 - **Topology.** Every change of state is a linear interpolation of vertex
   coordinates. Such a move is split into sub-steps that are each shorter than
-  the current minimum clearance slack (conservative advancement). Nothing can
-  pass through anything while anchors stay fixed, so the obstacle side and the
-  route order are preserved, including across discrete edits.
+  the current distance of the centrelines to contact with an obstacle or another
+  trace (conservative advancement). Nothing can pass through anything while
+  anchors stay fixed, so the obstacle side and the route order are preserved,
+  including across discrete edits. Clearance is checked on the state a move ends
+  in, not on the way: a trace that sits exactly at its clearance (common on
+  router output) can still move away. A step whose end state fails the hard check
+  for some traces is retried with those traces held where they are, so one trace
+  at a limit (for example `max_displacement_mm`) does not stop the group.
 - **Solver.** The merit terms are computed in PyTorch (float64, autograd).
   `torch.optim.Adam` proposes each step, and projection keeps snapped directions
   exact. Backtracking continues until the sweep and the independent hard check

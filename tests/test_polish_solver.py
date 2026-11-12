@@ -77,3 +77,16 @@ def test_run_directory_and_replay(tmp_path, capsys):
     assert cli.main(["--no-report", "pcb", "polish", "run", str(EXAMPLE), "--out", str(tmp_path / "r2"),
                      "--weight", "nope=1"]) == 2
     assert math.isfinite(rec["events"])
+
+
+def test_a_trace_at_exactly_its_clearance_still_moves():
+    # specs/route-polish: t04 starts at exactly 0.125 mm from c0544/c0546 (slack -6e-15);
+    # the sweep used to refuse every move of it, away from the pads too
+    c = pc.load(EXAMPLE.parent / "route-polish" / "routing-fcu.json")
+    s, evs = run(c, max_iterations=8)
+    m = cs.Model(c)
+    assert all(not m.violations(e.traces) for e in evs if e.accepted)
+    assert any(not np.array_equal(e.traces["t04"], m.orig["t04"]) for e in evs if e.accepted)
+    assert all(e.reason != "sweep" for e in evs)
+    assert s._named("clearance t08#1-t10#2 short by 0.1 mm") == {"t08", "t10"}
+    assert s._named("t13: displacement 0.3001 mm over the limit") == {"t13"}

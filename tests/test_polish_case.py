@@ -123,4 +123,11 @@ def test_a_move_through_a_hole_is_refused_although_both_ends_are_clear():
     nudge = {"t01": np.array([[2, 10], [10, 9.5], [18, 10]], float)}
     assert m.sweep(below, nudge) is None
     assert "displacement" in m.sweep(below, {"t01": np.array([[2, 10], [10, 4], [18, 10]], float)})
+    d = tiny()                                                       # exactly at clearance: may move away
+    d["holes"][0]["center"][1] = 10 + 0.1 + 0.5 + d["rules"]["hole_clearance_mm"]
+    m = cs.Model(pc.loads(json.dumps(d)))
+    assert abs(m.min_slack(m.initial())["value"]) < 1e-12
+    away, closer = ({"t01": np.array([[2, 10], [10, 10 + dy], [18, 10]], float)} for dy in (-0.001, 0.001))
+    assert m.sweep(m.initial(), away) is None
+    assert m.sweep(m.initial(), closer).startswith("clearance")
     assert kat.pcb.polish_check(EXAMPLE)["ok"]

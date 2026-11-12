@@ -4,7 +4,8 @@ every change of state a checked straight move (``Model.sweep``).
 One **iteration** is one optimiser step: ``torch.optim.Adam`` proposes new interior
 vertices from the merit plus the barrier; the proposal is projected so that snapped
 segments keep their exact direction, then shortened (1, 1/2, 1/4, ...) until the move is
-clear all the way and the new state passes the hard check. Discrete edits are **trials**:
+clear all the way and the new state passes the hard check; traces that the check names are
+held where they are and the rest retried. Discrete edits are **trials**:
 ``snap`` (fix a segment at its nearest multiple of 45 degrees), ``adjust`` (weight that
 segment's angle heavily for a while so that its neighbours make room, then snap) and
 ``bend`` (split it, as an octilinear dog-leg or freely), each settled by some iterations and
@@ -15,6 +16,7 @@ snapped. ``Solver.events`` yields every event; the best feasible state is kept a
 from __future__ import annotations
 
 import math
+import re
 from collections import defaultdict
 from dataclasses import dataclass, field
 
@@ -248,13 +250,22 @@ class Solver:
         prop = self._project_all(self._from(self.X.detach().numpy()))
         reason = "projection"
         if prop is not None:
+            held: set = set()             # traces whose move fails a hard check stay put this step
             for alpha in BACKTRACK:
-                cand = {t: cur[t] + alpha * (prop[t] - cur[t]) for t in cur}
+                cand = {t: cur[t] if t in held else cur[t] + alpha * (prop[t] - cur[t]) for t in cur}
                 value, known = self._loss(cand, boost)
                 if value > level + 1e-12:
                     reason = "no descent"
                     continue
                 reason = self.model.sweep(cur, cand, self.opt["max_substeps"])
+                while reason is not None and (named := self._named(reason) - held) and len(held | named) < len(cur):
+                    held |= named
+                    cand = {t: cur[t] if t in held else cand[t] for t in cur}
+                    value, known = self._loss(cand, boost)
+                    if value > level + 1e-12:
+                        reason = "no descent"
+                        break
+                    reason = self.model.sweep(cur, cand, self.opt["max_substeps"])
                 if reason is None:
                     self.state.pts = cand
                     with self.torch.no_grad():
@@ -275,6 +286,11 @@ class Solver:
         self.since += 1
         yield self._event("step", False, reason, candidate=prop)
         return False
+
+    def _named(self, reason: str) -> set:
+        """The movable traces a hard-check failure names (``t13: displacement ...``,
+        ``clearance t08#1-t10#2 ...``)."""
+        return {t for t in self.model.ids if re.search(rf"(?<![\w]){re.escape(t)}(?=[:#])", reason)}
 
     def _loss(self, pts: dict, boost: dict | None = None) -> tuple[float, tuple | None]:
         """What the optimiser minimises (merit plus barrier) at numpy state ``pts``, and
