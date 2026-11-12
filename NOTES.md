@@ -121,7 +121,13 @@ We must make Java 25 a minimum because Freerouting requires it.
 
 ---
 
+DONE
+
 I have added an example where the pcb polish fails: specs/route-polish
 The problem is that hard trace distance constraints are already violated right at the beginning, please inspect.
 Can we solve this by turning the distance hard-constraint into a soft-constraint so the state gets accepted, but make the merit function contribution steeper for distances below the min distance?
 Or rather detect if a hard constraint is violated at the initial condition, and allow the optimizer to move out of the forbidden parameter area?
+If the optimizer fails to get us out of the forbidden parameter area after some max steps, we could add bends for the violating traces, and try again. 
+Same could be done of a step would move from an allowed area into the forbidden area: We could find the violating trace then, and give it a bend where it violates.
+
+
