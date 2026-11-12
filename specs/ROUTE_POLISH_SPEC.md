@@ -27,9 +27,11 @@ hole or other obstacle. Trace widths remain fixed **[A]**.
 
 ## 2 Input and working model
 
-Use an immutable board snapshot and an explicitly selected route group.
+Input shall be a set of traces and constraint-defining geometrical features, as specified in specs\ROUTE_POLISH_INPUT.md.
+Use an explicitly selected route group.
 A trace in this context is a connected, editable polyline between fixed
 anchors, not an individual KiCad track segment **[A]**.
+The `kat` tool shall get a command for the extraction of a traces subset from a .kicad_pro, and re-import of the optimized paths back.
 
 The local model must include:
 
@@ -94,6 +96,10 @@ with different lengths and segment counts **[A]**. Expose the individual terms
 and total score for inspection. Hard-constraint failures are separate from
 the score.
 
+Make weights of the contributors configurable.
+
+Make the merit function **differentiable**, and implement automatic derivative for it. We could e.g. use PyTorch for that.
+
 ## 5 Optimisation and discrete geometry changes
 
 Use constrained, group-wise optimisation with a small number of discrete
@@ -107,7 +113,7 @@ The proposed iteration is:
    in the group may move to accommodate it.
 3. Accept the snap only if geometry remains feasible and its objective trade-off
    meets a defined acceptance policy **[A]**. Keep the segment's direction exact
-   in subsequent continuous steps **[A]**.
+   in subsequent continuous steps **[A]**.   
 4. If snapping fails, first try adjusting the surrounding group. If necessary,
    insert an additional bend point and retry optimisation with a small set of
    candidate corner patterns.
@@ -202,7 +208,7 @@ to weaken the hard constraints.
 
 [`ROUTE_POLISH_INPUT.md`](ROUTE_POLISH_INPUT.md) defines a standalone JSON
 input contract, version 1, for an initial single-layer local polishing problem.
-[`spec/route_polish_example.json`](spec/route_polish_example.json) is its
+[`specs/route_polish_example.json`](specs/route_polish_example.json) is its
 complete, deliberately synthetic example: five movable traces bending around
 a polygonal curved-edge approximation, with unequal spacing, arbitrary angles,
 fixed surrounding copper, holes and a keep-out.
@@ -212,12 +218,6 @@ translated, mirrored, scaled or otherwise transformed from a company board.
 Removing component information alone would not make actual route geometry
 suitable for an open-source repository: outlines, hole patterns, trace
 arrangements and other geometry can still disclose the design.
-
-For development in the public kicad-automation repository, the intended handoff
-is **only** the standalone input-format document and this one JSON fixture.
-Do not copy this board-specific specification, `SPEC.md`, the `spec` directory
-as a whole, screenshots, boards, route exports or private source-to-fixture
-mappings. No export or copy into another repository is performed here.
 
 The version-1 profile intentionally does not model a complete multilayer board,
 branch junctions or changing copper pours. It must not be used to claim that
