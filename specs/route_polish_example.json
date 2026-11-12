@@ -1,0 +1,146 @@
+{
+  "format": "route-polish-input",
+  "version": 1,
+  "units": "mm",
+  "provenance": {
+    "kind": "synthetic",
+    "public_fixture": true,
+    "description": "Invented five-trace bundle around a concave polygonal edge; no source board."
+  },
+  "scope": {
+    "profile": "single-layer-independent-paths",
+    "context_complete": true,
+    "electrical_checks": "not-modelled"
+  },
+  "layer": "F.Cu",
+  "board": {
+    "outline": [
+      [0, 0], [32, 0], [32, 40], [0, 40], [0, 30],
+      [3.8268, 29.2388], [7.0711, 27.0711], [9.2388, 23.8268],
+      [10, 20], [9.2388, 16.1732], [7.0711, 12.9289],
+      [3.8268, 10.7612], [0, 10]
+    ],
+    "cutouts": []
+  },
+  "movement_region": [[2, 2], [28, 2], [28, 38], [2, 38]],
+  "rules": {
+    "copper_clearance_mm": 0.2,
+    "edge_clearance_mm": 0.3,
+    "hole_clearance_mm": 0.25,
+    "pair_clearances": [
+      {"a": "t05", "b": "h01", "clearance_mm": 0.4}
+    ]
+  },
+  "traces": [
+    {
+      "id": "t01",
+      "net": "n01",
+      "width_mm": 0.2,
+      "points": [
+        [3, 5], [6, 9], [10.4, 13], [11.1, 17],
+        [10.5, 20], [11.4, 25], [8.2, 30], [5, 36]
+      ]
+    },
+    {
+      "id": "t02",
+      "net": "n02",
+      "width_mm": 0.2,
+      "points": [
+        [3.9, 5], [6.9, 9], [11.3, 13], [12, 17],
+        [11.4, 20], [12.3, 25], [9.1, 30], [5.9, 36]
+      ]
+    },
+    {
+      "id": "t03",
+      "net": "n03",
+      "width_mm": 0.2,
+      "points": [
+        [4.65, 5], [7.65, 9], [12.05, 13], [12.75, 17],
+        [12.15, 20], [13.05, 25], [9.85, 30], [6.65, 36]
+      ]
+    },
+    {
+      "id": "t04",
+      "net": "n04",
+      "width_mm": 0.2,
+      "points": [
+        [5.7, 5], [8.7, 9], [13.1, 13], [13.8, 17],
+        [13.2, 20], [14.1, 25], [10.9, 30], [7.7, 36]
+      ]
+    },
+    {
+      "id": "t05",
+      "net": "n05",
+      "width_mm": 0.2,
+      "points": [
+        [6.55, 5], [9.55, 9], [13.95, 13], [14.65, 17],
+        [14.05, 20], [14.95, 25], [11.75, 30], [8.55, 36]
+      ]
+    }
+  ],
+  "fixed_copper": [
+    {
+      "id": "c01",
+      "net": "n06",
+      "shape": {
+        "type": "polyline",
+        "width_mm": 0.25,
+        "points": [[17.2, 25], [14, 30], [10.8, 36]]
+      }
+    },
+    {
+      "id": "c02",
+      "net": "n07",
+      "shape": {
+        "type": "polygon",
+        "points": [[19, 12], [22, 12], [22, 24], [19, 24]]
+      }
+    },
+    {
+      "id": "c03",
+      "net": "n08",
+      "shape": {
+        "type": "circle",
+        "center": [18, 8],
+        "radius_mm": 0.45
+      }
+    }
+  ],
+  "holes": [
+    {"id": "h01", "center": [16.5, 18.5], "radius_mm": 0.7},
+    {"id": "h02", "center": [18, 8], "radius_mm": 0.2}
+  ],
+  "keepouts": [
+    {
+      "id": "k01",
+      "points": [[15, 30], [17.5, 30], [17.5, 33], [15, 33]],
+      "clearance_mm": 0.4
+    }
+  ],
+  "groups": [
+    {"id": "g01", "trace_ids": ["t01", "t02", "t03", "t04", "t05"]}
+  ],
+  "objectives": {
+    "angle_step_deg": 45,
+    "preferred_spacing_mm": 0.65,
+    "preferred_edge_margin_mm": 1.4,
+    "parallel_tolerance_deg": 15,
+    "displacement_scale_mm": 0.75,
+    "short_segment_mm": 0.4,
+    "weights": {
+      "angle": 1,
+      "spacing": 1,
+      "edge": 0.8,
+      "displacement": 0.25,
+      "length": 0.1,
+      "complexity": 0.3
+    }
+  },
+  "limits": {
+    "max_iterations": 300,
+    "max_added_vertices_per_trace": 2,
+    "max_displacement_mm": 1.5,
+    "snap_tolerance_deg": 6,
+    "seed": 0
+  }
+}
