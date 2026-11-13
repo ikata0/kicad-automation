@@ -347,6 +347,8 @@ def _classes():
                 self.checks[name] = c
             self.buttons["Fit all"].setToolTip("show the whole geometry (F)")
             QtGui.QShortcut(QtGui.QKeySequence("F"), self, self.fit_all)
+            self.buttons["Run"].setToolTip("run / pause (Space)")
+            QtGui.QShortcut(QtGui.QKeySequence(QtCore.Qt.Key_Space), self, self.toggle_run)
             bar.addStretch()
             self.which = QtWidgets.QComboBox()
             self.which.addItems(["export best feasible", "export shown state"])

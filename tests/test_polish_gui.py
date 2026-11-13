@@ -73,7 +73,13 @@ def test_the_window_steps_runs_and_stops_cleanly(tmp_path, monkeypatch):
     win.step()
     pump(lambda: len(ctl.events) >= 2)
     assert len(ctl.events) == 2                       # paused: one event per step
-    win.toggle_run()
+    from PySide6 import QtCore, QtTest
+    win.show()
+    win.activateWindow()
+    app.processEvents()
+    win.buttons["Step"].setFocus()                    # Space runs even when a button has focus
+    QtTest.QTest.keyClick(win.buttons["Step"], QtCore.Qt.Key_Space)
+    assert win.running
     pump(lambda: ctl.finished)
     assert ctl.finished and ctl.events[-1]["type"] == "stop"
     win.reset()

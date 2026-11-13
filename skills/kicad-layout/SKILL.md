@@ -247,7 +247,7 @@ with kat.pcb.edit(PCB) as b:
   they follow the shown event, including replay.
   Hovering a trace highlights the segment and shows its ID, segment and angle; hovering a
   vertex highlights it and shows its index and x, y
-  in mm. **Fit all** (key F) zooms to the whole geometry. A detour that doubles back (turn of at least `reversal_turn_deg`, 150) is cut at its
+  in mm. **Run/Pause** (Space) and **Fit all** (F, zooms to the whole geometry) have shortcuts. A detour that doubles back (turn of at least `reversal_turn_deg`, 150) is cut at its
   tip by a `simplify` event.
   A case already short of clearance runs too (`check` says `recoverable`); read the run's
   `recovery`: only a result with `feasible: true` is clear.
