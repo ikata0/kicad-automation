@@ -169,4 +169,16 @@ About the bend insertion: Change to behaviour according to my intent, and update
 
 ---
 
+DONE
+
 Make the vertices that were automatically added to traces clearly visible.
+
+---
+
+1. Hovering a trace shall show a small toptip that indicates the trace ID and angle. 
+2. Hovering a vertex shall show a small tooltip with vertex ID and x,y position in mm, with some reasonable snapping distance.
+3. I see a case where a trace runs horizontally to a vertex, then immediately returns back on almost the same path, to a vertex that is almost on the initial path, before leaving vertically, see the image for reference.
+  ![](image.png)
+  For such cases there should be a simplification step, e.g. by moving the 'detour vertex' to the position from where the final perpendicular bend happens.
+
+  
