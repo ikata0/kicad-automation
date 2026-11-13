@@ -130,4 +130,39 @@ Or rather detect if a hard constraint is violated at the initial condition, and 
 If the optimizer fails to get us out of the forbidden parameter area after some max steps, we could add bends for the violating traces, and try again. 
 Same could be done of a step would move from an allowed area into the forbidden area: We could find the violating trace then, and give it a bend where it violates.
 
+---
+
+From GPT6.1 Sol:
+
+Task complete 
+Pale does not mean “converged” or “frozen.” The GUI has no such colour state. Pale gold is the original-route overlay; orange is current geometry, green marks snapped segments, and translucent purple highlights a trial’s target ( src\kat\pcb\polish\gui.py:306–353 ). Without seeing the window, I cannot identify which overlay you observed.
+
+A read-only reproduction of your case continued moving beyond iteration 100: the score fell from 0.489875 at iteration 100 to 0.477716 at 140. Movement at iteration 140 was only about 0.55 µm, easily invisible. Rejected steps halve the learning rate, while accepted steps recover it by only 10%; snapped directions and clearance constraints further restrict movement. The event’s  reason  distinguishes rejected steps from an actual stop.
+
+Bend insertion currently differs from your intention ( src\kat\pcb\polish\solver.py:490 ):
+
+ 1. After snapping and an angle-boosted adjustment fail, it first tries two already-bent doglegs, locking their segments to 45° multiples.
+ 2. Only if those fail does it try your approach: insert a collinear midpoint and let the optimizer move it.
+ 3. Each trial gets 20 settling iterations by default. A split still straight within 0.5° is discarded; otherwise it normally needs a score improvement of at least 0.005. Later, collinear vertices are merged away. Your case permits two added vertices per trace.
+
+So the implementation prioritizes immediate geometric improvement, not retaining an extra node as a degree of freedom. Your intended behaviour would start collinear and defer pruning while that freedom is explored. One subtlety: at an exactly collinear split, the angle objective alone gives the new node zero gradient—spacing, obstacle forces or another search mechanism must initiate movement. No files were changed.
+
+---
+
+About the 'pale traces' problem: It happens with GUI enabled in event 73 for the first time, then stays like that. Something in the program throws then:
+```
+Traceback (most recent call last):
+  File "D:\workspace\kicad-automation\src\kat\pcb\polish\gui.py", line 321, in _tick
+    self._render()
+  File "D:\workspace\kicad-automation\src\kat\pcb\polish\gui.py", line 342, in _render
+    self.dynamic.append(self.scene.addPath(self._path(pts[i:i + 2]), self._pen(col["snapped"], w * 0.45), nobrush))
+                                           ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "D:\workspace\kicad-automation\src\kat\pcb\polish\gui.py", line 270, in _path
+    path = QtGui.QPainterPath(QtCore.QPointF(pts[0][0], -pts[0][1]))
+                                             ~~~^^^
+IndexError: list index out of range
+```
+
+About the bend insertion: Change to behaviour according to my intent, and update the spec accordingly.
+
 
