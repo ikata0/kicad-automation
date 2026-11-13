@@ -43,10 +43,19 @@ def distances_from_drc(pcb):
     for v in d["violations"]:
         if v["type"] != "clearance":
             continue
-        m = re.search(r"([\d.]+) mm\)\s*$", v["description"])
+        m = re.search(r"([0-9]+(?:[.,][0-9]+)?) mm\)\s*$", v["description"])
         it = next(i for i in v["items"] if "pad" not in i["description"].lower())
-        out[(it["x"], it["y"])] = float(m.group(1))
+        out[(it["x"], it["y"])] = float(m.group(1).replace(",", "."))
     return out
+
+
+@pytest.mark.parametrize("actual", ["2.5410", "2,5410"])
+def test_drc_distances_accept_either_decimal_separator(monkeypatch, actual):
+    monkeypatch.setattr(kat.pcb, "drc", lambda *args, **kwargs: {"violations": [{
+        "type": "clearance", "description": f"Clearance violation (actual {actual} mm)",
+        "items": [{"description": "Track [B]", "x": 1, "y": 2},
+                  {"description": "Pad 1 [A]", "x": 3, "y": 4}]}]})
+    assert distances_from_drc("unused.kicad_pcb") == {(1, 2): 2.541}
 
 
 @pytest.mark.parametrize("rot,side", [(0, "F"), (30, "F"), (90, "F"), (0, "B"), (30, "B")])

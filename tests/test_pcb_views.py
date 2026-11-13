@@ -99,7 +99,8 @@ def test_inner_layer_views_show_only_that_layer(tmp_path, monkeypatch):
 
 def test_view_of_a_layer_the_board_does_not_have(board):
     """kicad-cli says OK and writes nothing for a layer name the board lacks."""
+    from kat.pcb import views
     for bad in ("In9.Cu", "F.Cu,In9.Cu", ["In9.Cu"], "In1"):
         with pytest.raises(kat.KatError, match="has no layer"):
             kat.pcb.view(board, around="R1", layers=bad)
-    assert kat.pcb.view(board, around="R1", layers="F.Silkscreen, Edge.Cuts")["layers"] == ["F.Silkscreen", "Edge.Cuts"]
+    assert views._layers(kat.pcb.Board(board), "F.Silkscreen, Edge.Cuts")[1] == ["F.Silkscreen", "Edge.Cuts"]

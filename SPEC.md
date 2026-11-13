@@ -1254,6 +1254,7 @@ column in place of the net.
 | Renaming harness nets left the old `+5V` power symbols and flags beside the new labels (ERC `multiple_net_names`); a deleted harness sheet made `block build` fail | stale lone pins are detached; the harness sheet is created anew |
 | Switching a port to a power net and back deleted the block's GND symbol: power references (`#PWR1`) repeat across a block's instances | power symbols are replaced by their node, not by reference |
 | kat crashed with `UnicodeEncodeError` on a cp1252 console | output streams fall back to escapes for characters the console cannot show |
+| Windows KiCad reports used decimal commas and double-quoted zone names despite `LANG=C`; distance tests misread the numbers and `pcb check` missed isolated pads | DRC distance tests accept both decimal separators; zone-name readers accept single or double quotes |
 | A stage input leaves the block as a track on L1, without a via: no port point possible | a track end on the outline is a port point |
 | `netrule coupling` reported the harness connector's neighbouring IN/OUT pins, `plane` the intended pour cut-out under Rf/Cf | harness pads are left out (`--harness`); `--except-zone` / `--except-area` |
 | Side-by-side copper (the main case in a guarded layout) has no parallel-plate overlap, so `coupling` gave no pF | `--estimate 2d`: 2D field solution of the cross-section |

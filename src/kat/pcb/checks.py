@@ -54,8 +54,8 @@ def _fill_hits(d: dict) -> list[tuple[str | None, str, dict]]:
         if v["type"] not in FILL_TYPES:
             continue
         for i in v["items"]:
-            if m := re.match(r"Zone (?:'([^']*)' )?\[([^\]]*)\]", i["description"]):
-                out.append((m.group(1), m.group(2), v))
+            if m := re.match(r"""Zone (?:(['"])(.*?)\1 )?\[([^\]]*)\]""", i["description"]):
+                out.append((m.group(2), m.group(3), v))
                 break
     return out
 
@@ -99,8 +99,8 @@ def isolated_pads(pcb: Path, b, unconnected: list[dict]) -> list[dict]:
     corner. Only zones named in ``unconnected`` (DRC's items) are filled and looked at.
     Returns [{pad, net, zone, layer, at, fragment_area (mm²), zone_area}]."""
     import re
-    names = {m.group(1) for u in unconnected for i in u["items"]
-             if (m := re.match(r"Zone '([^']*)'", i["description"]))}
+    names = {m.group(2) for u in unconnected for i in u["items"]
+             if (m := re.match(r"""Zone (['"])(.*?)\1""", i["description"]))}
     if not names:
         return []
     from .coupling import _filled, _pts

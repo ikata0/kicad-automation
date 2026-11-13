@@ -194,7 +194,8 @@ def test_keepout_around_warns_when_its_copper_would_break_it(tmp_path):
 
 
 
-def test_a_pad_on_a_cut_off_fragment_is_named(tmp_path):
+@pytest.mark.parametrize("quote", ["'", '"'])
+def test_a_pad_on_a_cut_off_fragment_is_named(tmp_path, monkeypatch, quote):
     """FR-038: a ring of another net cuts R1's pad 1 off the GND pour; DRC only says two parts
     of the zone are not connected, at the zone's corner. The check names the pad."""
     pcb = tmp_path / "z.kicad_pcb"
@@ -207,11 +208,31 @@ def test_a_pad_on_a_cut_off_fragment_is_named(tmp_path):
         b.add_track(a, c, 0.25, "F.Cu", "X")
     b.zone("GND", "F.Cu")
     b.save()
+    from kat.pcb import checks
+    real_drc = checks.drc
+
+    def quoted_drc(*args, **kwargs):
+        d = real_drc(*args, **kwargs)
+        for u in d["unconnected"]:
+            for item in u["items"]:
+                if item["description"].startswith("Zone "):
+                    item["description"] = f"Zone {quote}GND F.Cu{quote} [GND]"
+        return d
+
+    monkeypatch.setattr(checks, "drc", quoted_drc)
     c = kat.pcb.check(pcb)
     assert c["unconnected"] == 1 and "R1" not in str(c["unconnected_items"])       # what DRC says
     (pad,) = c["isolated_pads"]
     assert pad["pad"] == "R1.1" and pad["zone"] == "GND F.Cu" and pad["layer"] == "F.Cu"
     assert 0 < pad["fragment_area"] < 12 < pad["zone_area"]
+
+
+@pytest.mark.parametrize("quote", ["'", '"'])
+def test_fill_hits_accept_both_zone_name_quotes(quote):
+    from kat.pcb import checks
+    violation = {"type": "clearance", "items": [
+        {"description": f"Zone {quote}plane{quote} [GND] on F.Cu"}]}
+    assert checks._fill_hits({"violations": [violation]}) == [("plane", "GND", violation)]
 
 
 def test_a_fill_over_other_nets_is_retried_with_a_nudged_width(tmp_path, monkeypatch):

@@ -3,6 +3,7 @@
 import gzip
 import io
 import json
+import shutil
 import subprocess
 import tarfile
 import zipfile
@@ -165,15 +166,16 @@ def lzw(data: bytes, limit: int = 16) -> bytes:
 
 
 @pytest.mark.parametrize("limit, size", [(10, 9000), (12, 40000), (16, 300000)])
-def test_unix_compress_matches_gzip(limit, size):
+def test_unix_compress_roundtrip(limit, size):
     import random
     rnd = random.Random(limit)
     words = [bytes(rnd.randrange(32, 127) for _ in range(rnd.randrange(1, 12))) for _ in range(800)]
     data = b"".join(rnd.choice(words) for _ in range(size // 6))
     packed = lzw(data, limit)
-    proc = subprocess.run(["gzip", "-dc"], input=packed, capture_output=True)
-    assert proc.stdout == data, proc.stderr    # gzip, independent of both, agrees with the writer
     assert odb._unlzw(packed) == data
+    if gzip_cli := shutil.which("gzip"):
+        proc = subprocess.run([gzip_cli, "-dc"], input=packed, capture_output=True)
+        assert proc.returncode == 0 and proc.stdout == data, proc.stderr
 
 
 def test_corrupt_compress_data():

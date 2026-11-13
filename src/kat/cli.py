@@ -260,7 +260,7 @@ def cmd_pcb(a):
                              a.rot, not a.no_lock, a.make_room, a.side, a.layer_map, a.allow_asymmetric, a.anchor,
                              a.zone_priority, dict(twins) or None)
     if a.pcb_cmd == "stitch":
-        return kat.pcb.stitch(a.pcb, a.net, a.pitch, a.margin, not a.no_lock)
+        return kat.pcb.stitch(a.pcb, a.net, a.pitch, a.move_margin, not a.no_lock)
     if a.pcb_cmd == "plane-stub":
         return kat.pcb.plane_stub(a.pcb, a.ref, a.net or None, a.skip_net or [], not a.no_lock)
     if a.pcb_cmd == "profile":

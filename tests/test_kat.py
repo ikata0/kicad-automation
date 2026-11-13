@@ -145,7 +145,7 @@ def test_cli_and_library_give_the_same_file(tmp_path, capsys):
                  ["connect", "R1.2", "D1.2"],
                  ["label", "VIN", "R1.1", "--stub", "0,-2.54"],
                  ["power", "GND", "D1.1", "--stub", "0,2.54"],
-                 ["power", "PWR_FLAG", "100,98.81", "--stub", "-5.08,0"],
+                 ["power", "PWR_FLAG", "100,98.81", "--stub=-5.08,0"],
                  ["move", "D1", "--by", "12.7,0"],
                  ["set", "R1", "Value", "470", "--at", "104.14,80"],
                  ["detach", "R1.1"],

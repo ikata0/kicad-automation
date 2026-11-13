@@ -227,6 +227,7 @@ def test_temp_without_local_venv_and_linux_default(tmp_path, monkeypatch):
 
 
 def configure_nested(pytester, unavailable=()):
+    pytester.makeini("[pytest]\naddopts =\n")
     capabilities = {name: support.Capability(name not in unavailable, name)
                     for name in (*support.REQUIRED, "pymupdf", "gui")}
     source = Path(__file__).with_name("conftest.py").read_text(encoding="utf-8")
