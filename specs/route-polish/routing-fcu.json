@@ -2494,7 +2494,7 @@
   "objectives": {
     "angle_step_deg": 45,
     "preferred_spacing_mm": 0.25,
-    "preferred_edge_margin_mm": 1.0,
+    "preferred_edge_margin_mm": 2.0,
     "parallel_tolerance_deg": 15,
     "displacement_scale_mm": 1.0,
     "short_segment_mm": 0.4,
