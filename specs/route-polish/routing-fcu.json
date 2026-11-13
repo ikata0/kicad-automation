@@ -2497,7 +2497,7 @@
     "preferred_edge_margin_mm": 2.0,
     "parallel_tolerance_deg": 15,
     "displacement_scale_mm": 1.0,
-    "short_segment_mm": 0.4,
+    "short_segment_mm": 0.25,
     "weights": {
       "angle": 1,
       "spacing": 0.5,
@@ -2508,7 +2508,7 @@
     }
   },
   "limits": {
-    "max_iterations": 1000,
+    "max_iterations": 5000,
     "max_added_vertices_per_trace": 4,
     "snap_tolerance_deg": 1.0,
     "seed": 0

@@ -279,9 +279,13 @@ configurable.
 - **Spacing pairs.** These are adjacent traces in group order that run locally
   parallel. The pairing is frozen from the original geometry, with samples
   placed by arc-length fraction.
-- **Defaults for extracts.** Edge margin 1.0 mm; preferred spacing 2 × the copper
-  clearance; snap tolerance 1°; `max_added_vertices_per_trace` 2; `max_iterations`
-  300; weights as in the example fixture.
+- **Defaults for extracts.** Edge margin 2.0 mm; preferred spacing 2 × the copper
+  clearance; short segment 2.5 trace widths, at least 0.25 mm; snap tolerance 1°;
+  `max_added_vertices_per_trace` 4; `max_iterations` 5000, a cap that a run normally
+  stops short of on stagnation; weights spacing 0.5, edge 1.0, displacement 0.05 (low
+  displacement weight, so traces may move far), as in `route-polish/routing-fcu.json`.
+  Chosen on that case by runs to stagnation: 1000 iterations end before convergence,
+  and 0.25 mm short segments improved the angle, spacing and edge terms together.
 - **Discrete edits.** Snap within tolerance or when progress stagnates (merit
   improvement below 1e-4 over 20 iterations). A snap is followed by 20 settle
   iterations. It is accepted if the merit is at most `snap_slack` (0.001) worse,

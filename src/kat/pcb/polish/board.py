@@ -28,9 +28,9 @@ from . import case as pc
 ARC_ERROR = 0.001           # mm: chord error of arcs and round pads
 REACH = 3.0                 # mm around the movement region in which context is collected
 MARGIN = 2.0                # mm the movement region extends beyond the traces' bounding box
-OBJECTIVES = {"preferred_edge_margin_mm": 1.0, "parallel_tolerance_deg": 15, "displacement_scale_mm": 1.0}
-WEIGHTS = {"angle": 1, "spacing": 1, "edge": 0.8, "displacement": 0.25, "length": 0.1, "complexity": 0.3}
-LIMITS = {"max_iterations": 300, "max_added_vertices_per_trace": 2, "snap_tolerance_deg": 1.0, "seed": 0}
+OBJECTIVES = {"preferred_edge_margin_mm": 2.0, "parallel_tolerance_deg": 15, "displacement_scale_mm": 1.0}
+WEIGHTS = {"angle": 1, "spacing": 0.5, "edge": 1.0, "displacement": 0.05, "length": 0.1, "complexity": 0.3}
+LIMITS = {"max_iterations": 5000, "max_added_vertices_per_trace": 4, "snap_tolerance_deg": 1.0, "seed": 0}
 SAFE_DRU = {"clearance", "edge_clearance", "hole_clearance", "track_width", "via_diameter", "hole_size",
             "annular_width", "via_count", "courtyard_clearance", "silk_clearance", "text_height",
             "text_thickness", "thermal_relief_gap", "thermal_spoke_width", "min_resolved_spokes",
@@ -278,7 +278,7 @@ def extract(pcb: Path | str, nets: list[str], out: Path | str, layer: str | None
         raise KatError(f"a clearance of {widest} mm reaches beyond the {REACH} mm of collected context")
 
     obj = {"preferred_spacing_mm": round(2 * base, 6) or 0.2, **OBJECTIVES,
-           "short_segment_mm": max(0.4, 4 * half)}
+           "short_segment_mm": max(0.25, 5 * half)}
     obj["preferred_edge_margin_mm"] = max(obj["preferred_edge_margin_mm"], edge)
     obj.update(objectives or {})
     doc = {"format": pc.FORMAT, "version": 2, "units": "mm",
