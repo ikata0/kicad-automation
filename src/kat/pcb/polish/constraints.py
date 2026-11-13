@@ -310,12 +310,16 @@ class Model:
                     out.append(f"{t}: inside {pid}")
         return out
 
-    def sweep(self, cur: dict, new: dict, max_substeps: int = MAX_SUBSTEPS) -> str | None:
+    def sweep(self, cur: dict, new: dict, max_substeps: int = MAX_SUBSTEPS, exempt=(),
+              final: dict | None = None) -> str | None:
         """Check the straight move from state ``cur`` to ``new`` (same vertex counts): None
         when no centreline touches an obstacle or another trace on the way (which keeps the
         topology) and ``new`` is feasible, else the reason (``sweep``, or the first
         violation of ``new``). Clearance is required of ``new`` only, so a trace at exactly
-        its clearance, or short of it, can move away."""
+        its clearance, or short of it, can move away. ``exempt``: (trace, segment index,
+        segment index) pairs of one trace that may meet (the legs beside a segment that
+        collapses); ``final``: the state checked at the end instead of ``new`` (``new``
+        with the collapsed segment removed)."""
         disp = []
         for t in self.ids:
             if cur[t].shape != new[t].shape:
@@ -324,10 +328,18 @@ class Model:
             disp.append(np.maximum(d[:-1], d[1:]))
         rate = np.concatenate(disp)                                  # per segment, mm per unit of the move
         if float(rate.max(initial=0.0)) > 0:
-            tau = 0.0
+            tau, skip = 0.0, None
             for _ in range(max_substeps):
                 pos = {t: cur[t] + tau * (new[t] - cur[t]) for t in self.ids}
-                fs, ms, _ = self.slacks(pos, topology=True)
+                fs, ms, (tr, ix) = self.slacks(pos, topology=True)
+                if exempt:
+                    if skip is None:
+                        skip = np.zeros(ms.shape, bool)
+                        for t, i, j in exempt:
+                            mine = tr == self.ids.index(t)
+                            skip |= np.outer(mine & (ix == i), mine & (ix == j))
+                        skip |= skip.T
+                    ms = np.where(skip, np.inf, ms)
                 if (fs.size and fs.min() < -TOL) or (ms.size and ms.min() < -TOL):
                     return "sweep"
                 with np.errstate(divide="ignore", invalid="ignore"):
@@ -342,7 +354,7 @@ class Model:
                 tau += dt
             else:
                 return "sweep"
-        bad = self.violations(new)
+        bad = self.violations(new if final is None else final)
         return bad[0] if bad else None
 
 

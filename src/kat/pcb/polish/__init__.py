@@ -19,6 +19,7 @@ OPTIONS = {
     "barrier_margin_mm": (0.05, "mm above the clearance where the solver's barrier starts"),
     "adjust_boost": (100.0, "angle-term factor while neighbours make room for a snap"),
     "blocked_bend_after": (5, "steps blocked by one obstacle before a rescue bend there"),
+    "reversal_turn_deg": (150.0, "degrees; a sharper turn is a doubled-back detour: tip dropped"),
 }
 
 

@@ -118,8 +118,19 @@ def test_added_vertex_markers_follow_history_and_survive_export(tmp_path, monkey
             win.view.scale(2, 2)
             assert marker.deviceTransform(win.view.viewportTransform()).mapRect(marker.rect()).size() == size
             assert "1 vertices (pink dots)" in win.details.toPlainText()
+            assert win.view.hover_text(win.view.mapFromScene(x, -y)).startswith("t01 vertex 1 ")
         ctl.reset()
         win._render()
         assert not markers()
     finally:
         win.close()
+
+
+def test_hovering_names_the_vertex_or_segment_under_the_mouse():
+    c = pc.loads(json.dumps(tiny(points=((2, 10), (10, 10), (14, 14)), holes=())))
+    ctl = gui.Controller(c, None, [sv.Solver(c)._event("start", True).to_json()])
+    assert ctl.hover(10.05, 9.97, 0.1, 0.05) == "t01 vertex 1  x 10.000  y 10.000 mm"
+    assert ctl.hover(2.0, 10.0, 0.1, 0.05).endswith("(anchored end)")
+    assert ctl.hover(6, 10.08, 0.1, 0.05) == "t01 segment 0  angle 0.0 deg, snapped 0 deg"
+    assert ctl.hover(12, 12.02, 0.1, 0.05) == "t01 segment 1  angle 45.0 deg, snapped 45 deg"
+    assert ctl.hover(6, 11, 0.1, 0.05) is None

@@ -171,3 +171,21 @@ def test_solver_options_are_listed_in_help_and_typed(capsys):
         sv.solver_options(None, {"max_substeps": 2.5})
     with pytest.raises(kat.KatError, match="settle_iterations.*kat pcb polish run --help"):
         sv.solver_options(None, {"settle": 1.0})
+
+
+def test_a_doubled_back_detour_is_simplified_unless_something_is_in_the_way():
+    detour = ((18, 10), (4, 10), (10, 10.05), (10, 16))       # back along the way it came, then up
+    s = sv.Solver(pc.loads(json.dumps(tiny(points=detour, holes=()))), options={"settle_iterations": 0})
+    s.state.added["t01"] = {1, 2}
+    ev, = s._simplify()
+    assert ev.type == "simplify" and ev.accepted
+    p = s.state.pts["t01"]
+    assert np.allclose(p, [(18, 10), (10, 10), (10, 16)])     # the tip went onto the corner
+    assert sorted(s._snapped_idx()["t01"].items()) == [(0, 0), (1, 2)]
+    assert mt.deviation_deg(p[0], p[1]) < sv.EXACT and s.state.added["t01"] == {1}
+    assert not s.model.violations(s.state.pts) and s._tips(s.best[1]) == 0
+    blocked = tiny(points=((18, 10), (4, 10), (10, 11.5), (10, 16)), holes=((8.5, 10.55, 0.05),))
+    s = sv.Solver(pc.loads(json.dumps(blocked)), options={"settle_iterations": 0})
+    ev, = s._simplify()
+    assert not ev.accepted and ev.reason == "sweep"
+    assert not list(s._simplify())                             # not tried again

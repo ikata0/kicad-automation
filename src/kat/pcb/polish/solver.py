@@ -10,7 +10,9 @@ held where they are and the rest retried. Discrete edits are **trials**:
 segment's angle heavily for a while so that its neighbours make room, then snap) and
 ``bend`` (add a free collinear midpoint), each settled by some iterations and then committed
 or reverted. No bend is imposed: the added vertex gives the optimiser another degree of
-freedom. A collinear vertex is ``merge``d away outside trials. Snapped segments stay snapped
+freedom. A collinear vertex is ``merge``d away outside trials, and the tip of a doubled-back
+detour (a turn of at least ``reversal_turn_deg``) is moved onto its nearer neighbour and
+dropped (``simplify``); a best state never keeps a tip that a later one removed. Snapped segments stay snapped
 except when explicitly split for rescue. ``Solver.events`` yields every event; the best
 feasible state is kept apart.
 
@@ -191,6 +193,7 @@ class Solver:
         self.rescues = defaultdict(int)               # rescue bends tried per (trace, segment id)
         self.blocked = defaultdict(int)               # steps held per (trace, segment id, obstacle)
         self.no_merge: set = set()
+        self.no_simplify: set = set()
         self.in_trial = False
         self.stop_requested = False
         self.termination: str | None = None
@@ -262,7 +265,7 @@ class Solver:
         if accepted and (not self.in_trial or type_ == "commit"):
             self.model.tighten(self.state.pts)
             if self._better(self.short, self._rank(self.total, self.state), self.best[4],
-                            self._rank(self.best[0], self.best[1])):
+                            self._rank(self.best[0], self.best[1]), self._tips(self.state), self._tips(self.best[1])):
                 self.best = (self.total, self.state.copy(), self.seq, dict(self.terms), self.short)
         ev = Event(self.seq, self.iter, type_, accepted, reason, target,
                    {k: v.copy() for k, v in self.state.pts.items()},
@@ -277,12 +280,19 @@ class Solver:
         (``snap_slack``), consistent with accepting a snap that costs up to that much."""
         return total - self.opt["snap_slack"] * sum(len(v) for v in st.snapped.values())
 
+    def _tips(self, st: State) -> int:
+        """Doubled-back tips (turns of at least ``reversal_turn_deg``) in ``st``."""
+        return sum(int((turns_deg(p) >= self.opt["reversal_turn_deg"]).sum()) for p in st.pts.values() if len(p) > 2)
+
     @staticmethod
-    def _better(short: float, rank: float, short0: float, rank0: float) -> bool:
-        """Whether (shortfall, rank) beats (short0, rank0): less short first, then the rank."""
+    def _better(short: float, rank: float, short0: float, rank0: float, tips: int = 0, tips0: int = 0) -> bool:
+        """Whether (shortfall, tips, rank) beats (short0, tips0, rank0): less short first,
+        then fewer doubled-back tips, then the rank."""
         if short < short0 - GAIN:
             return True
-        return short <= short0 + GAIN and rank < rank0 - 1e-12
+        if short > short0 + GAIN:
+            return False
+        return tips < tips0 or (tips == tips0 and rank < rank0 - 1e-12)
 
     def _ref(self, t: str, s: int) -> str:
         return f"{t}#{self.state.sid[t].index(s)}"
@@ -559,6 +569,55 @@ class Solver:
                 yield self._event("merge", True, None, target)
                 return
 
+    def _simplify(self):
+        """Removes doubled-back detours (outside trials): an interior vertex whose turn is at
+        least ``reversal_turn_deg`` is moved onto its nearer neighbour, as a checked move,
+        and dropped; the longer leg survives (with its snap when it can stay exact)."""
+        for t in self.model.ids:
+            p = self.state.pts[t]
+            if len(p) < 3:
+                continue
+            tr = turns_deg(p)
+            for k in np.nonzero(tr >= self.opt["reversal_turn_deg"])[0] + 1:
+                sa, sb = self.state.sid[t][k - 1], self.state.sid[t][k]
+                if (sa, sb) in self.no_simplify:
+                    continue
+                # j: the nearer neighbour; the leg towards it collapses
+                j = k - 1 if np.linalg.norm(p[k] - p[k - 1]) < np.linalg.norm(p[k + 1] - p[k]) else k + 1
+                keep, gone = (sb, sa) if j == k - 1 else (sa, sb)
+                st = self.state.copy()
+                reduced = np.delete(p, k, axis=0)
+                sid = list(st.sid[t])
+                sid.remove(gone)
+                snaps = {s: q for s, q in st.snapped[t].items() if s != gone}
+                q = project(reduced, {sid.index(s): d for s, d in snaps.items()})
+                if q is None:
+                    snaps.pop(keep, None)
+                    q = project(reduced, {sid.index(s): d for s, d in snaps.items()})
+                target = f"{t}#{k}"
+                if q is None:
+                    self.no_simplify.add((sa, sb))
+                    yield self._event("simplify", False, "inconsistent directions", target)
+                    return
+                moved = {x: y.copy() for x, y in self.state.pts.items()}
+                moved[t] = np.insert(q, k, q[j if j < k else k], axis=0)   # the tip on its neighbour
+                final = {**moved, t: q}
+                lo, hi = min(j, k) - 1, max(j, k)          # the legs that meet where one collapses
+                exempt = [(t, lo, hi)] if lo >= 0 and hi < len(p) - 1 else []
+                reason = self.model.sweep(self.state.pts, moved, self.opt["max_substeps"], exempt, final)
+                if reason:
+                    self.no_simplify.add((sa, sb))
+                    yield self._event("simplify", False, reason, target, candidate=moved)
+                    return
+                st.pts = moved
+                st.pts[t] = q
+                st.added[t] = {v - (v > k) for v in st.added.get(t, ()) if v != k}
+                st.sid[t] = sid
+                st.snapped[t] = snaps
+                self._apply(st.pts, st)
+                yield self._event("simplify", True, None, target)
+                return
+
     def _candidate(self, stagnated: bool):
         best = None
         for t in self.model.ids:
@@ -618,6 +677,7 @@ class Solver:
                 break
             yield from self._step()
             yield from self._merge()
+            yield from self._simplify()
             stagnated = self.since >= self.opt["stagnation_window"]
             if self.short > GAIN and (r := self._rescue_target(False)):
                 yield from self._rescue(*r)

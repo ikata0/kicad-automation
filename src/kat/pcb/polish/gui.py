@@ -14,6 +14,7 @@ state shown), into a directory chosen then.
 from __future__ import annotations
 
 import json
+import math
 import threading
 from pathlib import Path
 
@@ -83,6 +84,43 @@ class Controller:
         if self.result is not None:
             return self.result["seq"]
         return min((e for e in self.events if e["accepted"]), key=lambda e: e["total"])["seq"]
+
+    def hover(self, x: float, y: float, vertex_tol: float, segment_tol: float) -> str | None:
+        """What lies under the point (x, y) (mm, the input's coordinates, y up) in the state
+        shown: the nearest vertex within ``vertex_tol`` mm (trace, index, position in mm),
+        else the nearest segment within ``segment_tol`` mm or its half width (trace, index,
+        undirected angle in degrees); None when nothing is that close."""
+        ev = self.current()
+        if ev is None:
+            return None
+        from ..geometry import point_seg
+        best = None
+        for t, pts in ev["traces"].items():
+            for i, (px, py) in enumerate(pts):
+                d = math.hypot(px - x, py - y)
+                if d <= vertex_tol and (best is None or d < best[0]):
+                    best = (d, t, i)
+        if best:
+            _, t, i = best
+            px, py = ev["traces"][t][i]
+            n = len(ev["traces"][t])
+            note = (" (anchored end)" if i in (0, n - 1) else
+                    " (added automatically)" if i in ev.get("added_vertices", {}).get(t, ()) else "")
+            return f"{t} vertex {i}  x {px:.3f}  y {py:.3f} mm{note}"
+        for t, pts in ev["traces"].items():
+            tol = max(segment_tol, self.case.traces[t].width / 2)
+            for i, (a, b) in enumerate(zip(pts, pts[1:])):
+                d = point_seg((x, y), a, b)
+                if d <= tol and (best is None or d < best[0]):
+                    best = (d, t, i)
+        if not best:
+            return None
+        _, t, i = best
+        (ax, ay), (bx, by) = ev["traces"][t][i:i + 2]
+        angle = math.degrees(math.atan2(by - ay, bx - ax)) % 180.0
+        angle = 0.0 if angle > 180.0 - 5e-4 else angle
+        snap = f", snapped {round(angle / 45.0) % 4 * 45} deg" if i in ev["snapped"].get(t, ()) else ""
+        return f"{t} segment {i}  angle {angle:.1f} deg{snap}"
 
     def export(self, out: Path | str, which: str = "best", force: bool = False) -> dict:
         """Write run.json, history.jsonl (the events so far) and result.json (``which``:
@@ -161,11 +199,37 @@ def _classes():
                 self.cond.notify_all()
 
     class View(QtWidgets.QGraphicsView):
-        def __init__(self, scene):
+        """Wheel zoom, drag pan, and a tooltip naming the vertex (8 px) or segment (4 px)
+        under the mouse."""
+        VERTEX_PX, SEGMENT_PX = 8, 4
+
+        def __init__(self, scene, ctl: Controller):
             super().__init__(scene)
+            self.ctl = ctl
             self.setRenderHint(QtGui.QPainter.Antialiasing)
             self.setDragMode(QtWidgets.QGraphicsView.ScrollHandDrag)
             self.setTransformationAnchor(QtWidgets.QGraphicsView.AnchorUnderMouse)
+            self.viewport().setMouseTracking(True)
+
+        def hover_text(self, pos) -> str | None:
+            """The hover text at viewport position ``pos``."""
+            p = self.mapToScene(pos)
+            mm = 1.0 / max(abs(self.transform().m11()), 1e-9)
+            return self.ctl.hover(p.x(), -p.y(), self.VERTEX_PX * mm, self.SEGMENT_PX * mm)
+
+        def mouseMoveEvent(self, e):
+            super().mouseMoveEvent(e)
+            pos = e.position().toPoint()
+            text = self.hover_text(pos)
+            if text:
+                QtWidgets.QToolTip.showText(self.viewport().mapToGlobal(pos), text, self.viewport())
+            else:
+                QtWidgets.QToolTip.hideText()
+
+        def viewportEvent(self, e):
+            if e.type() == QtCore.QEvent.ToolTip:          # the hover text replaces item tooltips
+                return True
+            return super().viewportEvent(e)
 
         def wheelEvent(self, e):
             f = 1.2 if e.angleDelta().y() > 0 else 1 / 1.2
@@ -187,7 +251,7 @@ def _classes():
             self.dirty = True
             self.setWindowTitle(f"kat pcb polish - group {ctl.group}")
             self.scene = QtWidgets.QGraphicsScene()
-            self.view = View(self.scene)
+            self.view = View(self.scene, ctl)
             self.view.scale(30, 30)
             self.dynamic: list = []
             self.context: list = []

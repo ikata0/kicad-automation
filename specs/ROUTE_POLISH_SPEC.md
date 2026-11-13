@@ -294,7 +294,10 @@ configurable.
   limit and user stop still apply. Keep the trial if clearance shortfall drops,
   or if it does not grow and merit improves by at least `bend_gain` (0.005).
   A visible bend is not required separately; collinear vertices may be merged
-  outside trials. A perfectly collinear split can have zero angle gradient;
+  outside trials. The tip of a detour that doubles back (a turn of at least
+  `reversal_turn_deg`, default 150 degrees) is moved onto its nearer neighbour and
+  dropped outside trials, as a checked move (`simplify`); the longer leg keeps its
+  snap when the projection allows it. A perfectly collinear split can have zero angle gradient;
   other objective or barrier forces must initiate its movement, and a trial
   without sufficient benefit is reverted, not forcibly bent. Snapped segments
   stay snapped except when explicitly split for rescue. Each

@@ -1147,8 +1147,9 @@ def build_parser() -> argparse.ArgumentParser:
     pl2 = plsp.add_parser("run", formatter_class=_Fmt, help="optimise one group of a case",
                           description="Continuous moves on the merit's gradient (PyTorch), snaps to 45-degree\n"
                                       "multiples, bounded insertion of free collinear vertices (no imposed bend).\n"
-                                      "New vertices settle before judging the gain; every move is checked against\n"
-                                      "the hard constraints all the way (nothing jumps over an obstacle). Writes\n"
+                                      "New vertices settle before judging the gain; a detour that doubles back is cut\n"
+                                      "at its tip. Every move is checked against the hard constraints all the way\n"
+                                      "(nothing jumps over an obstacle). Writes\n"
                                       "run.json, history.jsonl and result.json (best feasible state) into OUT.\n"
                                       "A case short of clearance is recovered: no shortfall may grow, rescue\n"
                                       "bends where it stalls; 'recovery' and the result's feasible tell.\n"

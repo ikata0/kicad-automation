@@ -384,7 +384,8 @@ written beside it. Custom DRC or kat net rules it cannot model stop it unless
 `--accept-unmodelled`. `check CASE` preflights.
 `run CASE --out DIR [--gui] [--weight T=W] [--option KEY=V]` minimises a weighted merit (angle to 45-degree
 multiples, spacing to neighbours, edge margin, displacement, length, complexity; PyTorch
-gradients). Snapped segments stay exact, and bends are bounded. Every change is a straight
+gradients). Snapped segments stay exact, bends are bounded, and a detour that doubles back is
+cut at its tip (`simplify`). Every change is a straight
 move of the vertices, split into steps smaller than the centrelines' distance to contact, so nothing ever
 passes through an obstacle or another trace; clearance is required of every state a move ends in.
 An input only short of clearance (`check` says `recoverable`) is run anyway: no shortfall may
@@ -1287,6 +1288,7 @@ column in place of the net.
 | Polish events wrote snapped direction codes (0-3) as segment indices; the GUI crashed on an empty segment slice and left pale original traces or a partial frame, and GUI exports carried the same wrong indices | Events store the indices of snapped segments in their own geometry, shared by rendering, history and export |
 | Bend insertion tried already-bent, direction-locked doglegs before a free split, so it imposed a corner rather than just adding a degree of freedom | Insert a free collinear vertex, settle before judging gain, and do not require a visible bend; a zero angle gradient at a collinear split alone is not convergence of the whole constrained problem |
 | `--option` values were all parsed as floats, so a count such as `settle_iterations=10` (the help's own example) crashed the run, and the help named only that one key | `polish_run` converts each option to its default's type and refuses a fractional count; `kat pcb polish run --help` lists every key with default and meaning, an unknown key's error points there |
+| A polished trace ran to a vertex and straight back along almost the same path before turning off: each leg is near 0/180 degrees (no angle cost), the length term only charges growth over the input, and merging only removes collinear vertices | `pcb polish` moves the tip of a doubled-back detour (turn of at least `reversal_turn_deg`, 150) onto its nearer neighbour and drops it, as a checked move (`simplify`); a best state never keeps such a tip that a later state removed |
 | Polished geometry was first judged only by the polisher's own model | `apply` refuses a changed board or case, reads the copy back, and compares KiCad's DRC with the original per net |
 | Escaping a SKiDL pin name with `+` or brackets (`u[r"IN\+"]`) finds no pin: names match exactly unless `match_pin_regex` is set | write the name literally, `u["IN+"]`; a name with a space takes the pin number (`tests/test_skidl_blocks.py` pins this down) |
 

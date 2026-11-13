@@ -53,13 +53,13 @@ Every line is one event object:
 |---|---|
 | `seq` | 0, 1, 2, …: position in the history. |
 | `iter` | Solver iterations (optimiser steps) so far. |
-| `type` | `start`, `step`, `snap`, `adjust`, `bend`, `rescue`, `merge`, `commit`, `stop`. A `bend` inserts a free collinear midpoint, not an already-bent corner. A `rescue` inserts a free collinear vertex where a segment comes closest to the obstacle it is short of (or keeps running into). |
+| `type` | `start`, `step`, `snap`, `adjust`, `bend`, `rescue`, `merge`, `simplify`, `commit`, `stop`. A `simplify` moves the tip of a doubled-back detour (turn of at least `reversal_turn_deg`) onto its nearer neighbour and drops it; `target` names the tip vertex. A `bend` inserts a free collinear midpoint, not an already-bent corner. A `rescue` inserts a free collinear vertex where a segment comes closest to the obstacle it is short of (or keeps running into). |
 | `accepted` | Whether the event's candidate became the current state. |
 | `reason` | Why a candidate was rejected or a trial was reverted, else `null`. Examples: `sweep`, `clearance t02#3-h01`, `vertex limit`, `merit worse`, `no gain`, `inconsistent directions`. |
 | `target` | The segment the event is about, `"<trace>#<index>"`, else `null`. |
 | `traces` | `{trace id: points}`: the **current accepted state after** the event, for every trace in the group. |
 | `snapped` | `{trace id: [segment indices]}` for that state: sorted, unique indices from 0 to `len(points) - 2`, not direction codes. |
-| `added_vertices` | `{trace id: [vertex indices]}` of automatically inserted vertices still present in that state, including during trials. Sorted, unique interior indices; follow movement and index changes, and disappear on merge or trial rollback. Optional in older histories, which have no insertion markers. |
+| `added_vertices` | `{trace id: [vertex indices]}` of automatically inserted vertices still present in that state, including during trials. Sorted, unique interior indices; follow movement and index changes, and disappear on merge, simplify or trial rollback. Optional in older histories, which have no insertion markers. |
 | `candidate` | `{trace id: points}` of a rejected candidate, so that it can be inspected. Omitted when the event was accepted. |
 | `terms` | Merit terms of the current state: `angle`, `spacing`, `edge`, `displacement`, `length`, `complexity`. These are unweighted and dimensionless. |
 | `total` | Weighted sum of the terms. |
