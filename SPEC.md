@@ -395,7 +395,10 @@ every key with its default and meaning. `replay DIR [--case CASE --gui]` summari
 run. `apply PCB RESULT --map CASE.map.json --out NEW.kicad_pcb` writes into a **copy**, never
 the input. It reads the copy back against the hard constraints and compares DRC with the
 original per net; `kat pcb check NEW` then gives the full verdict. Weights are a first guess:
-on boards already tidied to 45 degrees mostly spacing changes.
+on boards already tidied to 45 degrees mostly spacing changes. Bend insertion adds a free
+collinear midpoint, not a pre-bent dogleg: the optimiser gets 20 settling steps by default
+before the trial is kept for merit gain (`bend_gain`) or reduced clearance shortfall.
+No merging occurs during settling; an unhelpful split is reverted.
 Running it again changes nothing. `kat pcb check` reports the same shape (`routing_shape`,
 no gaps), which changes neither `ok` nor `clean`.
 
@@ -1279,6 +1282,8 @@ column in place of the net.
 | Router output often sits at exactly its clearance (slack 0 up to float noise). A topology check that bounds each sub-step by the clearance slack then lets such a segment move nowhere, not even away, and one trace at a limit stopped the whole group's step | `pcb polish` bounds sub-steps by the centrelines' distance to contact and requires clearance of the end state only; a failing step keeps the named vertices (else the trace) in place |
 | A track ends over the drill of its own pad or via; a hole-clearance rule without nets made every extracted trace infeasible | in the polish case a trace's end pads, vias **and their drills** are its anchors, exempt from its own clearance only |
 | A hard distance limit (0.3-1 mm) on top of the clearances froze long segments 2-20 degrees off 45: the dogleg that straightens one puts its corner 1-3 mm off the line, and a bend in the middle of a segment with fixed ends gains nothing (one half turns towards 45, the other away) | `pcb polish` has no distance limit; the movement region (`--move-margin`) only bounds the context, the `displacement` weight keeps traces near the input |
+| Polish events wrote snapped direction codes (0-3) as segment indices; the GUI crashed on an empty segment slice and left pale original traces or a partial frame, and GUI exports carried the same wrong indices | Events store the indices of snapped segments in their own geometry, shared by rendering, history and export |
+| Bend insertion tried already-bent, direction-locked doglegs before a free split, so it imposed a corner rather than just adding a degree of freedom | Insert a free collinear vertex, settle before judging gain, and do not require a visible bend; a zero angle gradient at a collinear split alone is not convergence of the whole constrained problem |
 | `--option` values were all parsed as floats, so a count such as `settle_iterations=10` (the help's own example) crashed the run, and the help named only that one key | `polish_run` converts each option to its default's type and refuses a fractional count; `kat pcb polish run --help` lists every key with default and meaning, an unknown key's error points there |
 | Polished geometry was first judged only by the polisher's own model | `apply` refuses a changed board or case, reads the copy back, and compares KiCad's DRC with the original per net |
 | Escaping a SKiDL pin name with `+` or brackets (`u[r"IN\+"]`) finds no pin: names match exactly unless `match_pin_regex` is set | write the name literally, `u["IN+"]`; a name with a space takes the pin number (`tests/test_skidl_blocks.py` pins this down) |

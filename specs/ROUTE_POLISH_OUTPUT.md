@@ -53,12 +53,12 @@ Every line is one event object:
 |---|---|
 | `seq` | 0, 1, 2, …: position in the history. |
 | `iter` | Solver iterations (optimiser steps) so far. |
-| `type` | `start`, `step`, `snap`, `adjust`, `bend`, `rescue`, `merge`, `commit`, `stop`. A `rescue` is a bend split where a segment comes closest to the obstacle it is short of (or keeps running into). |
+| `type` | `start`, `step`, `snap`, `adjust`, `bend`, `rescue`, `merge`, `commit`, `stop`. A `bend` inserts a free collinear midpoint, not an already-bent corner. A `rescue` inserts a free collinear vertex where a segment comes closest to the obstacle it is short of (or keeps running into). |
 | `accepted` | Whether the event's candidate became the current state. |
 | `reason` | Why a candidate was rejected or a trial was reverted, else `null`. Examples: `sweep`, `clearance t02#3-h01`, `vertex limit`, `merit worse`, `no gain`, `inconsistent directions`. |
 | `target` | The segment the event is about, `"<trace>#<index>"`, else `null`. |
 | `traces` | `{trace id: points}`: the **current accepted state after** the event, for every trace in the group. |
-| `snapped` | `{trace id: [segment indices]}` for that state. |
+| `snapped` | `{trace id: [segment indices]}` for that state: sorted, unique indices from 0 to `len(points) - 2`, not direction codes. |
 | `candidate` | `{trace id: points}` of a rejected candidate, so that it can be inspected. Omitted when the event was accepted. |
 | `terms` | Merit terms of the current state: `angle`, `spacing`, `edge`, `displacement`, `length`, `complexity`. These are unweighted and dimensionless. |
 | `total` | Weighted sum of the terms. |
@@ -72,6 +72,10 @@ Trials are bracketed. A `snap`, `adjust`, `bend` or `rescue` event starts a tria
 `accepted: false` restores the state from before the trial, and its `traces`
 holds that restored state. `step` events with `accepted: false` record a
 proposal that every backtracking factor failed to make feasible.
+An accepted `bend` or `rescue` event initially preserves the route exactly,
+adding only a free vertex. Its child segments have no snapped direction.
+Only subsequent settling steps may move that vertex out of line; they are
+judged by the same swept constraints as every other move.
 
 `start` holds the input state. `stop` repeats the final state, and its `reason`
 is the termination. Because every event stores the full state, a viewer can

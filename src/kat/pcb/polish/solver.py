@@ -8,9 +8,11 @@ clear all the way and the new state passes the hard check; traces that the check
 held where they are and the rest retried. Discrete edits are **trials**:
 ``snap`` (fix a segment at its nearest multiple of 45 degrees), ``adjust`` (weight that
 segment's angle heavily for a while so that its neighbours make room, then snap) and
-``bend`` (split it, as an octilinear dog-leg or freely), each settled by some iterations and
-then committed or reverted. A collinear vertex is ``merge``d away. Snapped segments stay
-snapped. ``Solver.events`` yields every event; the best feasible state is kept apart.
+``bend`` (add a free collinear midpoint), each settled by some iterations and then committed
+or reverted. No bend is imposed: the added vertex gives the optimiser another degree of
+freedom. A collinear vertex is ``merge``d away outside trials. Snapped segments stay snapped
+except when explicitly split for rescue. ``Solver.events`` yields every event; the best
+feasible state is kept apart.
 
 **Recovery.** A case that starts short of clearance (but with every centreline clear of
 every obstacle) is run all the same: no (trace, obstacle) pair may get shorter than it is,
@@ -30,7 +32,6 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-from ..trackclean import _replacements
 from . import OPTIONS, require
 from .case import Case
 from .constraints import Model
@@ -262,7 +263,7 @@ class Solver:
                 self.best = (self.total, self.state.copy(), self.seq, dict(self.terms), self.short)
         ev = Event(self.seq, self.iter, type_, accepted, reason, target,
                    {k: v.copy() for k, v in self.state.pts.items()},
-                   {t: sorted(v.values()) for t, v in self._snapped_idx().items()},
+                   {t: sorted(v) for t, v in self._snapped_idx().items()},
                    dict(self.terms), self.total, self.model.min_slack(self.state.pts), candidate, self.short)
         self.seq += 1
         return ev
@@ -489,54 +490,31 @@ class Solver:
 
     def _bend(self, t: str, s: int, before: State, total_before: float, short_before: float = 0.0,
               at: np.ndarray | None = None, type_: str = "bend"):
-        """Splits segment ``s`` of trace ``t``: octilinear dog-legs, then a free split in
-        the middle, or (``at``, a ``rescue``) only a free split at that point."""
+        """Insert a free collinear vertex in segment ``s`` of trace ``t`` (midpoint, or
+        ``at`` in mm for rescue). Settle before judging the gain; no bend is imposed."""
         target = f"{t}#{before.sid[t].index(s)}"
         if self.inserted[t] >= self.limits["max_added_vertices_per_trace"]:
             yield self._event(type_, False, "vertex limit", target)
             return False
         i = before.sid[t].index(s)
         a, b = before.pts[t][i], before.pts[t][i + 1]
-        corners = [] if at is not None else [c[1] for c in _replacements(tuple(a), tuple(b))[1:]]
-        for corner in [*corners, None]:                 # dog-legs, then a free split
-            st = before.copy()
-            mid = (a + b) / 2 if at is None else np.asarray(at, float)
-            st.pts[t] = np.insert(st.pts[t], i + 1, mid, axis=0)
-            s1, s2 = self._new_id(), self._new_id()
-            st.sid[t][i:i + 1] = [s1, s2]
-            st.snapped[t].pop(s, None)                  # a rescue may bend a snapped segment
-            self._apply(st.pts, st)                     # geometrically the same path
-            if corner is not None:
-                st = self.state.copy()
-                st.snapped[t][s1] = direction(a, corner)
-                st.snapped[t][s2] = direction(corner, b)
-                moved = {k: v.copy() for k, v in st.pts.items()}
-                moved[t][i + 1] = corner
-                prop = self._project_all(moved, st)
-                reason = "inconsistent directions" if prop is None else self.model.sweep(self.state.pts, prop, self.opt["max_substeps"])
-                if reason:
-                    self._restore(before)
-                    yield self._event(type_, False, reason, target, candidate=prop)
-                    continue
-                self._apply(prop, st)
-            self.in_trial = True
-            yield self._event(type_, True, None, target)
-            yield from self._settle()
-            relieved = self.model.recovering and self.model.shortfall(self.state.pts) < short_before - GAIN
-            if turns_deg(self.state.pts[t])[i] <= BEND and not relieved:   # settled straight: no credit
-                self._restore(before)
-                self.in_trial = False
-                yield self._event("commit", False, "no bend formed", target)
-                continue
-            if (yield from self._commit(before, total_before, self.opt["bend_gain"], target, short_before)):
-                self.inserted[t] += 1
-                self.attempts[(t, s1)] = self.attempts[(t, s2)] = self.attempts[(t, s)]
-                for key in [k for k in self.blocked if k[:2] == (t, s)]:
-                    del self.blocked[key]
-                return True
-            if self.stop_requested or self.iter >= self.limits["max_iterations"]:
-                break
-        return False
+        st = before.copy()
+        mid = (a + b) / 2 if at is None else np.asarray(at, float)
+        st.pts[t] = np.insert(st.pts[t], i + 1, mid, axis=0)
+        s1, s2 = self._new_id(), self._new_id()
+        st.sid[t][i:i + 1] = [s1, s2]
+        st.snapped[t].pop(s, None)                      # a rescue may split a snapped segment
+        self._apply(st.pts, st)                         # geometrically the same path
+        self.in_trial = True
+        yield self._event(type_, True, None, target)
+        yield from self._settle()
+        ok = yield from self._commit(before, total_before, self.opt["bend_gain"], target, short_before)
+        if ok:
+            self.inserted[t] += 1
+            self.attempts[(t, s1)] = self.attempts[(t, s2)] = self.attempts[(t, s)]
+            for key in [k for k in self.blocked if k[:2] == (t, s)]:
+                del self.blocked[key]
+        return ok
 
     def _merge(self):
         """Removes collinear vertices (outside trials), each as a checked move."""

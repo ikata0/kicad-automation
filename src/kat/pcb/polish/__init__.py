@@ -13,7 +13,7 @@ OPTIONS = {
     "stagnation_window": (20, "steps without progress before the run counts as stagnated"),
     "stagnation_tolerance": (1e-4, "merit gain below which a step is no progress"),
     "snap_slack": (0.001, "merit a snap may cost and still be kept (credited per snap)"),
-    "bend_gain": (0.005, "merit gain an added bend must bring to be kept"),
+    "bend_gain": (0.005, "merit gain a collinear split must bring after settling to be kept"),
     "max_attempts_per_segment": (1, "failed snap attempts per segment before it is left as it is"),
     "max_substeps": (64, "sub-steps a swept move may need before it is refused ('sweep')"),
     "barrier_margin_mm": (0.05, "mm above the clearance where the solver's barrier starts"),

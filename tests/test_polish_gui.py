@@ -8,7 +8,7 @@ import pytest
 
 pytest.importorskip("torch")
 from kat.pcb.polish import case as pc, gui, solver as sv  # noqa: E402
-from test_polish_case import EXAMPLE  # noqa: E402
+from test_polish_case import EXAMPLE, tiny  # noqa: E402
 
 
 def finished(n=12):
@@ -66,3 +66,21 @@ def test_the_window_steps_runs_and_stops_cleanly(tmp_path, monkeypatch):
     assert not any((tmp_path / f).exists() for f in ("result.json", "run.json"))   # nothing written by itself
     win.close()
     assert not win.worker.isRunning()
+
+
+def test_the_window_renders_snapped_directions_and_exports_their_indices(tmp_path, monkeypatch):
+    pytest.importorskip("PySide6.QtWidgets")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    c = pc.loads(json.dumps(tiny(points=((2, 14), (6, 10), (12, 10)), holes=())))
+    s = sv.Solver(c)
+    ctl = gui.Controller(c, None, solver=s)
+    ctl.add(next(s.events()).to_json())
+    app, win = gui.open_window(ctl)
+    try:
+        win._render()
+        assert len(win.dynamic) == 3
+        ctl.export(tmp_path / "run", "current")
+        res = json.loads((tmp_path / "run" / "result.json").read_text())
+        assert res["traces"][0]["snapped"] == [0, 1]
+    finally:
+        win.close()

@@ -104,8 +104,8 @@ Make the merit function **differentiable**, and implement automatic derivative f
 
 ## 5 Optimisation and discrete geometry changes
 
-Use constrained, group-wise optimisation with a small number of discrete
-corner choices, rather than one unrestricted weighted optimiser.
+Use constrained, group-wise optimisation with discrete snapping and local
+vertex insertion, rather than one unrestricted weighted optimiser.
 
 The proposed iteration is:
 
@@ -117,14 +117,16 @@ The proposed iteration is:
    meets a defined acceptance policy **[A]**. Keep the segment's direction exact
    in subsequent continuous steps **[A]**.   
 4. If snapping fails, first try adjusting the surrounding group. If necessary,
-   insert an additional bend point and retry optimisation with a small set of
-   candidate corner patterns.
+   insert a free vertex on the segment, splitting it into two collinear
+   segments without changing the route, and retry continuous optimisation.
+   Neither child segment is snapped at insertion; no corner pattern, offset or
+   initial bend is imposed. The new vertex is an additional degree of freedom.
 5. Reject candidates that violate constraints, change topology or add complexity
    without sufficient benefit. Retaining a non-45-degree segment is allowed
    when it is the better feasible result.
 
-Adding a bend is a local geometric refinement, not permission to change the
-route's obstacle corridor. Bound bend insertion and movement, avoid repeated
+Adding a vertex is a local geometric refinement, not permission to change the
+route's obstacle corridor. Bound vertex insertion and movement, avoid repeated
 snap/unsnap cycles, and stop on convergence, iteration limit or user request.
 Exact limits, snap tolerance and acceptance policy remain **[Q]**.
 
@@ -284,8 +286,18 @@ configurable.
   iterations. It is accepted if the merit is at most `snap_slack` (0.001) worse,
   and the best feasible state credits each snapped segment by that allowance. If it fails, the group
   is adjusted: the segment's angle weight is raised for 20 iterations and the
-  snap is retried. If that fails, one octilinear dogleg bend is inserted, and it
-  is accepted only on a gain. Snapped segments are never unsnapped. Each
+  snap is retried. If that fails, insert one free midpoint on the segment:
+  the two child segments start collinear, with unchanged geometry and no snapped
+  directions. There are no dogleg candidates or initial perturbations. Run
+  `settle_iterations` (20 by default) before accepting or reverting the split;
+  no merging or snapping occurs during that settling period. The iteration
+  limit and user stop still apply. Keep the trial if clearance shortfall drops,
+  or if it does not grow and merit improves by at least `bend_gain` (0.005).
+  A visible bend is not required separately; collinear vertices may be merged
+  outside trials. A perfectly collinear split can have zero angle gradient;
+  other objective or barrier forces must initiate its movement, and a trial
+  without sufficient benefit is reverted, not forcibly bent. Snapped segments
+  stay snapped except when explicitly split for rescue. Each
   segment gets one failed attempt (configurable), and inserted vertices count
   cumulatively per trace. These numbers are solver options (`--option KEY=V`):
   `kat pcb polish run --help` lists each with its default and meaning.
@@ -299,8 +311,9 @@ configurable.
   reduced. The barrier pushes out of the shortfall. A smaller total shortfall
   outranks a better merit for the best state and for committing a trial. When
   the shortfall gains less than 1e-4 mm over 20 iterations, the worst short
-  segment not tried yet gets a `rescue` bend. It is split where it comes closest
-  to the obstacle (a snapped segment too), settled, and kept if the shortfall
+  segment not tried yet gets a `rescue` split. A free collinear vertex is inserted
+  where it comes closest to the obstacle (a snapped segment too, with its
+  direction lock removed), settled without imposing a bend, and kept if the shortfall
   dropped. The same bend is tried, once snapping has stagnated, on a segment that
   steps kept running into an obstacle (`blocked_bend_after`, 5 times). Rescue
   bends count against `max_added_vertices_per_trace`. The result lists the

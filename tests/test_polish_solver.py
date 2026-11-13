@@ -62,6 +62,40 @@ def test_projection_makes_snapped_directions_exact():
     assert sv.project(np.array([[0, 0], [1, 0.5]]), {0: 0}) is None      # fixed ends, cannot hold
 
 
+def test_events_store_snapped_segment_indices_not_directions():
+    c = pc.loads(json.dumps(tiny(points=((2, 14), (6, 10), (12, 10), (18, 16)), holes=())))
+    s = sv.Solver(c)
+    ev = next(s.events())
+    assert ev.snapped == {"t01": [0, 1, 2]}
+    assert s.result(ev)["traces"] == s.result()["traces"]
+
+
+def test_a_bend_starts_collinear_and_free_then_settles_before_rejection():
+    c = pc.loads(json.dumps(tiny(points=((2, 6), (18, 12)), holes=())))
+    s = sv.Solver(c, options={"settle_iterations": 3})
+    before = s.state.copy()
+    segment = before.sid["t01"][0]
+    evs = list(s._bend("t01", segment, before, s.total))
+    split = evs[0]
+    assert split.type == "bend" and split.accepted
+    np.testing.assert_array_equal(split.traces["t01"], [[2, 6], [10, 9], [18, 12]])
+    assert split.snapped["t01"] == []
+    assert [e.type for e in evs] == ["bend", "step", "step", "step", "commit"]
+    assert not evs[-1].accepted and evs[-1].reason == "no gain"
+    np.testing.assert_array_equal(s.state.pts["t01"], before.pts["t01"])
+    assert not s.inserted["t01"]
+
+
+def test_a_split_can_stay_collinear_when_no_gain_is_required():
+    c = pc.loads(json.dumps(tiny(points=((2, 6), (18, 12)), holes=())))
+    s = sv.Solver(c, options={"settle_iterations": 3, "bend_gain": 0})
+    before = s.state.copy()
+    evs = list(s._bend("t01", before.sid["t01"][0], before, s.total))
+    assert evs[-1].type == "commit" and evs[-1].accepted
+    assert mt.turns_deg(s.state.pts["t01"])[0] < sv.BEND
+    assert s.inserted["t01"] == 1
+
+
 def test_run_directory_and_replay(tmp_path, capsys):
     out = tmp_path / "run"
     res = kat.pcb.polish_run(EXAMPLE, out, limits={"max_iterations": 15})

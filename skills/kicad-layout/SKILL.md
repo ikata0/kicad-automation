@@ -233,6 +233,9 @@ with kat.pcb.edit(PCB) as b:
   knobs `--option KEY=V` (`kat pcb polish run --help` lists every key with default and meaning). No
   distance limit: traces move as far as the hard constraints allow within `--move-margin` (2 mm)
   of their bounding box; a larger `displacement` weight keeps them closer.
+  Bend insertion adds a free collinear vertex, not an imposed dogleg; it gets
+  `settle_iterations` steps (default 20) before acceptance on `bend_gain` or reduced
+  clearance shortfall. No merging occurs during the trial; an unhelpful split is reverted.
   A case already short of clearance runs too (`check` says `recoverable`); read the run's
   `recovery`: only a result with `feasible: true` is clear.
 - A route that stopped converging shows in `unrouted` per pass, a slow stage in `stages`.

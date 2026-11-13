@@ -1146,8 +1146,9 @@ def build_parser() -> argparse.ArgumentParser:
     pl1.add_argument("--group", metavar="G", help="only this group's neighbour pairs")
     pl2 = plsp.add_parser("run", formatter_class=_Fmt, help="optimise one group of a case",
                           description="Continuous moves on the merit's gradient (PyTorch), snaps to 45-degree\n"
-                                      "multiples, bounded bend insertion; every change is checked against the\n"
-                                      "hard constraints all the way (nothing jumps over an obstacle). Writes\n"
+                                      "multiples, bounded insertion of free collinear vertices (no imposed bend).\n"
+                                      "New vertices settle before judging the gain; every move is checked against\n"
+                                      "the hard constraints all the way (nothing jumps over an obstacle). Writes\n"
                                       "run.json, history.jsonl and result.json (best feasible state) into OUT.\n"
                                       "A case short of clearance is recovered: no shortfall may grow, rescue\n"
                                       "bends where it stalls; 'recovery' and the result's feasible tell.\n"
