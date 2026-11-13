@@ -63,6 +63,11 @@ def test_the_window_steps_runs_and_stops_cleanly(tmp_path, monkeypatch):
     win.reset()
     win._render()
     assert ctl.cursor == 0 and win.dynamic
+    win.view.resize(400, 300)
+    win.view.scale(50, 50)
+    win.buttons["Fit all"].click()                    # everything drawn is in view again
+    seen = win.view.mapToScene(win.view.viewport().rect()).boundingRect()
+    assert seen.contains(win.scene.itemsBoundingRect())
     assert not any((tmp_path / f).exists() for f in ("result.json", "run.json"))   # nothing written by itself
     win.close()
     assert not win.worker.isRunning()

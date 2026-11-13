@@ -260,7 +260,8 @@ def _classes():
             bar = QtWidgets.QHBoxLayout()
             self.buttons = {}
             for name, fn in (("Step", self.step), ("Run", self.toggle_run), ("Back", self.back),
-                             ("Forward", self.forward), ("Reset", self.reset), ("Export...", self.export_dialog)):
+                             ("Forward", self.forward), ("Reset", self.reset), ("Fit all", self.fit_all),
+                             ("Export...", self.export_dialog)):
                 b = QtWidgets.QPushButton(name)
                 b.clicked.connect(fn)
                 bar.addWidget(b)
@@ -272,6 +273,8 @@ def _classes():
                 c.toggled.connect(self.redraw)
                 bar.addWidget(c)
                 self.checks[name] = c
+            self.buttons["Fit all"].setToolTip("show the whole geometry (F)")
+            QtGui.QShortcut(QtGui.QKeySequence("F"), self, self.fit_all)
             bar.addStretch()
             self.which = QtWidgets.QComboBox()
             self.which.addItems(["export best feasible", "export shown state"])
@@ -315,6 +318,15 @@ def _classes():
             xs = [p[0] for p in self.ctl.case.region]
             ys = [-p[1] for p in self.ctl.case.region]
             rect = QtCore.QRectF(min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)).adjusted(-1, -1, 1, 1)
+            self.view.fitInView(rect, QtCore.Qt.KeepAspectRatio)
+
+        def fit_all(self):
+            """Zoom so that everything drawn fits the view, aspect ratio kept (button Fit all, key F)."""
+            rect = self.scene.itemsBoundingRect()
+            m = 0.02 * max(rect.width(), rect.height())
+            rect = rect.adjusted(-m, -m, m, m)
+            w, h = rect.width(), rect.height()               # room to centre it: no clamping at the edge
+            self.view.setSceneRect(rect.adjusted(-w, -h, w, h))
             self.view.fitInView(rect, QtCore.Qt.KeepAspectRatio)
 
         # drawing; scene units are mm with y flipped (the input's y points up)
