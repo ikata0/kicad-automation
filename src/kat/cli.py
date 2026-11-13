@@ -1165,7 +1165,8 @@ def build_parser() -> argparse.ArgumentParser:
     pl2.add_argument("--max-iterations", type=int, metavar="N")
     pl2.add_argument("--snap-tolerance", type=float, metavar="DEG")
     pl2.add_argument("--max-bends", type=int, metavar="N", help="added vertices per trace")
-    pl2.add_argument("--gui", action="store_true", help="inspection window; writes only on Export")
+    pl2.add_argument("--gui", action="store_true",
+                     help="inspection window; pink dots mark added vertices; writes only on Export")
     pl2.add_argument("--force", action="store_true", help="overwrite a run in OUT")
     pl3 = plsp.add_parser("replay", formatter_class=_Fmt, help="summary of a finished run, or browse it",
                           description="Counts per event type, rejection reasons, initial and result score.\n"

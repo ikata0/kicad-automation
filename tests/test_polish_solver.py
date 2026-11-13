@@ -80,8 +80,10 @@ def test_a_bend_starts_collinear_and_free_then_settles_before_rejection():
     assert split.type == "bend" and split.accepted
     np.testing.assert_array_equal(split.traces["t01"], [[2, 6], [10, 9], [18, 12]])
     assert split.snapped["t01"] == []
+    assert all(e.added_vertices == {"t01": [1]} for e in evs[:-1])
     assert [e.type for e in evs] == ["bend", "step", "step", "step", "commit"]
     assert not evs[-1].accepted and evs[-1].reason == "no gain"
+    assert evs[-1].added_vertices == {"t01": []}
     np.testing.assert_array_equal(s.state.pts["t01"], before.pts["t01"])
     assert not s.inserted["t01"]
 
@@ -94,6 +96,21 @@ def test_a_split_can_stay_collinear_when_no_gain_is_required():
     assert evs[-1].type == "commit" and evs[-1].accepted
     assert mt.turns_deg(s.state.pts["t01"])[0] < sv.BEND
     assert s.inserted["t01"] == 1
+
+
+def test_added_vertex_markers_follow_insertions_and_merges():
+    c = pc.loads(json.dumps(tiny(points=((2, 6), (10, 9), (18, 12)), holes=())))
+    s = sv.Solver(c, options={"settle_iterations": 0, "bend_gain": 0})
+    for segment_index, expected in ((1, [2]), (0, [1, 3])):
+        before = s.state.copy()
+        evs = list(s._bend("t01", before.sid["t01"][segment_index], before, s.total))
+        assert evs[-1].accepted
+        assert evs[-1].to_json()["added_vertices"] == {"t01": expected}
+        assert not before.added.get("t01") or before.added["t01"] == {2}
+    for expected in ([2], [1], []):
+        ev, = s._merge()
+        assert ev.accepted
+        assert ev.to_json()["added_vertices"] == {"t01": expected}
 
 
 def test_run_directory_and_replay(tmp_path, capsys):

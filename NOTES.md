@@ -132,6 +132,8 @@ Same could be done of a step would move from an allowed area into the forbidden 
 
 ---
 
+DONE
+
 From GPT6.1 Sol:
 
 Task complete 
@@ -165,4 +167,6 @@ IndexError: list index out of range
 
 About the bend insertion: Change to behaviour according to my intent, and update the spec accordingly.
 
+---
 
+Make the vertices that were automatically added to traces clearly visible.

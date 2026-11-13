@@ -176,7 +176,8 @@ def _classes():
 
         COLORS = {"board": "#f4f1e8", "edge": "#6b6b6b", "region": "#3a7bd5", "keepout": "#d9534f",
                   "fixed": "#9a8f80", "hole": "#222222", "orig": "#c9a46a", "cur": "#c46a00",
-                  "snapped": "#2e8b57", "cand": "#d0021b", "env": "#f0ad4e", "anchor": "#1f4e79"}
+                  "snapped": "#2e8b57", "cand": "#d0021b", "env": "#f0ad4e", "anchor": "#1f4e79",
+                  "added": "#e91e63"}
 
         def __init__(self, ctl: Controller, worker: Worker | None, out: Path | None, force: bool):
             super().__init__()
@@ -351,6 +352,16 @@ def _classes():
                 if i + 1 < len(pts):
                     self.dynamic.append(self.scene.addPath(self._path(pts[i:i + 2]),
                                                            self._pen("#7b2cbf", case.traces[t].width * 2.2, alpha=90), nobrush))
+            for t, indices in ev.get("added_vertices", {}).items():
+                for i in indices:
+                    x, y = ev["traces"][t][i]
+                    marker = self.scene.addEllipse(-5, -5, 10, 10, self._pen("white", 1.5),
+                                                   QtGui.QBrush(QtGui.QColor(col["added"])))
+                    marker.setFlag(QtWidgets.QGraphicsItem.ItemIgnoresTransformations)
+                    marker.setPos(x, -y)
+                    marker.setZValue(1)
+                    marker.setToolTip(f"Automatically added vertex: {t}#{i}")
+                    self.dynamic.append(marker)
             self._details(ev)
             if self.list.currentRow() != self.ctl.cursor:
                 self.list.blockSignals(True)
@@ -361,7 +372,8 @@ def _classes():
             ms = ev["min_slack"]
             lines = [f"event {ev['seq']}   iteration {ev['iter']}   {ev['type']}   "
                      f"{'accepted' if ev['accepted'] else 'REJECTED'}",
-                     f"reason   {ev['reason'] or '-'}", f"target   {ev['target'] or '-'}", "",
+                     f"reason   {ev['reason'] or '-'}", f"target   {ev['target'] or '-'}",
+                     f"added    {sum(len(v) for v in ev.get('added_vertices', {}).values())} vertices (pink dots)", "",
                      f"total    {ev['total']:.5f}"]
             w = self.ctl.solver.objectives["weights"] if self.ctl.solver else self.ctl.case.objectives["weights"]
             first = self.ctl.events[0]["terms"]

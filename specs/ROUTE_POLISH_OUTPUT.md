@@ -59,6 +59,7 @@ Every line is one event object:
 | `target` | The segment the event is about, `"<trace>#<index>"`, else `null`. |
 | `traces` | `{trace id: points}`: the **current accepted state after** the event, for every trace in the group. |
 | `snapped` | `{trace id: [segment indices]}` for that state: sorted, unique indices from 0 to `len(points) - 2`, not direction codes. |
+| `added_vertices` | `{trace id: [vertex indices]}` of automatically inserted vertices still present in that state, including during trials. Sorted, unique interior indices; follow movement and index changes, and disappear on merge or trial rollback. Optional in older histories, which have no insertion markers. |
 | `candidate` | `{trace id: points}` of a rejected candidate, so that it can be inspected. Omitted when the event was accepted. |
 | `terms` | Merit terms of the current state: `angle`, `spacing`, `edge`, `displacement`, `length`, `complexity`. These are unweighted and dimensionless. |
 | `total` | Weighted sum of the terms. |

@@ -64,12 +64,14 @@ class Event:
     min_slack: dict
     candidate: dict | None = None
     shortfall: float = 0.0
+    added_vertices: dict = field(default_factory=dict)
 
     def to_json(self) -> dict:
         """The event as a JSON object (points as lists)."""
         d = {"seq": self.seq, "iter": self.iter, "type": self.type, "accepted": self.accepted, "reason": self.reason,
              "target": self.target, "traces": _lists(self.traces), "snapped": self.snapped, "terms": self.terms,
-             "total": self.total, "min_slack": self.min_slack, "shortfall": self.shortfall}
+             "total": self.total, "min_slack": self.min_slack, "shortfall": self.shortfall,
+             "added_vertices": self.added_vertices}
         if self.candidate is not None:
             d["candidate"] = _lists(self.candidate)
         return d
@@ -82,15 +84,16 @@ def _lists(pts: dict) -> dict:
 @dataclass
 class State:
     """Points per trace, a stable id per segment, and the snapped segments {id: direction
-    0-3, in steps of 45 degrees, undirected}."""
+    0-3, in steps of 45 degrees, undirected}. ``added`` holds inserted vertex indices."""
     pts: dict
     sid: dict
     snapped: dict = field(default_factory=dict)
+    added: dict = field(default_factory=dict)
 
     def copy(self) -> "State":
         """A deep copy."""
         return State({k: v.copy() for k, v in self.pts.items()}, {k: list(v) for k, v in self.sid.items()},
-                     {k: dict(v) for k, v in self.snapped.items()})
+                     {k: dict(v) for k, v in self.snapped.items()}, {k: set(v) for k, v in self.added.items()})
 
 
 def direction(a, b) -> int:
@@ -264,7 +267,8 @@ class Solver:
         ev = Event(self.seq, self.iter, type_, accepted, reason, target,
                    {k: v.copy() for k, v in self.state.pts.items()},
                    {t: sorted(v) for t, v in self._snapped_idx().items()},
-                   dict(self.terms), self.total, self.model.min_slack(self.state.pts), candidate, self.short)
+                   dict(self.terms), self.total, self.model.min_slack(self.state.pts), candidate, self.short,
+                   {t: sorted(self.state.added.get(t, ())) for t in self.model.ids})
         self.seq += 1
         return ev
 
@@ -415,7 +419,7 @@ class Solver:
         self._rebuild()
 
     def _apply(self, pts: dict, st: State) -> None:
-        self.state = State(pts, st.sid, st.snapped)
+        self.state = State(pts, st.sid, st.snapped, st.added)
         self._rebuild()
 
     def _commit(self, before: State, total_before: float, need_gain: float, target: str, short_before: float = 0.0):
@@ -501,6 +505,7 @@ class Solver:
         st = before.copy()
         mid = (a + b) / 2 if at is None else np.asarray(at, float)
         st.pts[t] = np.insert(st.pts[t], i + 1, mid, axis=0)
+        st.added[t] = {v + (v > i) for v in st.added.get(t, ())} | {i + 1}
         s1, s2 = self._new_id(), self._new_id()
         st.sid[t][i:i + 1] = [s1, s2]
         st.snapped[t].pop(s, None)                      # a rescue may split a snapped segment
@@ -542,6 +547,7 @@ class Solver:
                 st = self.state.copy()
                 st.pts = moved
                 st.pts[t] = np.delete(moved[t], k, axis=0)
+                st.added[t] = {v - (v > k) for v in st.added.get(t, ()) if v != k}
                 new = self._new_id()
                 self.attempts[(t, new)] = max(self.attempts[(t, sa)], self.attempts[(t, sb)])
                 st.sid[t][k - 1:k + 1] = [new]

@@ -84,3 +84,42 @@ def test_the_window_renders_snapped_directions_and_exports_their_indices(tmp_pat
         assert res["traces"][0]["snapped"] == [0, 1]
     finally:
         win.close()
+
+
+def test_added_vertex_markers_follow_history_and_survive_export(tmp_path, monkeypatch):
+    pytest.importorskip("PySide6.QtWidgets")
+    monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")
+    c = pc.loads(json.dumps(tiny(points=((2, 10), (18, 10)), holes=((10, 10.7, 0.5),))))
+    s = sv.Solver(c, options={"settle_iterations": 5})
+    events = [s._event("start", True).to_json()]
+    before = s.state.copy()
+    events.extend(e.to_json() for e in s._bend("t01", before.sid["t01"][0], before, s.total,
+                                             s.short, type_="rescue"))
+    assert events[-1]["accepted"] and events[-1]["added_vertices"] == {"t01": [1]}
+    assert events[-1]["traces"]["t01"][1] != events[1]["traces"]["t01"][1]
+    live = gui.Controller(c, None, events, solver=s)
+    live.export(tmp_path / "run", "current")
+    rec, recorded, res = gui._hist.load(tmp_path / "run")
+    ctl = gui.Controller(c, rec["group"], recorded, result=res)
+    app, win = gui.open_window(ctl)
+
+    def markers():
+        return [it for it in win.dynamic if it.toolTip().startswith("Automatically added vertex:")]
+
+    try:
+        for cursor in (1, len(recorded) - 1):
+            ctl.select(cursor)
+            win._render()
+            marker, = markers()
+            x, y = recorded[cursor]["traces"]["t01"][1]
+            assert (marker.pos().x(), marker.pos().y()) == (x, -y)
+            assert marker.brush().color().name() == win.COLORS["added"]
+            size = marker.deviceTransform(win.view.viewportTransform()).mapRect(marker.rect()).size()
+            win.view.scale(2, 2)
+            assert marker.deviceTransform(win.view.viewportTransform()).mapRect(marker.rect()).size() == size
+            assert "1 vertices (pink dots)" in win.details.toPlainText()
+        ctl.reset()
+        win._render()
+        assert not markers()
+    finally:
+        win.close()

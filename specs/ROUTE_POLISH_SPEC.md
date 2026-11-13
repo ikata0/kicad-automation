@@ -327,5 +327,10 @@ configurable.
   represented make `extract` fail.
 - **GUI.** Qt (PySide6, optional extra `kat[polish-gui]`). The solver runs in a
   worker thread, and the window only browses the recorded history.
+  Automatically inserted vertices are pink dots with white outlines, kept at
+  a fixed screen size when zooming and drawn above traces and trial highlights.
+  They follow the event's geometry in live runs, history navigation and replay;
+  reverted or merged vertices lose their markers. Tooltips identify the trace
+  and vertex, and the details panel gives the count and colour legend.
 - **Output.** Run record, history and result formats:
   [`ROUTE_POLISH_OUTPUT.md`](ROUTE_POLISH_OUTPUT.md).

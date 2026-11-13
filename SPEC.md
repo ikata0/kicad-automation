@@ -399,6 +399,8 @@ on boards already tidied to 45 degrees mostly spacing changes. Bend insertion ad
 collinear midpoint, not a pre-bent dogleg: the optimiser gets 20 settling steps by default
 before the trial is kept for merit gain (`bend_gain`) or reduced clearance shortfall.
 No merging occurs during settling; an unhelpful split is reverted.
+The GUI marks automatically inserted vertices with fixed-screen-size pink dots
+(white outlines), including when browsing or replaying history.
 Running it again changes nothing. `kat pcb check` reports the same shape (`routing_shape`,
 no gaps), which changes neither `ok` nor `clean`.
 

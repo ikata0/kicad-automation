@@ -236,6 +236,8 @@ with kat.pcb.edit(PCB) as b:
   Bend insertion adds a free collinear vertex, not an imposed dogleg; it gets
   `settle_iterations` steps (default 20) before acceptance on `bend_gain` or reduced
   clearance shortfall. No merging occurs during the trial; an unhelpful split is reverted.
+  In the GUI, pink dots with white outlines identify automatically inserted vertices;
+  they follow the shown event, including replay.
   A case already short of clearance runs too (`check` says `recoverable`); read the run's
   `recovery`: only a result with `feasible: true` is clear.
 - A route that stopped converging shows in `unrouted` per pass, a slow stage in `stages`.
