@@ -112,7 +112,7 @@ def test_added_vertex_markers_follow_insertions_and_merges():
     for expected in ([2], [1], []):
         ev, = s._merge()
         assert ev.accepted
-        assert ev.to_json()["added_vertices"] == {"t01": expected}
+        assert json.loads(json.dumps(ev.to_json()))["added_vertices"] == {"t01": expected}   # plain ints
 
 
 def test_run_directory_and_replay(tmp_path, capsys):

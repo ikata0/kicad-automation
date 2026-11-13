@@ -274,7 +274,7 @@ class Solver:
                    {k: v.copy() for k, v in self.state.pts.items()},
                    {t: sorted(v) for t, v in self._snapped_idx().items()},
                    dict(self.terms), self.total, self.model.min_slack(self.state.pts), candidate, self.short,
-                   {t: sorted(self.state.added.get(t, ())) for t in self.model.ids})
+                   {t: sorted(int(v) for v in self.state.added.get(t, ())) for t in self.model.ids})
         self.seq += 1
         return ev
 
@@ -586,7 +586,7 @@ class Solver:
             if len(p) < 3:
                 continue
             tr = turns_deg(p)
-            for k in np.nonzero(tr < BEND)[0] + 1:
+            for k in map(int, np.nonzero(tr < BEND)[0] + 1):
                 sa, sb = self.state.sid[t][k - 1], self.state.sid[t][k]
                 qa, qb = self.state.snapped[t].get(sa), self.state.snapped[t].get(sb)
                 if (sa, sb) in self.no_merge or (qa is None) != (qb is None) or qa != qb:
@@ -626,7 +626,7 @@ class Solver:
             if len(p) < 3:
                 continue
             tr = turns_deg(p)
-            for k in np.nonzero(tr >= self.opt["reversal_turn_deg"])[0] + 1:
+            for k in map(int, np.nonzero(tr >= self.opt["reversal_turn_deg"])[0] + 1):
                 sa, sb = self.state.sid[t][k - 1], self.state.sid[t][k]
                 if (sa, sb) in self.no_simplify:
                     continue
