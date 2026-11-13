@@ -188,7 +188,9 @@ def polish_extract(pcb: Path | str, nets: list[str], out: Path | str, layer: str
     track runs of ``nets`` (globs) on one copper layer (``layer``, needed when they are on
     several), optionally only inside ``region`` (x0, y0, x1, y1 board mm), plus the private
     map file ``<out stem>.map.json`` that ``polish_apply`` needs. One group, in neighbour
-    order across the bundle (or ``order``, net names). The traces may move anywhere inside
+    order across the bundle (or ``order``, net names). Tracks in recorded stamped blocks
+    (including nested groups) stay fixed; external runs end at their boundaries. Ordinary
+    and unrecorded groups remain eligible. The traces may move anywhere inside
     the movement region, their bounding box grown by ``move_margin`` mm, as far as clearances,
     edge, holes and keep-outs allow. Context within 3 mm of the movement region: pads, vias, holes, other tracks, track keep-outs, the outline; the trace's own
     end pads / vias are its anchors. Custom DRC or kat net rules the polisher cannot model

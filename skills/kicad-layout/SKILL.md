@@ -228,6 +228,10 @@ with kat.pcb.edit(PCB) as b:
   rerouting: `kat pcb polish extract PCB --net A --net B ... [--layer L] [--region X,Y,W,H] --out
   case.json`, then `kat pcb polish run case.json --out run`, then `kat pcb polish apply PCB
   run/result.json --map case.map.json --out polished.kicad_pcb`. The original is never written.
+  Extraction leaves recorded stamped blocks fixed (including nested member groups);
+  external runs end at block copper, with the usual same-net anchors. Ownership follows
+  group membership, not a bounding box. Ordinary and unrecorded groups remain eligible.
+  A selection of only block-owned straight tracks fails with an explanation.
   Accept the copy only after `kat pcb check` on it. Needs `pip install 'kat[polish]'`; `--gui`
   (with `kat[polish-gui]`) lets a person step through the run. Weights are `--weight T=W`, solver
   knobs `--option KEY=V` (`kat pcb polish run --help` lists every key with default and meaning). No

@@ -86,6 +86,26 @@ def dru_constraints(text: str) -> list[tuple[str, str, float | None]]:
     return out
 
 
+def _block_members(b: Board) -> set[str]:
+    """Item UUIDs belonging to recorded stamps, including nested groups."""
+    groups = {str(find(g, "uuid")[1]): g for g in b._groups()}
+    instances = b.stamps()
+    todo = [u for u, g in groups.items() if any(str(g[1]).startswith(f"{i} (") for i in instances)]
+    seen, members = set(), set()
+    while todo:
+        u = todo.pop()
+        if u in seen:
+            continue
+        seen.add(u)
+        for member in (find(groups[u], "members") or [None])[1:]:
+            member = str(member)
+            if member in groups:
+                todo.append(member)
+            else:
+                members.add(member)
+    return members
+
+
 def extract(pcb: Path | str, nets: list[str], out: Path | str, layer: str | None = None, region=None,
             order: list[str] | None = None, objectives: dict | None = None, weights: dict | None = None,
             limits: dict | None = None, accept_unmodelled: bool = False, force: bool = False,
@@ -106,9 +126,11 @@ def extract(pcb: Path | str, nets: list[str], out: Path | str, layer: str | None
     unknown = _unknown_nets(b, nets)
     if unknown:
         raise KatError(unknown)
-    chains = [c for c in tc.chains(b, nets, [layer] if layer else None, region, include_locked=True)]
+    excluded = _block_members(b)
+    chains = tc.chains(b, nets, [layer] if layer else None, region, include_locked=True,
+                       exclude_uuids=excluded)
     if not chains:
-        raise KatError(_why_none(b, nets, layer, region))
+        raise KatError(_why_none(b, nets, layer, region, excluded))
     layers = sorted({c.layer for c in chains})
     if len(layers) > 1:
         raise KatError(f"tracks on {', '.join(layers)}: choose one with --layer")
@@ -330,9 +352,10 @@ def _unknown_nets(b: Board, nets: list[str]) -> str | None:
     return f"no net on the board matches {', '.join(missing)}" + (f" (similar: {', '.join(hints)})" if hints else "")
 
 
-def _why_none(b: Board, nets: list[str], layer: str | None, region) -> str:
+def _why_none(b: Board, nets: list[str], layer: str | None, region,
+              excluded: set[str] | frozenset[str] = frozenset()) -> str:
     """Why ``nets`` (all existing) gave no track runs: no tracks, or none on the layer / in
-    the region."""
+    the region, or only fixed block tracks."""
     import fnmatch
     tracks = b.tracks()
     mine = [t for t in tracks if any(fnmatch.fnmatch(t["net"], g) for g in nets)]
@@ -341,9 +364,16 @@ def _why_none(b: Board, nets: list[str], layer: str | None, region) -> str:
     layers = sorted({t["layer"] for t in mine})
     if layer and layer not in layers:
         return f"{', '.join(nets)}: no tracks on {layer} (they run on {', '.join(layers)})"
+    mine = [t for t in mine if not layer or t["layer"] == layer]
     if region:
         x0, y0, x1, y1 = region
-        return f"{', '.join(nets)}: no track lies wholly inside the region {x0:g},{y0:g},{x1 - x0:g},{y1 - y0:g} (X,Y,W,H)"
+        mine = [t for t in mine if all(x0 <= p[0] <= x1 and y0 <= p[1] <= y1
+                                      for p in (t["start"], t["end"]))]
+        if not mine:
+            return f"{', '.join(nets)}: no track lies wholly inside the region {x0:g},{y0:g},{x1 - x0:g},{y1 - y0:g} (X,Y,W,H)"
+    straight = [t for t in mine if t["kind"] == "segment"]
+    if straight and all(t["uuid"] in excluded for t in straight):
+        return f"{', '.join(nets)}: all selected straight tracks belong to recorded layout blocks (fixed; select external routing)"
     return f"{', '.join(nets)}: only arcs, no straight track runs"
 
 

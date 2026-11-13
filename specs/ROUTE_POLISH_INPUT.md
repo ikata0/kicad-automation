@@ -317,3 +317,12 @@ each version's rules only to documents of that version.
 `public_fixture` is `false`. The mapping back to the board, including net names,
 segment UUIDs, the source path and its hash, lives in a separate private
 `*.map.json` file. It is never part of the case.
+
+The extractor excludes tracks belonging to recorded stamped block instances and
+their nested member groups from movable traces, before constructing runs or
+selecting a layer. Nearby excluded copper remains `fixed_copper`; external runs
+end at its fixed boundary and may name touching same-net copper as an anchor.
+Membership comes from stamp records and matching groups, not a block's geometric
+bounds. Ordinary and unrecorded groups remain eligible. If no eligible straight
+tracks remain because they are all block-owned, extraction reports that explicitly.
+This uses the existing version-2 copper and anchor fields, without a format change.

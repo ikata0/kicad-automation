@@ -1104,7 +1104,9 @@ def build_parser() -> argparse.ArgumentParser:
     pl0 = plsp.add_parser("extract", formatter_class=_Fmt, help="write a case of a bundle of routed traces",
                           description="The straight track runs of the nets (globs) on one layer become the movable\n"
                                       "traces of one group, in neighbour order across the bundle (or --order);\n"
-                                      "their end pads and vias are anchors. They may move anywhere in the movement\n"
+                                      "their end pads and vias are anchors. Recorded stamped blocks (including nested\n"
+                                      "groups) stay fixed; external runs end at their boundaries. Ordinary and unrecorded\n"
+                                      "groups remain eligible. They may move anywhere in the movement\n"
                                       "region (their bounding box grown by --move-margin) that the hard constraints allow.\n"
                                       "Context within 3 mm of that region (pads, vias, holes, other tracks,\n"
                                       "keep-outs, outline) is fixed. Writes\n"

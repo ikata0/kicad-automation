@@ -10,6 +10,8 @@ import kat
 from kat import cli
 from kat.pcb import Board
 from kat.pcb.polish import case as pc
+from kat.schematic import new_uuid
+from kat.sexpr import Sym
 from test_pcb_tidy import SMD, on
 
 pytest.importorskip("torch")
@@ -83,3 +85,90 @@ def test_an_empty_selection_says_why(tmp_path):
                            (["B*"], {"region": (0, 0, 5, 5)}, "inside the region")):
         with pytest.raises(kat.KatError, match=says):
             kat.pcb.polish_extract(pcb, nets, tmp_path / "case.json", **kw)
+
+
+def group(b, name, members):
+    uid = new_uuid()
+    b._insert([Sym("group"), name, [Sym("uuid"), uid], [Sym("members"), *members]])
+    return uid
+
+
+@pytest.mark.parametrize("record_source", ["embedded", "legacy"])
+def test_extract_leaves_recorded_block_tracks_fixed(tmp_path, record_source):
+    pcb = tmp_path / "blocks.kicad_pcb"
+    b = Board.create(pcb)
+    b.outline(rect=(0, 0, 40, 30))
+    left = b.add_track((10, 10), (15, 10), 0.25, "F.Cu", "A")["uuid"]
+    internal = b.add_track((15, 10), (20, 10), 0.25, "F.Cu", "A")["uuid"]
+    right = b.add_track((20, 10), (25, 10), 0.25, "F.Cu", "A")["uuid"]
+    obstacle = b.add_track((10, 11), (25, 11), 0.25, "F.Cu", "B")["uuid"]
+    back = b.add_track((10, 20), (25, 20), 0.25, "B.Cu", "A")["uuid"]
+    child = group(b, "inner routing", [internal])
+    group(b, "/CELL (synthetic)", [child, obstacle, back])
+    group(b, "ordinary selection", [left])
+    group(b, "/UNRECORDED (synthetic)", [right])
+    records = {"/CELL": {"block": "synthetic.kicad_pcb"}, "/ORPHAN": {"block": "missing.kicad_pcb"}}
+    if record_source == "embedded":
+        b._stamps.update(records)
+    b.save()
+    legacy = pcb.with_suffix(".stamps.json")
+    if record_source == "legacy":
+        legacy.write_text(json.dumps(records), encoding="utf-8")
+    original = pc.sha256_of(pcb)
+    case = tmp_path / "case.json"
+
+    res = kat.pcb.polish_extract(pcb, ["A"], case)
+
+    assert res["ok"] and res["layer"] == "F.Cu" and len(res["traces"]) == 2, res
+    mapping = json.loads(case.with_suffix(".map.json").read_text())
+    assert {u for t in mapping["traces"].values() for u in t["segments"]} == {left, right}
+    doc = json.loads(case.read_text())
+    fixed = {tuple(map(tuple, o["shape"]["points"])): o for o in doc["fixed_copper"]}
+    anchor = fixed[((15, -10), (20, -10))]["id"]
+    assert ((10, -11), (25, -11)) in fixed
+    assert all(t["anchors"] == [anchor] for t in doc["traces"])
+    assert {tuple(p) for t in doc["traces"] for p in t["points"]} == {
+        (10, -10), (15, -10), (20, -10), (25, -10)}
+    assert pc.sha256_of(pcb) == original
+    if record_source == "legacy":
+        assert json.loads(legacy.read_text()) == records
+
+
+def test_block_copper_still_enforces_clearance(tmp_path):
+    pcb = tmp_path / "clearance.kicad_pcb"
+    b = Board.create(pcb)
+    b.outline(rect=(0, 0, 40, 30))
+    b.add_track((10, 10), (25, 10), 0.25, "F.Cu", "A")
+    obstacle = b.add_track((10, 10.3), (25, 10.3), 0.25, "F.Cu", "B")["uuid"]
+    group(b, "/CELL (synthetic)", [obstacle])
+    b._stamps["/CELL"] = {"block": "synthetic.kicad_pcb"}
+    b.save()
+    case = tmp_path / "case.json"
+
+    res = kat.pcb.polish_extract(pcb, ["*"], case)
+
+    assert len(res["traces"]) == 1 and res["traces"][0]["net"] == "A"
+    assert not res["ok"] and any("c0001" in v for v in res["violations"]), res
+
+
+def test_only_block_tracks_explains_the_empty_selection(tmp_path, capsys):
+    pcb = tmp_path / "fixed.kicad_pcb"
+    b = Board.create(pcb)
+    b.outline(rect=(0, 0, 40, 30))
+    internal = b.add_track((10, 10), (25, 10), 0.25, "F.Cu", "A")["uuid"]
+    group(b, "/CELL (synthetic)", [internal])
+    b._stamps["/CELL"] = {"block": "synthetic.kicad_pcb"}
+    b.save()
+    case = tmp_path / "case.json"
+
+    assert cli.main(["--no-report", "pcb", "polish", "extract", str(pcb),
+                     "--net", "A", "--out", str(case)]) == 2
+    assert "all selected straight tracks belong to recorded layout blocks" in json.loads(
+        capsys.readouterr().out)["error"]
+    assert not case.exists() and not case.with_suffix(".map.json").exists()
+    for nets, kw, says in ((["A"], {"region": (9, 9, 26, 11)}, "recorded layout blocks"),
+                           (["A"], {"region": (0, 0, 5, 5)}, "inside the region"),
+                           (["A"], {"layer": "B.Cu"}, "no tracks on B.Cu"),
+                           (["missing"], {}, "no net on the board matches")):
+        with pytest.raises(kat.KatError, match=says):
+            kat.pcb.polish_extract(pcb, nets, case, **kw)

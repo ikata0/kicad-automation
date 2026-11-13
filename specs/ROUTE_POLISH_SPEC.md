@@ -249,6 +249,14 @@ configurable.
   `kat.pcb.polish_*`, and the code lives in `src/kat/pcb/polish/`. `extract`
   takes nets, a layer and an optional region, and writes a version-2 case
   ([`ROUTE_POLISH_INPUT.md`](ROUTE_POLISH_INPUT.md) §11) plus a private map file.
+  Tracks in recorded stamped blocks stay fixed, including nested member groups.
+  Membership is taken from `Board.stamps()` and its matching instance groups,
+  not geometric containment or group names alone. Ordinary and unrecorded groups
+  remain eligible. Exclusion happens before chain building and layer selection,
+  so external runs end at fixed block boundaries. Nearby block copper stays in
+  fixed context, with the usual same-net endpoint anchors. A selection containing
+  only block-owned straight tracks fails with an explanatory error; there is no
+  option to include those tracks.
   `apply` writes the result into a **new** board file, never the input. It
   then runs DRC on that copy and compares it per net with the original.
 - **Endpoints.** A trace's own endpoint pads, vias, their drills and stubs are its

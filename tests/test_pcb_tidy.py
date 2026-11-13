@@ -77,6 +77,23 @@ def on(f, nets):
         node.insert(node.index(find(node, "layers")) + 1, [Sym("net"), net])
 
 
+@pytestmark_board
+def test_excluded_segments_split_chains_at_fixed_boundaries(tmp_path):
+    b = Board.create(tmp_path / "chains.kicad_pcb")
+    uuids = [b.add_track((x, 10), (x + 5, 10), 0.25, "F.Cu", "A")["uuid"]
+             for x in (10, 15, 20)]
+    original, = tc.chains(b)
+    assert len(original.nodes) == 3
+
+    left, right = tc.chains(b, include_locked=True, exclude_uuids={uuids[1]})
+
+    assert left.pts == [(10, 10), (15, 10)]
+    assert right.pts == [(20, 10), (25, 10)]
+    assert [str(find(c.nodes[0], "uuid")[1]) for c in (left, right)] == [uuids[0], uuids[2]]
+    unchanged, = tc.chains(b)
+    assert unchanged.pts == original.pts and unchanged.nodes == original.nodes
+
+
 def messy(tmp_path) -> Path:
     """Net A: right-angle corners, a staircase, a spike that doubles back and a dangling stub;
     net B: an L; C: a locked L that must stay."""

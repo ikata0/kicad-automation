@@ -80,8 +80,10 @@ class Chain:
         return _length(self.pts)
 
 
-def chains(b, nets=None, layers=None, region=None, include_locked: bool = False) -> list[Chain]:
-    """The board's straight track runs between fixed points, as ``Chain`` objects."""
+def chains(b, nets=None, layers=None, region=None, include_locked: bool = False,
+           exclude_uuids: set[str] | frozenset[str] = frozenset()) -> list[Chain]:
+    """The board's straight track runs between fixed points, as ``Chain`` objects.
+    Excluded segment UUIDs stay fixed and terminate adjacent runs."""
     segs = [t for t in b.tracks() if t["kind"] == "segment"]
     fixed = set()
     for p in b.pads():
@@ -98,6 +100,8 @@ def chains(b, nets=None, layers=None, region=None, include_locked: bool = False)
                 pad_polys[(p.net, lay)].append(p.outline)
 
     def wanted(t) -> bool:
+        if t["uuid"] in exclude_uuids:
+            return False
         if t["locked"] and not include_locked:
             return False
         if nets and not any(fnmatch.fnmatch(t["net"], g) for g in nets):

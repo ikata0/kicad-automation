@@ -376,7 +376,11 @@ judged by DRC and a net with more findings or unconnected items than before is p
 `specs/ROUTE_POLISH_INPUT.md` and `ROUTE_POLISH_OUTPUT.md`; needs `kat[polish]`, the window
 `kat[polish-gui]`). `extract PCB --net GLOB... [--layer] [--region] --out CASE.json` writes a
 portable case of the straight runs on one layer, in neighbour order across the bundle (or
-`--order`). Their end pads, vias and drills are anchors. The traces may move anywhere the hard
+`--order`). Tracks belonging to recorded stamped blocks (including nested groups) stay fixed;
+external runs end at the block copper, which can be their same-net anchor. Ordinary and
+unrecorded groups remain eligible. Membership, not a block's bounding box, decides ownership;
+if only block-owned straight tracks match, extraction explains that none can move.
+Their end pads, vias and drills are anchors. The traces may move anywhere the hard
 constraints allow inside the movement region, their bounding box grown by `--move-margin`
 (default 2 mm; there is no distance limit), and context within 3 mm of it is fixed.
 Runs that share an end with a longer one stay fixed (`held`). A private `CASE.map.json` is
@@ -1287,6 +1291,7 @@ column in place of the net.
 | A hard distance limit (0.3-1 mm) on top of the clearances froze long segments 2-20 degrees off 45: the dogleg that straightens one puts its corner 1-3 mm off the line, and a bend in the middle of a segment with fixed ends gains nothing (one half turns towards 45, the other away) | `pcb polish` has no distance limit; the movement region (`--move-margin`) only bounds the context, the `displacement` weight keeps traces near the input |
 | Polish events wrote snapped direction codes (0-3) as segment indices; the GUI crashed on an empty segment slice and left pale original traces or a partial frame, and GUI exports carried the same wrong indices | Events store the indices of snapped segments in their own geometry, shared by rendering, history and export |
 | Bend insertion tried already-bent, direction-locked doglegs before a free split, so it imposed a corner rather than just adding a degree of freedom | Insert a free collinear vertex, settle before judging gain, and do not require a visible bend; a zero angle gradient at a collinear split alone is not convergence of the whole constrained problem |
+| Polish extraction included a stamped block's internal tracks, sometimes in the same chain as its external routing | Exclude members of recorded stamp groups (and nested groups) before building chains; block copper stays fixed and external runs end at its boundary. Ownership is group membership, not geometric containment; ordinary and unrecorded groups remain eligible |
 | `--option` values were all parsed as floats, so a count such as `settle_iterations=10` (the help's own example) crashed the run, and the help named only that one key | `polish_run` converts each option to its default's type and refuses a fractional count; `kat pcb polish run --help` lists every key with default and meaning, an unknown key's error points there |
 | A polished trace ran to a vertex and straight back along almost the same path before turning off: each leg is near 0/180 degrees (no angle cost), the length term only charges growth over the input, and merging only removes collinear vertices | `pcb polish` moves the tip of a doubled-back detour (turn of at least `reversal_turn_deg`, 150) onto its nearer neighbour and drops it, as a checked move (`simplify`); a best state never keeps such a tip that a later state removed |
 | Polished geometry was first judged only by the polisher's own model | `apply` refuses a changed board or case, reads the copy back, and compares KiCad's DRC with the original per net |

@@ -185,4 +185,10 @@ DONE
 
 ---
 
+DONE
+
 Add a 'fit all' (autoscale to fit whole geometry into the view, without changing aspect ratio of course) button, shortcut 'f'.
+
+---
+
+Make `kat pcb polish extract` ignore trace segments that are inside a block (aka sub-layout) in kicad (they also show as group in the layout). In the ... example  there are many identical blocks that are instances of a sub-schematic and sub-layout. 
