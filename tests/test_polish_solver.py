@@ -70,36 +70,38 @@ def test_events_store_snapped_segment_indices_not_directions():
     assert s.result(ev)["traces"] == s.result()["traces"]
 
 
-def test_a_bend_starts_collinear_and_free_then_settles_before_rejection():
-    c = pc.loads(json.dumps(tiny(points=((2, 6), (18, 12)), holes=())))
+def test_bends_try_shapes_then_a_free_midpoint_each_settled_before_rejection():
+    # 20.6 degrees: corner 0/45 runs into the hole, the others are settled and judged
+    c = pc.loads(json.dumps(tiny(points=((2, 6), (18, 12)), holes=((12, 7, 0.5),))))
     s = sv.Solver(c, options={"settle_iterations": 3})
     before = s.state.copy()
-    segment = before.sid["t01"][0]
-    evs = list(s._bend("t01", segment, before, s.total))
-    split = evs[0]
-    assert split.type == "bend" and split.accepted
-    np.testing.assert_array_equal(split.traces["t01"], [[2, 6], [10, 9], [18, 12]])
-    assert split.snapped["t01"] == []
-    assert all(e.added_vertices == {"t01": [1]} for e in evs[:-1])
-    assert [e.type for e in evs] == ["bend", "step", "step", "step", "commit"]
-    assert not evs[-1].accepted and evs[-1].reason == "no gain"
-    assert evs[-1].added_vertices == {"t01": []}
+    evs = list(s._bend("t01", before.sid["t01"][0], before, s.total))
+    blocked = evs[0]
+    assert not blocked.accepted and blocked.reason == "corner 0/45: sweep"
+    np.testing.assert_allclose(blocked.candidate["t01"], [[2, 6], [12, 6], [18, 12]])
+    tried = [e for e in evs if e.type == "bend" and e.accepted]
+    assert [e.reason for e in tried] == ["corner 45/0", "Z 0/45/0", "Z 45/0/45", "midpoint"]
+    np.testing.assert_allclose(tried[0].traces["t01"], [[2, 6], [8, 12], [18, 12]])
+    assert tried[0].snapped["t01"] == [] and tried[2].added_vertices == {"t01": [1, 2]}
+    np.testing.assert_array_equal(tried[3].traces["t01"], [[2, 6], [10, 9], [18, 12]])
+    assert [e.type for e in evs[-5:]] == ["bend", "step", "step", "step", "commit"]
+    assert all(e.reason == "no gain" for e in evs if e.type == "commit")
     np.testing.assert_array_equal(s.state.pts["t01"], before.pts["t01"])
-    assert not s.inserted["t01"]
+    assert not s.inserted["t01"] and evs[-1].added_vertices == {"t01": []}
 
 
 def test_a_split_can_stay_collinear_when_no_gain_is_required():
-    c = pc.loads(json.dumps(tiny(points=((2, 6), (18, 12)), holes=())))
+    c = pc.loads(json.dumps(tiny(points=((2, 4), (14, 16)), holes=())))     # on 45 degrees: no shape
     s = sv.Solver(c, options={"settle_iterations": 3, "bend_gain": 0})
     before = s.state.copy()
     evs = list(s._bend("t01", before.sid["t01"][0], before, s.total))
-    assert evs[-1].type == "commit" and evs[-1].accepted
+    assert evs[0].reason == "midpoint" and evs[-1].type == "commit" and evs[-1].accepted
     assert mt.turns_deg(s.state.pts["t01"])[0] < sv.BEND
     assert s.inserted["t01"] == 1
 
 
 def test_added_vertex_markers_follow_insertions_and_merges():
-    c = pc.loads(json.dumps(tiny(points=((2, 6), (10, 9), (18, 12)), holes=())))
+    c = pc.loads(json.dumps(tiny(points=((2, 4), (8, 10), (14, 16)), holes=())))   # midpoints
     s = sv.Solver(c, options={"settle_iterations": 0, "bend_gain": 0})
     for segment_index, expected in ((1, [2]), (0, [1, 3])):
         before = s.state.copy()
@@ -110,7 +112,7 @@ def test_added_vertex_markers_follow_insertions_and_merges():
     for expected in ([2], [1], []):
         ev, = s._merge()
         assert ev.accepted
-        assert ev.to_json()["added_vertices"] == {"t01": expected}
+        assert json.loads(json.dumps(ev.to_json()))["added_vertices"] == {"t01": expected}   # plain ints
 
 
 def test_run_directory_and_replay(tmp_path, capsys):
@@ -189,3 +191,18 @@ def test_a_doubled_back_detour_is_simplified_unless_something_is_in_the_way():
     ev, = s._simplify()
     assert not ev.accepted and ev.reason == "sweep"
     assert not list(s._simplify())                             # not tried again
+
+
+def test_the_batched_merit_ignores_a_split_and_is_zero_where_it_started():
+    s = sv.Solver(pc.load(EXAMPLE))
+    orig = s.model.initial()
+    _, at_start = s.merit.evaluate(orig)
+    assert at_start["displacement"] < 1e-12 and at_start["length"] == 0 and at_start["spacing"] > 0
+    split = dict(orig)
+    for t, p in orig.items():                                  # every trace gets a new vertex
+        split[t] = np.insert(p, 1, (p[0] + p[1]) / 2, axis=0)
+    _, after = s.merit.evaluate(split)
+    assert all(after[k] == pytest.approx(at_start[k], abs=1e-12) for k in mt.TERMS if k != "complexity")
+    P = {t: torch.tensor(p, requires_grad=True) for t, p in split.items()}
+    (s.merit.total(s.merit.terms(P)) + s.merit.barrier(P)).backward()
+    assert all(torch.isfinite(P[t].grad).all() for t in P)

@@ -53,9 +53,9 @@ Every line is one event object:
 |---|---|
 | `seq` | 0, 1, 2, …: position in the history. |
 | `iter` | Solver iterations (optimiser steps) so far. |
-| `type` | `start`, `step`, `snap`, `adjust`, `bend`, `rescue`, `merge`, `simplify`, `commit`, `stop`. A `simplify` moves the tip of a doubled-back detour (turn of at least `reversal_turn_deg`) onto its nearer neighbour and drops it; `target` names the tip vertex. A `bend` inserts a free collinear midpoint, not an already-bent corner. A `rescue` inserts a free collinear vertex where a segment comes closest to the obstacle it is short of (or keeps running into). |
+| `type` | `start`, `step`, `snap`, `adjust`, `bend`, `rescue`, `merge`, `simplify`, `commit`, `stop`. A `simplify` moves the tip of a doubled-back detour (turn of at least `reversal_turn_deg`) onto its nearer neighbour and drops it; `target` names the tip vertex. A `bend` replaces the segment by an already-bent shape (corner, then Z, each both ways; legs on 45-degree multiples, not snapped) or, last, splits it at a free collinear midpoint; an accepted `bend` names its shape in `reason` (`corner 0/45`, `Z 0/45/0`, `midpoint`), a blocked one gives the shape and why (`corner 0/45: sweep`), and the trials of one segment follow each other until one is kept. A `rescue` inserts a free collinear vertex where a segment comes closest to the obstacle it is short of (or keeps running into). |
 | `accepted` | Whether the event's candidate became the current state. |
-| `reason` | Why a candidate was rejected or a trial was reverted, else `null`. Examples: `sweep`, `clearance t02#3-h01`, `vertex limit`, `merit worse`, `no gain`, `inconsistent directions`. |
+| `reason` | Why a candidate was rejected or a trial was reverted, the shape of an accepted `bend` (`rescue`: `collinear`), else `null`. Examples: `sweep`, `clearance t02#3-h01`, `vertex limit`, `merit worse`, `no gain`, `inconsistent directions`. |
 | `target` | The segment the event is about, `"<trace>#<index>"`, else `null`. |
 | `traces` | `{trace id: points}`: the **current accepted state after** the event, for every trace in the group. |
 | `snapped` | `{trace id: [segment indices]}` for that state: sorted, unique indices from 0 to `len(points) - 2`, not direction codes. |

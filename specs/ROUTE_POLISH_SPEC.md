@@ -117,10 +117,11 @@ The proposed iteration is:
    meets a defined acceptance policy **[A]**. Keep the segment's direction exact
    in subsequent continuous steps **[A]**.   
 4. If snapping fails, first try adjusting the surrounding group. If necessary,
-   insert a free vertex on the segment, splitting it into two collinear
-   segments without changing the route, and retry continuous optimisation.
-   Neither child segment is snapped at insertion; no corner pattern, offset or
-   initial bend is imposed. The new vertex is an additional degree of freedom.
+   replace the segment by an already-bent shape whose legs lie on multiples of
+   45 degrees (a corner, then a Z, each both ways), moved into place as a checked
+   move, and retry continuous optimisation; if none is kept, split it with a free
+   collinear vertex. No leg is snapped at insertion, and a shape is only kept for
+   its merit gain, so no bend is forced on the result.
 5. Reject candidates that violate constraints, change topology or add complexity
    without sufficient benefit. Retaining a non-45-degree segment is allowed
    when it is the better feasible result.
@@ -286,28 +287,39 @@ configurable.
 - **Spacing pairs.** These are adjacent traces in group order that run locally
   parallel. The pairing is frozen from the original geometry, with samples
   placed by arc-length fraction.
-- **Defaults for extracts.** Edge margin 1.0 mm; preferred spacing 2 × the copper
-  clearance; snap tolerance 1°; `max_added_vertices_per_trace` 2; `max_iterations`
-  300; weights as in the example fixture.
+- **Defaults for extracts.** Edge margin 2.0 mm; preferred spacing 2 × the copper
+  clearance; short segment 2.5 trace widths, at least 0.25 mm; snap tolerance 1°;
+  `max_added_vertices_per_trace` 4; `max_iterations` 5000, a cap that a run normally
+  stops short of on stagnation; weights spacing 0.5, edge 1.0, displacement 0.05 (low
+  displacement weight, so traces may move far), as in `route-polish/routing-fcu.json`.
+  Chosen on that case by runs to stagnation: 1000 iterations end before convergence,
+  and 0.25 mm short segments improved the angle, spacing and edge terms together.
 - **Discrete edits.** Snap within tolerance or when progress stagnates (merit
   improvement below 1e-4 over 20 iterations). A snap is followed by 20 settle
   iterations. It is accepted if the merit is at most `snap_slack` (0.001) worse,
   and the best feasible state credits each snapped segment by that allowance. If it fails, the group
   is adjusted: the segment's angle weight is raised for 20 iterations and the
-  snap is retried. If that fails, insert one free midpoint on the segment:
-  the two child segments start collinear, with unchanged geometry and no snapped
-  directions. There are no dogleg candidates or initial perturbations. Run
-  `settle_iterations` (20 by default) before accepting or reverting the split;
-  no merging or snapping occurs during that settling period. The iteration
+  snap is retried. If that fails, bend the segment, trying in order until one
+  is kept: the corner (one vertex, legs on the two multiples of 45 degrees that
+  bracket the segment's direction) with either leg first, the Z (two vertices: one
+  direction in halves around the other) both ways, and last one free midpoint, whose
+  child segments start collinear with unchanged geometry. A shape's vertices are
+  inserted on the segment and moved into place as a checked move; a blocked shape is
+  a rejected `bend` event and the next is tried. No leg is snapped. A Z needs two of
+  the trace's added vertices; a shape that does not fit the allowance is skipped. Each trial runs
+  `settle_iterations` (20 by default) before it is accepted or reverted;
+  no merging or snapping occurs during that settling period. Shapes come first
+  because a collinear vertex barely moves: turning one half towards 45 degrees turns
+  the other away by as much, so the length-weighted angle term has no first-order
+  gradient there. The iteration
   limit and user stop still apply. Keep the trial if clearance shortfall drops,
   or if it does not grow and merit improves by at least `bend_gain` (0.005).
   A visible bend is not required separately; collinear vertices may be merged
   outside trials. The tip of a detour that doubles back (a turn of at least
   `reversal_turn_deg`, default 150 degrees) is moved onto its nearer neighbour and
   dropped outside trials, as a checked move (`simplify`); the longer leg keeps its
-  snap when the projection allows it. A perfectly collinear split can have zero angle gradient;
-  other objective or barrier forces must initiate its movement, and a trial
-  without sufficient benefit is reverted, not forcibly bent. Snapped segments
+  snap when the projection allows it. A trial without sufficient benefit is
+  reverted. Snapped segments
   stay snapped except when explicitly split for rescue. Each
   segment gets one failed attempt (configurable), and inserted vertices count
   cumulatively per trace. These numbers are solver options (`--option KEY=V`):

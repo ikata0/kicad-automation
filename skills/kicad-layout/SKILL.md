@@ -237,12 +237,14 @@ with kat.pcb.edit(PCB) as b:
   knobs `--option KEY=V` (`kat pcb polish run --help` lists every key with default and meaning). No
   distance limit: traces move as far as the hard constraints allow within `--move-margin` (2 mm)
   of their bounding box; a larger `displacement` weight keeps them closer.
-  Bend insertion adds a free collinear vertex, not an imposed dogleg; it gets
+  Bends first try already-bent shapes with legs on 45-degree multiples (corner, then
+  Z, each both ways; legs not snapped), then a free collinear vertex; each gets
   `settle_iterations` steps (default 20) before acceptance on `bend_gain` or reduced
-  clearance shortfall. No merging occurs during the trial; an unhelpful split is reverted.
+  clearance shortfall. No merging occurs during the trial; an unhelpful bend is reverted.
   In the GUI, pink dots with white outlines identify automatically inserted vertices;
   they follow the shown event, including replay.
-  Hovering a trace shows its ID, segment and angle; hovering a vertex its index and x, y
+  Hovering a trace highlights the segment and shows its ID, segment and angle; hovering a
+  vertex highlights it and shows its index and x, y
   in mm. **Fit all** (key F) zooms to the whole geometry. A detour that doubles back (turn of at least `reversal_turn_deg`, 150) is cut at its
   tip by a `simplify` event.
   A case already short of clearance runs too (`check` says `recoverable`); read the run's

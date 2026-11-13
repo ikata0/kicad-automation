@@ -2497,19 +2497,19 @@
     "preferred_edge_margin_mm": 2.0,
     "parallel_tolerance_deg": 15,
     "displacement_scale_mm": 1.0,
-    "short_segment_mm": 0.4,
+    "short_segment_mm": 0.25,
     "weights": {
       "angle": 1,
-      "spacing": 1,
-      "edge": 0.8,
-      "displacement": 0.25,
+      "spacing": 0.5,
+      "edge": 1.0,
+      "displacement": 0.05,
       "length": 0.1,
       "complexity": 0.3
     }
   },
   "limits": {
-    "max_iterations": 300,
-    "max_added_vertices_per_trace": 2,
+    "max_iterations": 5000,
+    "max_added_vertices_per_trace": 4,
     "snap_tolerance_deg": 1.0,
     "seed": 0
   }

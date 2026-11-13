@@ -124,9 +124,19 @@ def test_added_vertex_markers_follow_history_and_survive_export(tmp_path, monkey
             assert marker.deviceTransform(win.view.viewportTransform()).mapRect(marker.rect()).size() == size
             assert "1 vertices (pink dots)" in win.details.toPlainText()
             assert win.view.hover_text(win.view.mapFromScene(x, -y)).startswith("t01 vertex 1 ")
+            win.view.mouse = win.view.mapFromScene(x, -y)
+            win.view.refresh_hover()
+            assert win.view.hovered == ("vertex", "t01", 1) and len(win.view.highlight) == 1
+            assert win.view.highlight[0].pos() == marker.pos()
         ctl.reset()
         win._render()
         assert not markers()
+        win.view.set_hovered(("segment", "t01", 0))
+        (ax, ay), (bx, by) = ctl.current()["traces"]["t01"][:2]
+        line = win.view.highlight[0].line()
+        assert (line.x1(), line.y1(), line.x2(), line.y2()) == (ax, -ay, bx, -by)
+        win.view.set_hovered(None)
+        assert not win.view.highlight
     finally:
         win.close()
 

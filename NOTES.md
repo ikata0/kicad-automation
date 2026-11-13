@@ -190,5 +190,12 @@ DONE
 Add a 'fit all' (autoscale to fit whole geometry into the view, without changing aspect ratio of course) button, shortcut 'f'.
 
 ---
+DONE
 
 Make `kat pcb polish extract` ignore trace segments that are inside a block (aka sub-layout) in kicad (they also show as group in the layout). In the ... example  there are many identical blocks that are instances of a sub-schematic and sub-layout. 
+
+---
+DONE
+
+I am looking at t11 segment 5 after 1000 iterations in the routing-fcu.json example. Seems to me like it won't move anymore, but could be if new vertices would be inserted in pairs, instead of single vertices. We could divide the segment in 1/3 subsegments, and add two vertices at the same time.
+What is your opinion?

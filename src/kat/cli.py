@@ -1119,12 +1119,12 @@ def build_parser() -> argparse.ArgumentParser:
     pl0.add_argument("--region", metavar="X,Y,W,H", help="only track runs inside this box (mm)")
     pl0.add_argument("--order", metavar="NET,..", help="neighbour order instead of the geometric one")
     pl0.add_argument("--spacing", type=float, metavar="MM", help="preferred gap (default 2 x clearance)")
-    pl0.add_argument("--edge-margin", type=float, metavar="MM", help="preferred edge margin (default 1.0)")
+    pl0.add_argument("--edge-margin", type=float, metavar="MM", help="preferred edge margin (default 2.0)")
     pl0.add_argument("--move-margin", type=float, default=2.0, metavar="MM",
                      help="how far the traces may move beyond their bounding box (default 2.0)")
     pl0.add_argument("--snap-tolerance", type=float, metavar="DEG", help="default 1")
-    pl0.add_argument("--max-bends", type=int, metavar="N", help="added vertices per trace (default 2)")
-    pl0.add_argument("--max-iterations", type=int, metavar="N", help="default 300")
+    pl0.add_argument("--max-bends", type=int, metavar="N", help="added vertices per trace (default 4)")
+    pl0.add_argument("--max-iterations", type=int, metavar="N", help="default 5000; a run usually ends on stagnation first")
     pl0.add_argument("--weight", action="append", metavar="TERM=W", help="merit weight (repeatable)")
     pl0.add_argument("--accept-unmodelled", action="store_true",
                      help="go on despite custom or kat net rules the polisher cannot model")
@@ -1148,8 +1148,9 @@ def build_parser() -> argparse.ArgumentParser:
     pl1.add_argument("--group", metavar="G", help="only this group's neighbour pairs")
     pl2 = plsp.add_parser("run", formatter_class=_Fmt, help="optimise one group of a case",
                           description="Continuous moves on the merit's gradient (PyTorch), snaps to 45-degree\n"
-                                      "multiples, bounded insertion of free collinear vertices (no imposed bend).\n"
-                                      "New vertices settle before judging the gain; a detour that doubles back is cut\n"
+                                      "multiples, bounded bends: already-bent shapes with legs on 45-degree multiples\n"
+                                      "(corner, then Z, each both ways), then a free collinear midpoint.\n"
+                                      "Each settles before its gain is judged; a detour that doubles back is cut\n"
                                       "at its tip. Every move is checked against the hard constraints all the way\n"
                                       "(nothing jumps over an obstacle). Writes\n"
                                       "run.json, history.jsonl and result.json (best feasible state) into OUT.\n"
