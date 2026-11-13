@@ -1,7 +1,7 @@
 """A polishing run's directory (``specs/ROUTE_POLISH_OUTPUT.md``): ``run.json`` (identity,
 options, termination), ``history.jsonl`` (one event per line) and ``result.json`` (the
-exported candidate). A run never writes outside its directory, and never over existing
-files unless forced.
+exported candidate). With no explicit run directory, a copy of the result is also written
+beside the input. Existing files are never overwritten unless forced.
 """
 
 from __future__ import annotations
@@ -14,10 +14,15 @@ from ...env import KatError
 FILES = ("run.json", "history.jsonl", "result.json")
 
 
-def prepare(out: Path | str, force: bool = False) -> Path:
+def prepare(out: Path | str, force: bool = False, result_file: Path | None = None) -> Path:
     """The run directory ``out``, created; refuses one that holds run files unless
-    ``force``."""
+    ``force``. Also checks the optional standalone ``result_file`` before any writes."""
     out = Path(out)
+    if result_file is not None and result_file.exists():
+        if not result_file.is_file():
+            raise KatError(f"{result_file} is not a result file")
+        if not force:
+            raise KatError(f"{result_file} already exists: choose another directory or force")
     if out.exists() and not out.is_dir():
         raise KatError(f"{out} is a file, not a run directory")
     there = [f for f in FILES if (out / f).exists()]
@@ -35,10 +40,11 @@ def run_record(solver, events: int, best_seq: int) -> dict:
             "group": solver.group, **info, "termination": solver.termination, "events": events, "best_seq": best_seq}
 
 
-def write(out: Path, solver, events, result: dict | None = None) -> dict:
+def write(out: Path, solver, events, result: dict | None = None, result_file: Path | None = None) -> dict:
     """Run ``solver`` to the end, writing each of ``events`` (its generator) to
     ``history.jsonl`` as it comes, then ``run.json`` and ``result.json`` (the best feasible
-    state unless ``result`` is given). Returns the run record."""
+    state unless ``result`` is given), also copied to ``result_file`` when supplied.
+    Returns the run record."""
     n = 0
     with open(out / "history.jsonl", "w", encoding="utf-8") as f:
         for ev in events:
@@ -47,6 +53,8 @@ def write(out: Path, solver, events, result: dict | None = None) -> dict:
     res = result or solver.result()
     rec = run_record(solver, n, res["seq"])
     (out / "result.json").write_text(json.dumps(res, indent=1) + "\n", encoding="utf-8")
+    if result_file is not None:
+        result_file.write_text(json.dumps(res, indent=1) + "\n", encoding="utf-8")
     (out / "run.json").write_text(json.dumps(rec, indent=1) + "\n", encoding="utf-8")
     return rec
 

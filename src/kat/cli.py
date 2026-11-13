@@ -1159,7 +1159,9 @@ def build_parser() -> argparse.ArgumentParser:
                                       "The case is never changed. Needs kat[polish] (torch); --gui kat[polish-gui].",
                           epilog=_polish_options_help())
     pl2.add_argument("case", metavar="CASE.json")
-    pl2.add_argument("--out", required=True, metavar="DIR", help="run directory (refused if it holds a run)")
+    pl2.add_argument("--out", metavar="DIR",
+                     help="run directory (refused if it holds a run); omitted: writes CASE-polished.json "
+                          "beside CASE.json, with history in CASE-polished")
     pl2.add_argument("--group", metavar="G", help="the group to optimise (needed when there are several)")
     pl2.add_argument("--weight", action="append", metavar="TERM=W",
                      help="override a merit weight: angle, spacing, edge, displacement, length, complexity")

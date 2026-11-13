@@ -12,8 +12,11 @@ directory holds:
 | `history.jsonl` | One event per line, in order. This file is enough to replay the inspection. |
 | `result.json` | The exported candidate: the best feasible state unless another event is chosen. |
 
-A run never writes outside its run directory and refuses a directory that
-already contains any of these files unless forced. A run on a private extract is
+A run with an explicit `--out DIR` writes only in that directory. Without `--out`,
+`CASE.json` writes the candidate to `CASE-polished.json` beside the input and keeps
+these run files in the sibling `CASE-polished` directory. Existing result files or
+run files are refused unless forced; the GUI writes only on Export.
+A run on a private extract is
 itself private. This covers its history, screenshots and logs (input §3).
 
 ## 1 `run.json`

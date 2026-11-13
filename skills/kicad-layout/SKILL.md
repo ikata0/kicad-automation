@@ -228,6 +228,8 @@ with kat.pcb.edit(PCB) as b:
   rerouting: `kat pcb polish extract PCB --net A --net B ... [--layer L] [--region X,Y,W,H] --out
   case.json`, then `kat pcb polish run case.json --out run`, then `kat pcb polish apply PCB
   run/result.json --map case.map.json --out polished.kicad_pcb`. The original is never written.
+  Omitting `run --out` writes `case-polished.json` beside `case.json`, with run history in
+  `case-polished`; existing outputs require `--force`. The GUI writes only on Export.
   Extraction leaves recorded stamped blocks fixed (including nested member groups);
   external runs end at block copper, with the usual same-net anchors. Ownership follows
   group membership, not a bounding box. Ordinary and unrecorded groups remain eligible.

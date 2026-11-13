@@ -256,7 +256,7 @@ def polish_check(case: Path | str, group: str | None = None) -> dict:
                  "neighbours": neighbours, **extra})
 
 
-def polish_run(case: Path | str, out: Path | str, group: str | None = None, weights: dict | None = None,
+def polish_run(case: Path | str, out: Path | str | None = None, group: str | None = None, weights: dict | None = None,
                options: dict | None = None, limits: dict | None = None, force: bool = False, gui: bool = False) -> dict:
     """Polish one group of a route-polish case (``kat.pcb.polish``): continuous moves on the
     merit's gradient (PyTorch) and snaps / bends, every state change checked against the hard
@@ -264,7 +264,10 @@ def polish_run(case: Path | str, out: Path | str, group: str | None = None, weig
     complexity}, ``limits`` (the input's names, e.g. max_iterations, snap_tolerance_deg) and
     solver ``options`` (``solver.DEFAULTS``) override the case. Writes run.json,
     history.jsonl and result.json (the best feasible state) into the run directory ``out``
-    (refused when it holds them, unless ``force``); never touches the case. ``gui`` opens the
+    (refused when it holds them, unless ``force``). With ``out`` omitted, also writes
+    ``<case stem>-polished.json`` beside the input and keeps the run in the sibling
+    ``<case stem>-polished`` directory; returns its path as ``result_file``.
+    Never touches the case. ``gui`` opens the
     inspection window instead and writes only on its Export. An input short of clearance
     (centrelines still clear) is recovered: no shortfall may grow, the solver works it off
     and bends where steps stall; ``recovery`` then reports the shortfall (mm) at the start
@@ -274,13 +277,17 @@ def polish_run(case: Path | str, out: Path | str, group: str | None = None, weig
     require("numpy")
     c = _case.load(case)
     from .polish import solver as _solver
+    result_file = Path(case).with_name(Path(case).stem + "-polished.json") if out is None else None
+    if out is None:
+        out = result_file.with_suffix("")
     if gui:
         from .polish import gui as _gui
-        return tidy(_gui.run_live(c, Path(out), group, weights, options, limits, force))
-    d = _hist.prepare(out, force)
+        return tidy(_gui.run_live(c, Path(out), group, weights, options, limits, force, result_file))
+    d = _hist.prepare(out, force, result_file)
     s = _solver.Solver(c, group, weights, options, limits)
-    rec = _hist.write(d, s, s.events())
-    return tidy({"out": str(d), **_hist.summary(rec, *_hist.load(d)[1:])})
+    rec = _hist.write(d, s, s.events(), result_file=result_file)
+    extra = {"result_file": str(result_file)} if result_file is not None else {}
+    return tidy({"out": str(d), **extra, **_hist.summary(rec, *_hist.load(d)[1:])})
 
 
 def polish_replay(run_dir: Path | str, case: Path | str | None = None, gui: bool = False) -> dict:

@@ -41,6 +41,22 @@ def test_the_controller_browses_without_branching_and_exports(tmp_path):
         ctl.export(tmp_path / "a")
 
 
+def test_export_writes_and_protects_the_default_result_file(tmp_path):
+    s, evs = finished(n=1)
+    ctl = gui.Controller(pc.load(EXAMPLE), None, solver=s)
+    for ev in evs:
+        ctl.add(ev)
+    result_file = tmp_path / "case-polished.json"
+    out = tmp_path / "case-polished"
+    assert not result_file.exists()
+    ctl.export(out, result_file=result_file)
+    assert result_file.read_bytes() == (out / "result.json").read_bytes()
+    with pytest.raises(Exception, match="already exists"):
+        ctl.export(tmp_path / "other", result_file=result_file)
+    assert not (tmp_path / "other").exists()
+    ctl.export(out, force=True, result_file=result_file)
+
+
 def test_the_window_steps_runs_and_stops_cleanly(tmp_path, monkeypatch):
     pytest.importorskip("PySide6.QtWidgets")
     monkeypatch.setenv("QT_QPA_PLATFORM", "offscreen")

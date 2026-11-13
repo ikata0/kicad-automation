@@ -199,3 +199,7 @@ DONE
 
 I am looking at t11 segment 5 after 1000 iterations in the routing-fcu.json example. Seems to me like it won't move anymore, but could be if new vertices would be inserted in pairs, instead of single vertices. We could divide the segment in 1/3 subsegments, and add two vertices at the same time.
 What is your opinion?
+
+---
+
+For `kat pcb polish run`: If no --out argument is given, default shall be the original file name, with the suffix '-polished' appended; for instance, 'pcb-traces-left-01.json' yields the output file 'pcb-traces-left-01-polished.json' in the same folder.

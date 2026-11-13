@@ -133,13 +133,15 @@ class Controller:
         """The hover text at (x, y) (mm, y up): :meth:`describe` of :meth:`hit`."""
         return self.describe(self.hit(x, y, vertex_tol, segment_tol))
 
-    def export(self, out: Path | str, which: str = "best", force: bool = False) -> dict:
+    def export(self, out: Path | str, which: str = "best", force: bool = False,
+               result_file: Path | None = None) -> dict:
         """Write run.json, history.jsonl (the events so far) and result.json (``which``:
         "best" feasible state or the "current" one) into ``out``; refused over an existing
-        run unless ``force``. Returns the run record."""
+        run unless ``force``. Also copies the candidate to ``result_file`` when supplied.
+        Returns the run record."""
         if not self.events:
             raise KatError("nothing to export yet")
-        d = _hist.prepare(out, force)
+        d = _hist.prepare(out, force, result_file)
         ev = self.events[self.best_seq() if which == "best" else self.cursor]
         first = self.events[0]
         solver_id = (self.solver.info()["solver"] if self.solver else {"name": "kat-polish", "version": "?", "merit": "?"})
@@ -158,6 +160,8 @@ class Controller:
                **(self.solver.info() if self.solver else {"solver": solver_id, "options": None}),
                "termination": termination, "events": len(self.events), "best_seq": ev["seq"]}
         (d / "result.json").write_text(json.dumps(res, indent=1) + "\n", encoding="utf-8")
+        if result_file is not None:
+            result_file.write_text(json.dumps(res, indent=1) + "\n", encoding="utf-8")
         (d / "run.json").write_text(json.dumps(rec, indent=1) + "\n", encoding="utf-8")
         return rec
 
@@ -309,9 +313,11 @@ def _classes():
                   "snapped": "#2e8b57", "cand": "#d0021b", "env": "#f0ad4e", "anchor": "#1f4e79",
                   "added": "#e91e63"}
 
-        def __init__(self, ctl: Controller, worker: Worker | None, out: Path | None, force: bool):
+        def __init__(self, ctl: Controller, worker: Worker | None, out: Path | None, force: bool,
+                     result_file: Path | None = None):
             super().__init__()
             self.ctl, self.worker, self.out, self.force = ctl, worker, out, force
+            self.result_file = result_file
             self.exported: list[str] = []
             self.running = False
             self.dirty = True
@@ -593,14 +599,15 @@ def _classes():
             if not d:
                 return
             force = self.force
-            if any((Path(d) / f).exists() for f in _hist.FILES) and not force:
-                ok = QtWidgets.QMessageBox.question(self, "Overwrite?", f"{d} already holds a run. Overwrite it?")
+            if (any((Path(d) / f).exists() for f in _hist.FILES)
+                    or (self.result_file is not None and self.result_file.exists())) and not force:
+                ok = QtWidgets.QMessageBox.question(self, "Overwrite?", "Output already exists. Overwrite it?")
                 if ok != QtWidgets.QMessageBox.Yes:
                     return
                 force = True
             which = "best" if self.which.currentIndex() == 0 else "current"
             try:
-                self.ctl.export(d, which, force)
+                self.ctl.export(d, which, force, self.result_file)
                 self.exported.append(d)
                 self.statusBar().showMessage(f"exported the {which} state to {d}", 8000)
             except KatError as e:
@@ -620,24 +627,26 @@ def _app():
     return QtWidgets.QApplication.instance() or QtWidgets.QApplication(["kat"])
 
 
-def open_window(ctl: Controller, solver: Solver | None = None, out: Path | None = None, force: bool = False):
+def open_window(ctl: Controller, solver: Solver | None = None, out: Path | None = None, force: bool = False,
+                result_file: Path | None = None):
     """The window on ``ctl`` (live when ``solver`` is given; its worker thread is started),
     without entering the event loop: (app, window)."""
     Worker, Window = _classes()
     app = _app()
     worker = Worker(solver) if solver is not None else None
-    win = Window(ctl, worker, out, force)
+    win = Window(ctl, worker, out, force, result_file)
     if worker is not None:
         worker.start()
     return app, win
 
 
-def run_live(case: Case, out: Path, group=None, weights=None, options=None, limits=None, force=False) -> dict:
+def run_live(case: Case, out: Path, group=None, weights=None, options=None, limits=None, force=False,
+             result_file: Path | None = None) -> dict:
     """Open the window on a new run of ``case`` (paused after the start event) and block
     until it closes. Returns the export directories and the history length."""
     solver = Solver(case, group, weights, options, limits)
     ctl = Controller(case, group, solver=solver)
-    app, win = open_window(ctl, solver, out, force)
+    app, win = open_window(ctl, solver, out, force, result_file)
     win.show()
     app.exec()
     return {"exported": win.exported, "events": len(ctl.events), "termination": solver.termination or "user-stop"}

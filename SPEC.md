@@ -386,7 +386,7 @@ constraints allow inside the movement region, their bounding box grown by `--mov
 Runs that share an end with a longer one stay fixed (`held`). A private `CASE.map.json` is
 written beside it. Custom DRC or kat net rules it cannot model stop it unless
 `--accept-unmodelled`. `check CASE` preflights.
-`run CASE --out DIR [--gui] [--weight T=W] [--option KEY=V]` minimises a weighted merit (angle to 45-degree
+`run CASE [--out DIR] [--gui] [--weight T=W] [--option KEY=V]` minimises a weighted merit (angle to 45-degree
 multiples, spacing to neighbours, edge margin, displacement, length, complexity; PyTorch
 gradients). Snapped segments stay exact, bends are bounded, and a detour that doubles back is
 cut at its tip (`simplify`). Every change is a straight
@@ -395,7 +395,10 @@ passes through an obstacle or another trace; clearance is required of every stat
 An input only short of clearance (`check` says `recoverable`) is run anyway: no shortfall may
 grow, the solver works it off and bends a segment where it stalls (`rescue`), and the run's
 `recovery` and the result's `feasible` say whether it got clear. DIR gets `run.json`, `history.jsonl` and
-`result.json` (best feasible state). `--option KEY=V` sets a solver knob; `run --help` lists
+`result.json` (best feasible state). Without `--out`, `pcb-traces-left-01.json` writes
+`pcb-traces-left-01-polished.json` in the same folder, with run files in the sibling
+`pcb-traces-left-01-polished` directory. Existing outputs require `--force`; the GUI writes
+only on Export. `--option KEY=V` sets a solver knob; `run --help` lists
 every key with its default and meaning. `replay DIR [--case CASE --gui]` summarises or browses a
 run. `apply PCB RESULT --map CASE.map.json --out NEW.kicad_pcb` writes into a **copy**, never
 the input. It reads the copy back against the hard constraints and compares DRC with the
@@ -1051,7 +1054,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `pcb stamp PCB BLOCK_PCB [INSTANCE...] --at X,Y --preview [...]` | origin, turned bounds and ports of a proposed stamp, board unchanged (§4.18) |
 | `pcb escape PCB SPEC.json [--apply] [--out FILE]` | route permutable pins, choosing the assignment with the tracks (§4.10) |
 | `pcb tidy PCB [--nets GLOB] [--layers L,..] [--region X,Y,W,H] [--steps S,..] [--corners 45/arc/keep] [--spread GAP] [--max-growth PCT] [--freeze-length NET] [--include-locked] [--dry-run]` | clean up routed tracks, judged by DRC per net (§4.10) |
-| `pcb polish extract PCB --net GLOB... --out CASE.json [--layer L] [--region X,Y,W,H] [--order NET,..] [--move-margin MM] [--accept-unmodelled]` / `check CASE` / `run CASE --out DIR [--gui] [--weight T=W] [--option KEY=V] [--max-iterations N]` / `replay DIR [--case CASE --gui]` / `apply PCB RESULT --map MAP --out NEW` | topology-preserving polishing of a routed bundle; the result goes into a copy judged by DRC (§4.10) |
+| `pcb polish extract PCB --net GLOB... --out CASE.json [--layer L] [--region X,Y,W,H] [--order NET,..] [--move-margin MM] [--accept-unmodelled]` / `check CASE` / `run CASE [--out DIR] [--gui] [--weight T=W] [--option KEY=V] [--max-iterations N]` / `replay DIR [--case CASE --gui]` / `apply PCB RESULT --map MAP --out NEW` | topology-preserving polishing of a routed bundle; the result goes into a copy judged by DRC (§4.10) |
 | `pcb stitch PCB NET [--pitch MM] [--margin MM]` / `pcb plane-stub PCB REF... [--net N] [--skip-net N]` | stitching vias; SMD pads to their plane by stub and via (§4.9) |
 | `pcb profile PCB [--via-types KINDS] [--min-clearance MM] [--clear]` | the board's fabrication profile and its departures (§4.7) |
 | `pcb stamps PCB [--rebuild [INSTANCE...]]` | the board's stamp records; recover lost ones from the board (§4.18) |

@@ -132,6 +132,39 @@ def test_run_directory_and_replay(tmp_path, capsys):
     assert math.isfinite(rec["events"])
 
 
+@pytest.mark.parametrize("filename", ["pcb-traces-left-01.json", "pcb.traces.json", "case"])
+def test_run_without_out_writes_a_polished_file_beside_the_case(tmp_path, capsys, filename):
+    folder = tmp_path / "inputs"
+    folder.mkdir()
+    case = folder / filename
+    original = json.dumps(tiny(points=((2, 4), (14, 16)), holes=()))
+    case.write_text(original, encoding="utf-8")
+    result_file = folder / (case.stem + "-polished.json")
+    run_dir = result_file.with_suffix("")
+    assert cli.main(["--no-report", "pcb", "polish", "run", str(case), "--max-iterations", "1"]) == 0
+    summary = json.loads(capsys.readouterr().out)
+    assert summary["out"] == str(run_dir) and summary["result_file"] == str(result_file)
+    assert result_file.read_bytes() == (run_dir / "result.json").read_bytes()
+    assert json.loads(result_file.read_text())["format"] == "route-polish-result"
+    assert case.read_text(encoding="utf-8") == original
+    assert cli.main(["--no-report", "pcb", "polish", "replay", str(run_dir)]) == 0
+
+
+def test_default_result_file_is_protected_unless_forced(tmp_path):
+    case = tmp_path / "case.json"
+    case.write_text(json.dumps(tiny(points=((2, 4), (14, 16)), holes=())), encoding="utf-8")
+    result_file = tmp_path / "case-polished.json"
+    result_file.write_text("existing output", encoding="utf-8")
+    with pytest.raises(kat.KatError, match="already exists"):
+        kat.pcb.polish_run(case, limits={"max_iterations": 1})
+    assert result_file.read_text() == "existing output"
+    assert not (tmp_path / "case-polished").exists()
+    kat.pcb.polish_run(case, limits={"max_iterations": 1}, force=True)
+    assert json.loads(result_file.read_text())["format"] == "route-polish-result"
+    with pytest.raises(kat.KatError, match="already exists"):
+        kat.pcb.polish_run(case, limits={"max_iterations": 1})
+
+
 def test_a_trace_at_exactly_its_clearance_still_moves():
     # specs/route-polish: t04 starts at exactly 0.125 mm from c0544/c0546 (slack -6e-15);
     # the sweep used to refuse every move of it, away from the pads too
