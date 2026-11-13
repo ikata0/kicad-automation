@@ -189,3 +189,18 @@ def test_a_doubled_back_detour_is_simplified_unless_something_is_in_the_way():
     ev, = s._simplify()
     assert not ev.accepted and ev.reason == "sweep"
     assert not list(s._simplify())                             # not tried again
+
+
+def test_the_batched_merit_ignores_a_split_and_is_zero_where_it_started():
+    s = sv.Solver(pc.load(EXAMPLE))
+    orig = s.model.initial()
+    _, at_start = s.merit.evaluate(orig)
+    assert at_start["displacement"] < 1e-12 and at_start["length"] == 0 and at_start["spacing"] > 0
+    split = dict(orig)
+    for t, p in orig.items():                                  # every trace gets a new vertex
+        split[t] = np.insert(p, 1, (p[0] + p[1]) / 2, axis=0)
+    _, after = s.merit.evaluate(split)
+    assert all(after[k] == pytest.approx(at_start[k], abs=1e-12) for k in mt.TERMS if k != "complexity")
+    P = {t: torch.tensor(p, requires_grad=True) for t, p in split.items()}
+    (s.merit.total(s.merit.terms(P)) + s.merit.barrier(P)).backward()
+    assert all(torch.isfinite(P[t].grad).all() for t in P)

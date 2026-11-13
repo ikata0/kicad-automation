@@ -30,11 +30,13 @@ MAX_SUBSTEPS = 64
 
 def point_seg(p, s, e) -> np.ndarray:
     """Distance of points ``p`` to segments s-e (arrays of points, broadcast)."""
-    v = e - s
-    L2 = (v * v).sum(-1)
-    u = np.clip(((p - s) * v).sum(-1) / np.where(L2 > 0, L2, 1.0), 0.0, 1.0)
-    q = s + u[..., None] * v - p
-    return np.sqrt((q * q).sum(-1))
+    sx, sy = s[..., 0], s[..., 1]                    # x and y apart: no reduction over 2
+    vx, vy = e[..., 0] - sx, e[..., 1] - sy
+    wx, wy = p[..., 0] - sx, p[..., 1] - sy
+    L2 = vx * vx + vy * vy
+    u = np.clip((wx * vx + wy * vy) / np.where(L2 > 0, L2, 1.0), 0.0, 1.0)
+    qx, qy = u * vx - wx, u * vy - wy
+    return np.sqrt(qx * qx + qy * qy)
 
 
 def seg_dist(a, b, c, d) -> np.ndarray:

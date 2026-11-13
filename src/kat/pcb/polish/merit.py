@@ -71,25 +71,47 @@ class Merit:
         f64 = torch.float64
         self.T = lambda a: torch.as_tensor(np.asarray(a, float), dtype=f64)
         ids = model.ids
-        self.orig = {t: self.T(model.orig[t]) for t in ids}
         self.L0 = {t: float(np.linalg.norm(np.diff(model.orig[t], axis=0), axis=1).sum()) for t in ids}
         self.S0 = sum(len(model.orig[t]) - 1 for t in ids)
         self.bends0 = sum(int((turns_deg(model.orig[t]) > BEND).sum()) for t in ids)
         self.u = {t: self.T(_fractions(self.L0[t])) for t in ids}
         c = model.case
         edges = [(a, b) for ring in [c.outline, *c.cutouts] for a, b in zip(ring, ring[1:] + ring[:1])]
-        self.ea, self.eb = self.T([e[0] for e in edges]), self.T([e[1] for e in edges])
+        ea, eb = self.T([e[0] for e in edges]), self.T([e[1] for e in edges])
+        self.edges = (ea[:, 0], ea[:, 1], eb[:, 0], eb[:, 1])
         self.fa, self.fb = self.T(model.fa), self.T(model.fb)
         self.req = self.T(np.where(np.isfinite(model.req), model.req, -1e9))
-        self.mreq = self.T(model.mreq)
-        self.pairs = []                                   # (a, b, fractions on a, gate) frozen
+        self.gates = []                                   # (a, b, gate on a's samples) frozen
         pref, tol = objectives["preferred_spacing_mm"], objectives["parallel_tolerance_deg"]
         for a, b in zip(ids, ids[1:]):
             for x, y in ((a, b), (b, a)):
                 gate = self._gate(model.orig[x], model.orig[y], _fractions(self.L0[x]),
                                   model.half[ids.index(x)] + model.half[ids.index(y)], pref, tol)
                 if gate.any():
-                    self.pairs.append((x, y, self.u[x][self.T(gate) > 0]))
+                    self.gates.append((x, y, gate))
+        # everything batched: the traces' vertices, segments and samples stacked in id order
+        self._layouts = {}
+        Li = lambda a: torch.as_tensor(np.asarray(a), dtype=torch.long)
+        self.tr_u = np.concatenate([[i] * len(self.u[k]) for i, k in enumerate(ids)])
+        self.u_all = torch.cat([self.u[k] for k in ids])
+        start = np.concatenate([[0], np.cumsum([len(self.u[k]) for k in ids])])
+        rows, to, half = [], [], []
+        for x, y, g in self.gates:
+            i, j = ids.index(x), ids.index(y)
+            rows.append(start[i] + np.flatnonzero(g))
+            to += [j] * int(g.sum())
+            half += [model.half[i] + model.half[j]] * int(g.sum())
+        self.pair_rows = Li(np.concatenate(rows) if rows else np.zeros(0, int))
+        self.pair_to = np.array(to, int)
+        self.pair_half = self.T(half)
+        self.half_u = self.T(model.half[self.tr_u])
+        self.L0_total = sum(self.L0.values())
+        V0 = self.T(np.concatenate([model.orig[k] for k in ids]))
+        lay0 = self._layout(tuple(len(model.orig[k]) for k in ids), own=True)
+        ox, oy = V0[:, 0], V0[:, 1]
+        sa, sb, g = lay0["seg_a"], lay0["seg_b"], lay0["rows"]
+        self.orig_seg = (ox[sa][g], oy[sa][g], ox[sb][g], oy[sb][g])       # each sample's own original
+        self.qx, self.qy = self._sample(ox, oy, lay0)
 
     @staticmethod
     def _gate(px, py, u, halves, pref, tol) -> np.ndarray:
@@ -110,30 +132,73 @@ class Merit:
         parallel = np.degrees(np.arccos(cos)) <= tol
         return parallel & (d.min(1) - halves <= 2 * pref)
 
-    # --- torch helpers ------------------------------------------------------------------
+    # --- torch helpers (x and y apart: reducing a trailing axis of 2 is slow) ---------
 
-    def _at(self, P, u):
-        t = self.t
-        L = (P[1:] - P[:-1]).norm(dim=1)
-        cum = t.cat([L.new_zeros(1), t.cumsum(L, 0)])
-        s = u * cum[-1]
-        i = (t.searchsorted(cum.detach(), s.detach(), right=True) - 1).clamp(0, len(L) - 1)
-        f = (s - cum[i]) / L[i]
-        return P[i] + f[:, None] * (P[i + 1] - P[i])
-
-    def _pseg(self, p, a, b):
-        v = b - a
-        L2 = (v * v).sum(-1)
-        u = (((p - a) * v).sum(-1) / L2.clamp_min(1e-18)).clamp(0, 1)
-        q = a + u[..., None] * v - p
-        return ((q * q).sum(-1) + 1e-18).sqrt()
-
-    def _to_poly(self, pts, P):
-        return self._pseg(pts[:, None], P[None, :-1], P[None, 1:]).min(1).values
+    @staticmethod
+    def _pseg(px, py, ax, ay, bx, by):
+        vx, vy = bx - ax, by - ay
+        wx, wy = px - ax, py - ay
+        u = ((wx * vx + wy * vy) / (vx * vx + vy * vy).clamp_min(1e-18)).clamp(0, 1)
+        qx, qy = u * vx - wx, u * vy - wy
+        return (qx * qx + qy * qy + 1e-18).sqrt()
 
     def _segdist(self, a, b, c, d):
-        return self.t.minimum(self.t.minimum(self._pseg(a, c, d), self._pseg(b, c, d)),
-                              self.t.minimum(self._pseg(c, a, b), self._pseg(d, a, b)))
+        """Distance between segments a-b and c-d, each end an (x, y) pair of tensors."""
+        ps, mn = self._pseg, self.t.minimum
+        return mn(mn(ps(*a, *c, *d), ps(*b, *c, *d)), mn(ps(*c, *a, *b), ps(*d, *a, *b)))
+
+    def _sample(self, x, y, lay):
+        """The points at the arc-length fractions of every trace's samples, on the stacked
+        vertices (``x``, ``y``) laid out by ``lay``."""
+        t = self.t
+        sa, sb, first, last = lay["seg_a"], lay["seg_b"], lay["first_u"], lay["last_u"]
+        dx, dy = x[sb] - x[sa], y[sb] - y[sa]
+        L = (dx * dx + dy * dy).sqrt()
+        cum = t.cat([L.new_zeros(1), t.cumsum(L, 0)])
+        c0, c1 = cum[first], cum[last + 1]
+        s = c0 + self.u_all * (c1 - c0)
+        i = t.searchsorted(cum.detach(), s.detach(), right=True) - 1
+        i = t.maximum(t.minimum(i, last), first)
+        f = (s - cum[i]) / L[i]
+        return x[sa[i]] + f * dx[i], y[sa[i]] + f * dy[i]
+
+    def _layout(self, counts: tuple, own: bool = False) -> dict:
+        """Index tensors for a state whose traces have ``counts`` vertices (cached): the
+        segments' ends, each sample's trace segments, which segments each sample row is
+        measured against (``own``: its own trace only; else its own, then for the spacing
+        rows their partner's), and the barrier's segment pairs."""
+        lay = None if own else self._layouts.get(counts)
+        if lay is not None:
+            return lay
+        t, m = self.t, self.m
+        Li = lambda a: t.as_tensor(np.asarray(a), dtype=t.long)
+        off = np.concatenate([[0], np.cumsum(counts)])
+        tr = np.concatenate([[i] * (c - 1) for i, c in enumerate(counts)])
+        ix = np.concatenate([np.arange(c - 1) for c in counts])
+        seg_a = np.concatenate([off[i] + np.arange(c - 1) for i, c in enumerate(counts)])
+        soff = np.concatenate([[0], np.cumsum([c - 1 for c in counts])])
+        kmax = max(counts) - 1
+        table = np.array([[soff[i] + min(k, c - 2) for k in range(kmax)] for i, c in enumerate(counts)])
+        targets = self.tr_u if own else np.concatenate([self.tr_u, self.pair_to])
+        interior = (ix > 0) & (ix < np.array(counts)[tr] - 2)
+        i, j = np.triu_indices(len(tr), 1)
+        keep = ~((tr[i] == tr[j]) & (np.abs(ix[i] - ix[j]) <= 1))
+        i, j = i[keep], j[keep]
+        lay = {"seg_a": Li(seg_a), "seg_b": Li(seg_a + 1), "off": off.tolist(),
+               "first_u": Li(soff[:-1][self.tr_u]), "last_u": Li(soff[1:][self.tr_u] - 1),
+               "rows": Li(table[targets]), "interior": t.as_tensor(interior),
+               "req": self.req[Li(tr)], "pi": Li(i), "pj": Li(j),
+               "need": self.T(np.where(tr[i] == tr[j], 0.0, m.mreq[tr[i], tr[j]])),
+               "ones": [t.ones(c - 1, dtype=t.float64) for c in counts]}
+        if not own:
+            self._layouts[counts] = lay
+        return lay
+
+    def _stack(self, P: dict):
+        ids = self.m.ids
+        lay = self._layout(tuple(len(P[k]) for k in ids))
+        V = self.t.cat([P[k] for k in ids])
+        return lay, V, V[:, 0], V[:, 1]
 
     # --- the function -------------------------------------------------------------------
 
@@ -142,53 +207,50 @@ class Merit:
         ``angle_boost`` {trace: per-segment weight tensor} weights the angle term for the
         optimiser (``adjust``), never for the reported score."""
         t, o, ids = self.t, self.o, self.m.ids
-        zero = P[ids[0]].new_zeros(())
-        num = den = zero
-        lengths = {}
-        for k in ids:
-            d = P[k][1:] - P[k][:-1]
-            L = (d * d).sum(1).add(1e-18).sqrt()
-            lengths[k] = L
-            c, s = d[:, 0] / L, d[:, 1] / L
-            c2, s2 = c * c - s * s, 2 * c * s
-            c4, s4 = c2 * c2 - s2 * s2, 2 * c2 * s2
-            f = ((1 - (c4 * c4 - s4 * s4)) / 2).clamp_min(0)
-            wseg = L * (angle_boost[k] if angle_boost and k in angle_boost else 1.0)
-            num, den = num + (wseg * f).sum(), den + L.sum()
-        angle = num / den
+        lay, V, x, y = self._stack(P)
+        sa, sb = lay["seg_a"], lay["seg_b"]
+        ax, ay, bx, by = x[sa], y[sa], x[sb], y[sb]
+        dx, dy = bx - ax, by - ay
+        L = (dx * dx + dy * dy + 1e-18).sqrt()
+        c, s = dx / L, dy / L
+        c2, s2 = c * c - s * s, 2 * c * s
+        c4, s4 = c2 * c2 - s2 * s2, 2 * c2 * s2
+        f = ((1 - (c4 * c4 - s4 * s4)) / 2).clamp_min(0)
+        w = L
+        if angle_boost:
+            w = L * t.cat([angle_boost.get(k, one) for k, one in zip(ids, lay["ones"])])
+        total_len = L.sum()
+        angle = (w * f).sum() / total_len
+        zero = V.new_zeros(())
 
+        px, py = self._sample(x, y, lay)
+        # each row against the segments of one current trace: the original's samples against
+        # their own trace, the gated samples against their spacing partner
+        g = lay["rows"]
+        rx = t.cat([self.qx, px[self.pair_rows]])[:, None]
+        ry = t.cat([self.qy, py[self.pair_rows]])[:, None]
+        dist = self._pseg(rx, ry, ax[g], ay[g], bx[g], by[g]).min(1).values
+        n_q = len(self.qx)
         pref = o["preferred_spacing_mm"]
-        res, n = zero, 0
-        for a, b, u in self.pairs:
-            p = self._at(P[a], u)
-            ia, ib = ids.index(a), ids.index(b)
-            gap = self._to_poly(p, P[b]) - float(self.m.half[ia] + self.m.half[ib])
-            res = res + (((gap - pref) / pref) ** 2).sum()
-            n += len(u)
-        spacing = res / n if n else zero
+        if len(self.pair_rows):
+            gap = dist[n_q:] - self.pair_half
+            spacing = (((gap - pref) / pref) ** 2).sum() / len(self.pair_rows)
+        else:
+            spacing = zero
 
         margin, scale = o["preferred_edge_margin_mm"], o["displacement_scale_mm"]
-        e_num = d_num = zero
-        n_s = 0
-        for i, k in enumerate(ids):
-            p = self._at(P[k], self.u[k])
-            gap = self._pseg(p[:, None], self.ea[None], self.eb[None]).min(1).values - float(self.m.half[i])
-            e_num = e_num + ((t.relu(margin - gap) / margin) ** 2).sum()
-            q = self._at(self.orig[k], self.u[k])
-            d_num = d_num + ((self._to_poly(p, self.orig[k]) / scale) ** 2).sum() \
-                + ((self._to_poly(q, P[k]) / scale) ** 2).sum()
-            n_s += len(p)
-        edge = e_num / n_s
-        displacement = d_num / (2 * n_s)
+        n_s = len(px)
+        gap = self._pseg(px[:, None], py[:, None], *self.edges).min(1).values - self.half_u
+        edge = ((t.relu(margin - gap) / margin) ** 2).sum() / n_s
+        to_orig = self._pseg(px[:, None], py[:, None], *self.orig_seg).min(1).values
+        displacement = (((to_orig / scale) ** 2).sum() + ((dist[:n_q] / scale) ** 2).sum()) / (2 * n_s)
 
-        total_len = sum(L.sum() for L in lengths.values())
-        L0 = sum(self.L0.values())
-        length = t.relu(total_len - L0) / L0
+        length = t.relu(total_len - self.L0_total) / self.L0_total
 
         short = o["short_segment_mm"]
-        bends = sum(int((turns_deg(P[k].detach().numpy()) > BEND).sum()) for k in ids)
-        shorts = sum((t.relu(1 - lengths[k][1:-1] / short) ** 2).sum() if len(lengths[k]) > 2 else zero
-                     for k in ids)
+        Vn, off = V.detach().numpy(), lay["off"]
+        bends = sum(int((turns_deg(Vn[i:j]) > BEND).sum()) for i, j in zip(off[:-1], off[1:]))
+        shorts = (t.relu(1 - L[lay["interior"]] / short) ** 2).sum()
         complexity = (max(0, bends - self.bends0) + shorts) / self.S0
         return {"angle": angle, "spacing": spacing, "edge": edge, "displacement": displacement,
                 "length": length, "complexity": complexity * (zero + 1)}
@@ -199,22 +261,20 @@ class Merit:
 
     def barrier(self, P: dict):
         """Solver-only penalty for slack below the barrier margin (torch scalar)."""
-        t, ids = self.t, self.m.ids
-        a = t.cat([P[k][:-1] for k in ids])
-        b = t.cat([P[k][1:] for k in ids])
-        tr = np.concatenate([[i] * (len(P[k]) - 1) for i, k in enumerate(ids)])
-        ix = np.concatenate([np.arange(len(P[k]) - 1) for k in ids])
+        t = self.t
+        lay, V, x, y = self._stack(P)
+        sa, sb = lay["seg_a"], lay["seg_b"]
+        a, b = (x[sa], y[sa]), (x[sb], y[sb])
         m = self.margin
-        out = a.new_zeros(())
+        out = V.new_zeros(())
         if len(self.fa):
-            fs = self._segdist(a[:, None], b[:, None], self.fa[None], self.fb[None]) - self.req[self.T(tr).long()]
+            col = lambda e: (e[0][:, None], e[1][:, None])
+            fs = self._segdist(col(a), col(b), (self.fa[:, 0], self.fa[:, 1]), (self.fb[:, 0], self.fb[:, 1])) - lay["req"]
             out = out + ((t.relu(m - fs) / m) ** 2).sum()
-        ms = self._segdist(a[:, None], b[:, None], a[None], b[None])
-        same = tr[:, None] == tr[None, :]
-        need = np.where(same, 0.0, self.m.mreq[tr][:, tr])
-        skip = np.triu(np.ones_like(same), 0) | (same & (np.abs(ix[:, None] - ix[None, :]) <= 1))
-        mask = self.T(~skip)
-        out = out + ((t.relu(m - (ms - self.T(need))) / m) ** 2 * mask).sum()
+        i, j = lay["pi"], lay["pj"]
+        if len(i):
+            ms = self._segdist((a[0][i], a[1][i]), (b[0][i], b[1][i]), (a[0][j], a[1][j]), (b[0][j], b[1][j]))
+            out = out + ((t.relu(m - (ms - lay["need"])) / m) ** 2).sum()
         return self.bweight * out
 
     def evaluate(self, state: dict) -> tuple[float, dict]:
