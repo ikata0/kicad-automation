@@ -396,9 +396,10 @@ every key with its default and meaning. `replay DIR [--case CASE --gui]` summari
 run. `apply PCB RESULT --map CASE.map.json --out NEW.kicad_pcb` writes into a **copy**, never
 the input. It reads the copy back against the hard constraints and compares DRC with the
 original per net; `kat pcb check NEW` then gives the full verdict. Weights are a first guess:
-on boards already tidied to 45 degrees mostly spacing changes. Bend insertion adds a free
-collinear midpoint, not a pre-bent dogleg: the optimiser gets 20 settling steps by default
-before the trial is kept for merit gain (`bend_gain`) or reduced clearance shortfall.
+on boards already tidied to 45 degrees mostly spacing changes. Bend insertion first tries
+already-bent shapes with legs on 45-degree multiples (a corner, then a Z, each both ways,
+legs not snapped), then a free collinear midpoint: each gets 20 settling steps by default
+before it is kept for merit gain (`bend_gain`) or reduced clearance shortfall.
 No merging occurs during settling; an unhelpful split is reverted.
 The GUI marks automatically inserted vertices with fixed-screen-size pink dots
 (white outlines), including when browsing or replaying history.
@@ -1286,7 +1287,8 @@ column in place of the net.
 | A track ends over the drill of its own pad or via; a hole-clearance rule without nets made every extracted trace infeasible | in the polish case a trace's end pads, vias **and their drills** are its anchors, exempt from its own clearance only |
 | A hard distance limit (0.3-1 mm) on top of the clearances froze long segments 2-20 degrees off 45: the dogleg that straightens one puts its corner 1-3 mm off the line, and a bend in the middle of a segment with fixed ends gains nothing (one half turns towards 45, the other away) | `pcb polish` has no distance limit; the movement region (`--move-margin`) only bounds the context, the `displacement` weight keeps traces near the input |
 | Polish events wrote snapped direction codes (0-3) as segment indices; the GUI crashed on an empty segment slice and left pale original traces or a partial frame, and GUI exports carried the same wrong indices | Events store the indices of snapped segments in their own geometry, shared by rendering, history and export |
-| Bend insertion tried already-bent, direction-locked doglegs before a free split, so it imposed a corner rather than just adding a degree of freedom | Insert a free collinear vertex, settle before judging gain, and do not require a visible bend; a zero angle gradient at a collinear split alone is not convergence of the whole constrained problem |
+| Bend insertion tried already-bent, direction-locked doglegs before a free split, so it imposed a corner rather than just adding a degree of freedom | Shapes keep free legs and are kept only on settled merit gain; a free collinear vertex is the last try |
+| A free collinear split never moved: displacing the vertex turns one half towards 45 degrees and the other away by as much, so the length-weighted angle term has no first-order gradient there (also for a pair at 1/3 and 2/3); segments 10-20 degrees off stayed as they were | `pcb polish` bends first try already-bent shapes (corner, then Z, each both ways), moved into place as checked moves and settled, before the collinear midpoint |
 | `--option` values were all parsed as floats, so a count such as `settle_iterations=10` (the help's own example) crashed the run, and the help named only that one key | `polish_run` converts each option to its default's type and refuses a fractional count; `kat pcb polish run --help` lists every key with default and meaning, an unknown key's error points there |
 | A polished trace ran to a vertex and straight back along almost the same path before turning off: each leg is near 0/180 degrees (no angle cost), the length term only charges growth over the input, and merging only removes collinear vertices | `pcb polish` moves the tip of a doubled-back detour (turn of at least `reversal_turn_deg`, 150) onto its nearer neighbour and drops it, as a checked move (`simplify`); a best state never keeps such a tip that a later state removed |
 | Polished geometry was first judged only by the polisher's own model | `apply` refuses a changed board or case, reads the copy back, and compares KiCad's DRC with the original per net |

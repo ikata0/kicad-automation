@@ -8,9 +8,11 @@ clear all the way and the new state passes the hard check; traces that the check
 held where they are and the rest retried. Discrete edits are **trials**:
 ``snap`` (fix a segment at its nearest multiple of 45 degrees), ``adjust`` (weight that
 segment's angle heavily for a while so that its neighbours make room, then snap) and
-``bend`` (add a free collinear midpoint), each settled by some iterations and then committed
-or reverted. No bend is imposed: the added vertex gives the optimiser another degree of
-freedom. A collinear vertex is ``merge``d away outside trials, and the tip of a doubled-back
+``bend`` (replace the segment by an already-bent shape whose legs lie on 45-degree
+multiples: a corner either way, then a Z either way, each moved into place as a checked move;
+then a free collinear midpoint), each settled by some iterations and then committed or
+reverted. The legs are not snapped, and a shape is only kept for its merit gain. A collinear
+vertex alone barely moves: turning one half towards 45 degrees turns the other away. A collinear vertex is ``merge``d away outside trials, and the tip of a doubled-back
 detour (a turn of at least ``reversal_turn_deg``) is moved onto its nearer neighbour and
 dropped (``simplify``); a best state never keeps a tip that a later one removed. Snapped segments stay snapped
 except when explicitly split for rescue. ``Solver.events`` yields every event; the best
@@ -46,6 +48,7 @@ EXACT = 1e-9                # degrees: a segment this close to 45-degree multipl
 GAIN = 1e-6                 # mm: a shortfall reduced by this much counts as progress
 STALL = 1e-4                # mm: recovery has stalled when a window of steps gains less
 CLEARANCE = re.compile(r"clearance (\S+?)#(\d+)-(\S+?)(?:#(\d+))? short")
+MIN_LEG = 0.01             # mm: a bent shape needs legs at least this long
 PIN_ROUNDS = 8              # a failing step pins vertices this many times before giving up
 
 
@@ -502,34 +505,79 @@ class Solver:
         self.attempts[(t, s)] += 1
         self._reset_stagnation()
 
+    @staticmethod
+    def _shapes(a: np.ndarray, b: np.ndarray) -> list:
+        """Already-bent replacements of segment a-b (mm), every leg on a multiple of 45
+        degrees: the corner (one vertex) both ways, then the Z (two vertices: one direction
+        in halves around the other) both ways, as [(name, (n, 2) vertices)]; [] when a leg
+        would be shorter than ``MIN_LEG`` (the segment is on 45 degrees already)."""
+        d = b - a
+        k = math.floor(math.degrees(math.atan2(d[1], d[0])) / 45.0)
+        u = [np.array([math.cos(math.radians(45.0 * j)), math.sin(math.radians(45.0 * j))]) for j in (k, k + 1)]
+        deg = [45 * j % 180 for j in (k, k + 1)]
+        lam = np.linalg.solve(np.column_stack(u), d)
+        if lam.min() < MIN_LEG:
+            return []
+        corners, zs = [], []
+        for p, q in ((0, 1), (1, 0)):
+            first = a + lam[p] * u[p]
+            corners.append((f"corner {deg[p]}/{deg[q]}", first[None]))
+            half = a + lam[p] / 2 * u[p]
+            zs.append((f"Z {deg[p]}/{deg[q]}/{deg[p]}", np.array([half, half + lam[q] * u[q]])))
+        return corners + zs
+
     def _bend(self, t: str, s: int, before: State, total_before: float, short_before: float = 0.0,
               at: np.ndarray | None = None, type_: str = "bend"):
-        """Insert a free collinear vertex in segment ``s`` of trace ``t`` (midpoint, or
-        ``at`` in mm for rescue). Settle before judging the gain; no bend is imposed."""
-        target = f"{t}#{before.sid[t].index(s)}"
-        if self.inserted[t] >= self.limits["max_added_vertices_per_trace"]:
+        """Bend trials on segment ``s`` of trace ``t`` until one is kept: the shapes of
+        ``_shapes``, then a free collinear midpoint; for rescue only one free collinear
+        vertex ``at`` (mm). A shape's vertices are inserted on the segment and moved to
+        their place as a checked move (a blocked shape is a rejected event); its legs are
+        free, not snapped. Each trial settles before it is judged. True when one was kept."""
+        i = before.sid[t].index(s)
+        target = f"{t}#{i}"
+        a, b = before.pts[t][i], before.pts[t][i + 1]
+        if at is not None:
+            tries = [("collinear", np.asarray(at, float)[None])]
+        else:
+            tries = self._shapes(a, b) + [("midpoint", ((a + b) / 2)[None])]
+        room = self.limits["max_added_vertices_per_trace"] - self.inserted[t]
+        if not any(len(v) <= room for _, v in tries):
             yield self._event(type_, False, "vertex limit", target)
             return False
-        i = before.sid[t].index(s)
-        a, b = before.pts[t][i], before.pts[t][i + 1]
-        st = before.copy()
-        mid = (a + b) / 2 if at is None else np.asarray(at, float)
-        st.pts[t] = np.insert(st.pts[t], i + 1, mid, axis=0)
-        st.added[t] = {v + (v > i) for v in st.added.get(t, ())} | {i + 1}
-        s1, s2 = self._new_id(), self._new_id()
-        st.sid[t][i:i + 1] = [s1, s2]
-        st.snapped[t].pop(s, None)                      # a rescue may split a snapped segment
-        self._apply(st.pts, st)                         # geometrically the same path
-        self.in_trial = True
-        yield self._event(type_, True, None, target)
-        yield from self._settle()
-        ok = yield from self._commit(before, total_before, self.opt["bend_gain"], target, short_before)
-        if ok:
-            self.inserted[t] += 1
-            self.attempts[(t, s1)] = self.attempts[(t, s2)] = self.attempts[(t, s)]
-            for key in [k for k in self.blocked if k[:2] == (t, s)]:
-                del self.blocked[key]
-        return ok
+        v = b - a
+        for name, new in tries:
+            if self.stop_requested or self.iter >= self.limits["max_iterations"]:
+                break
+            n = len(new)
+            if n > room:
+                continue
+            feet = a + np.clip((new - a) @ v / (v @ v), 0, 1)[:, None] * v
+            st = before.copy()
+            st.pts[t] = np.insert(st.pts[t], i + 1, feet, axis=0)
+            st.added[t] = {x + n * (x > i) for x in st.added.get(t, ())} | set(range(i + 1, i + 1 + n))
+            ids = [self._new_id() for _ in range(n + 1)]
+            st.sid[t][i:i + 1] = ids
+            st.snapped[t].pop(s, None)                  # a rescue may split a snapped segment
+            if not np.array_equal(new, feet):
+                moved = {x: y.copy() for x, y in st.pts.items()}
+                moved[t][i + 1:i + 1 + n] = new
+                reason = self.model.sweep(st.pts, moved, self.opt["max_substeps"])
+                if reason:
+                    yield self._event(type_, False, f"{name}: {reason}", target, candidate=moved)
+                    continue
+                st.pts = moved
+            self._apply(st.pts, st)
+            self.in_trial = True
+            yield self._event(type_, True, name, target)
+            yield from self._settle()
+            if (yield from self._commit(before, total_before, self.opt["bend_gain"], target, short_before)):
+                self.inserted[t] += n
+                for x in ids:
+                    self.attempts[(t, x)] = self.attempts[(t, s)]
+                for key in [k for k in self.blocked if k[:2] == (t, s)]:
+                    del self.blocked[key]
+                return True
+        return False
 
     def _merge(self):
         """Removes collinear vertices (outside trials), each as a checked move."""
