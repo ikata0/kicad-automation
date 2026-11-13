@@ -238,7 +238,8 @@ with kat.pcb.edit(PCB) as b:
   clearance shortfall. No merging occurs during the trial; an unhelpful split is reverted.
   In the GUI, pink dots with white outlines identify automatically inserted vertices;
   they follow the shown event, including replay.
-  Hovering a trace shows its ID, segment and angle; hovering a vertex its index and x, y
+  Hovering a trace highlights the segment and shows its ID, segment and angle; hovering a
+  vertex highlights it and shows its index and x, y
   in mm. **Fit all** (key F) zooms to the whole geometry. A detour that doubles back (turn of at least `reversal_turn_deg`, 150) is cut at its
   tip by a `simplify` event.
   A case already short of clearance runs too (`check` says `recoverable`); read the run's

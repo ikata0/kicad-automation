@@ -85,11 +85,11 @@ class Controller:
             return self.result["seq"]
         return min((e for e in self.events if e["accepted"]), key=lambda e: e["total"])["seq"]
 
-    def hover(self, x: float, y: float, vertex_tol: float, segment_tol: float) -> str | None:
+    def hit(self, x: float, y: float, vertex_tol: float, segment_tol: float) -> tuple[str, str, int] | None:
         """What lies under the point (x, y) (mm, the input's coordinates, y up) in the state
-        shown: the nearest vertex within ``vertex_tol`` mm (trace, index, position in mm),
-        else the nearest segment within ``segment_tol`` mm or its half width (trace, index,
-        undirected angle in degrees); None when nothing is that close."""
+        shown: ``("vertex", trace, index)`` for the nearest vertex within ``vertex_tol`` mm,
+        else ``("segment", trace, index)`` for the nearest segment within ``segment_tol`` mm
+        or its half width; None when nothing is that close."""
         ev = self.current()
         if ev is None:
             return None
@@ -101,26 +101,37 @@ class Controller:
                 if d <= vertex_tol and (best is None or d < best[0]):
                     best = (d, t, i)
         if best:
-            _, t, i = best
-            px, py = ev["traces"][t][i]
-            n = len(ev["traces"][t])
-            note = (" (anchored end)" if i in (0, n - 1) else
-                    " (added automatically)" if i in ev.get("added_vertices", {}).get(t, ()) else "")
-            return f"{t} vertex {i}  x {px:.3f}  y {py:.3f} mm{note}"
+            return ("vertex",) + best[1:]
         for t, pts in ev["traces"].items():
             tol = max(segment_tol, self.case.traces[t].width / 2)
             for i, (a, b) in enumerate(zip(pts, pts[1:])):
                 d = point_seg((x, y), a, b)
                 if d <= tol and (best is None or d < best[0]):
                     best = (d, t, i)
-        if not best:
+        return ("segment",) + best[1:] if best else None
+
+    def describe(self, hit: tuple[str, str, int] | None) -> str | None:
+        """The hover text for a :meth:`hit`: trace, vertex index and position in mm, or
+        trace, segment index and undirected angle in degrees; None for None."""
+        if hit is None:
             return None
-        _, t, i = best
-        (ax, ay), (bx, by) = ev["traces"][t][i:i + 2]
+        kind, t, i = hit
+        ev = self.current()
+        pts = ev["traces"][t]
+        if kind == "vertex":
+            px, py = pts[i]
+            note = (" (anchored end)" if i in (0, len(pts) - 1) else
+                    " (added automatically)" if i in ev.get("added_vertices", {}).get(t, ()) else "")
+            return f"{t} vertex {i}  x {px:.3f}  y {py:.3f} mm{note}"
+        (ax, ay), (bx, by) = pts[i:i + 2]
         angle = math.degrees(math.atan2(by - ay, bx - ax)) % 180.0
         angle = 0.0 if angle > 180.0 - 5e-4 else angle
         snap = f", snapped {round(angle / 45.0) % 4 * 45} deg" if i in ev["snapped"].get(t, ()) else ""
         return f"{t} segment {i}  angle {angle:.1f} deg{snap}"
+
+    def hover(self, x: float, y: float, vertex_tol: float, segment_tol: float) -> str | None:
+        """The hover text at (x, y) (mm, y up): :meth:`describe` of :meth:`hit`."""
+        return self.describe(self.hit(x, y, vertex_tol, segment_tol))
 
     def export(self, out: Path | str, which: str = "best", force: bool = False) -> dict:
         """Write run.json, history.jsonl (the events so far) and result.json (``which``:
@@ -200,31 +211,86 @@ def _classes():
 
     class View(QtWidgets.QGraphicsView):
         """Wheel zoom, drag pan, and a tooltip naming the vertex (8 px) or segment (4 px)
-        under the mouse."""
+        under the mouse, which is highlighted."""
         VERTEX_PX, SEGMENT_PX = 8, 4
+        HIGHLIGHT = "#00b4d8"
 
         def __init__(self, scene, ctl: Controller):
             super().__init__(scene)
             self.ctl = ctl
+            self.hovered = None                            # the Controller.hit under the mouse
+            self.highlight = []                            # its scene items
+            self.mouse = None                              # last viewport position
             self.setRenderHint(QtGui.QPainter.Antialiasing)
             self.setDragMode(QtWidgets.QGraphicsView.ScrollHandDrag)
             self.setTransformationAnchor(QtWidgets.QGraphicsView.AnchorUnderMouse)
             self.viewport().setMouseTracking(True)
 
-        def hover_text(self, pos) -> str | None:
-            """The hover text at viewport position ``pos``."""
+        def hit_at(self, pos):
+            """The Controller.hit at viewport position ``pos``."""
             p = self.mapToScene(pos)
             mm = 1.0 / max(abs(self.transform().m11()), 1e-9)
-            return self.ctl.hover(p.x(), -p.y(), self.VERTEX_PX * mm, self.SEGMENT_PX * mm)
+            return self.ctl.hit(p.x(), -p.y(), self.VERTEX_PX * mm, self.SEGMENT_PX * mm)
+
+        def hover_text(self, pos) -> str | None:
+            """The hover text at viewport position ``pos``."""
+            return self.ctl.describe(self.hit_at(pos))
+
+        def set_hovered(self, hit, force=False):
+            """Highlight ``hit`` (a Controller.hit or None) in the state shown."""
+            if hit == self.hovered and not force:
+                return
+            for it in self.highlight:
+                self.scene().removeItem(it)
+            self.highlight, self.hovered = [], hit
+            ev = self.ctl.current()
+            if hit is None or ev is None or hit[1] not in ev["traces"]:
+                return
+            kind, t, i = hit
+            pts = ev["traces"][t]
+            if i + (kind == "segment") >= len(pts):
+                self.hovered = None
+                return
+            color = QtGui.QColor(self.HIGHLIGHT)
+            if kind == "vertex":
+                x, y = pts[i]
+                it = self.scene().addEllipse(-7, -7, 14, 14, QtGui.QPen(color, 2.5), QtGui.QBrush(QtCore.Qt.NoBrush))
+                it.setFlag(QtWidgets.QGraphicsItem.ItemIgnoresTransformations)
+                it.setPos(x, -y)
+            else:
+                (ax, ay), (bx, by) = pts[i:i + 2]
+                color.setAlpha(170)
+                for width, cosmetic in ((self.ctl.case.traces[t].width * 1.6, False), (5, True)):
+                    pen = QtGui.QPen(color, width)                 # the wider of trace scale and 5 px
+                    pen.setCapStyle(QtCore.Qt.RoundCap)
+                    pen.setCosmetic(cosmetic)
+                    self.highlight.append(self.scene().addLine(ax, -ay, bx, -by, pen))
+            if kind == "vertex":
+                self.highlight.append(it)
+            for it in self.highlight:
+                it.setZValue(2)
+                it.setAcceptedMouseButtons(QtCore.Qt.NoButton)
+
+        def refresh_hover(self):
+            """Redo the hover for the state shown, after it changed under the mouse."""
+            self.highlight = [it for it in self.highlight if it.scene() is not None]
+            self.set_hovered(self.hit_at(self.mouse) if self.mouse is not None else None, force=True)
 
         def mouseMoveEvent(self, e):
             super().mouseMoveEvent(e)
-            pos = e.position().toPoint()
-            text = self.hover_text(pos)
+            pos = self.mouse = e.position().toPoint()
+            hit = self.hit_at(pos)
+            self.set_hovered(hit)
+            text = self.ctl.describe(hit)
             if text:
                 QtWidgets.QToolTip.showText(self.viewport().mapToGlobal(pos), text, self.viewport())
             else:
                 QtWidgets.QToolTip.hideText()
+
+        def leaveEvent(self, e):
+            self.mouse = None
+            self.set_hovered(None)
+            super().leaveEvent(e)
 
         def viewportEvent(self, e):
             if e.type() == QtCore.QEvent.ToolTip:          # the hover text replaces item tooltips
@@ -438,6 +504,7 @@ def _classes():
                     marker.setZValue(1)
                     marker.setToolTip(f"Automatically added vertex: {t}#{i}")
                     self.dynamic.append(marker)
+            self.view.refresh_hover()
             self._details(ev)
             if self.list.currentRow() != self.ctl.cursor:
                 self.list.blockSignals(True)
