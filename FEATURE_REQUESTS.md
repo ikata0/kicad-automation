@@ -117,6 +117,26 @@ the first write, and audit other commands that save through external tools.
 before reaching any guarded save. Apply the same protection to the initial fill
 and retry paths; a refusal must leave the board and project files unchanged.
 
+### FR-062: Preserve connected same-net runs during route polishing
+
+**Open.** Represent electrically connected same-net runs without imposing
+foreign-net clearance between them. Separate runs can have overlapping copper
+despite different endpoint coordinates; fixed endpoints then make the false
+clearance violation impossible to resolve, even with `spacing=0`.
+
+`src\kat\pcb\polish\constraints.py` builds movable-pair clearance requirements
+without consulting net identity. Preserve existing same-net connections through
+extraction, optimization and write-back in `src\kat\pcb\polish\board.py`,
+including the apply round-trip gate. Do not waive foreign-net clearances or
+permit optimization to disconnect copper merely because the runs share a net.
+This extends FR-061's topology-preserving polishing.
+
+Acceptance: a generic board with same-net runs whose copper overlaps at
+non-coincident endpoints can be extracted, polished with `spacing=0` and applied
+without a false inter-net violation or lost connectivity. Include a nearby
+foreign-net control that remains clearance-constrained, and verify connectivity
+and DRC with KiCad after write-back.
+
 ## Fabrication and assembly
 
 ### FR-058: Versioned supplier rule profiles and fabrication checks
