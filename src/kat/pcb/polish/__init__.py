@@ -24,7 +24,7 @@ OPTIONS = {
 
 
 def require(module: str):
-    """Import ``module`` (numpy, torch, PySide6) or raise ``KatError`` naming the extra that
+    """Import ``module`` (numpy, scipy, torch, PySide6) or raise ``KatError`` naming the extra that
     provides it."""
     import importlib
     try:

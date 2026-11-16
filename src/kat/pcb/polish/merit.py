@@ -187,7 +187,7 @@ class Merit:
         lay = {"seg_a": Li(seg_a), "seg_b": Li(seg_a + 1), "off": off.tolist(),
                "first_u": Li(soff[:-1][self.tr_u]), "last_u": Li(soff[1:][self.tr_u] - 1),
                "rows": Li(table[targets]), "interior": t.as_tensor(interior),
-               "req": self.req[Li(tr)], "pi": Li(i), "pj": Li(j),
+               "tr": Li(tr), "pi": Li(i), "pj": Li(j),
                "need": self.T(np.where(tr[i] == tr[j], 0.0, m.mreq[tr[i], tr[j]])),
                "ones": [t.ones(c - 1, dtype=t.float64) for c in counts]}
         if not own:
@@ -260,7 +260,9 @@ class Merit:
         return sum(self.w[k] * terms[k] for k in TERMS)
 
     def barrier(self, P: dict):
-        """Solver-only penalty for slack below the barrier margin (torch scalar)."""
+        """Solver-only penalty for slack below the barrier margin (torch scalar). Only fixed
+        primitives whose slack may be below the margin are measured (``Model.candidates``);
+        the others contribute exactly 0."""
         t = self.t
         lay, V, x, y = self._stack(P)
         sa, sb = lay["seg_a"], lay["seg_b"]
@@ -268,9 +270,14 @@ class Merit:
         m = self.margin
         out = V.new_zeros(())
         if len(self.fa):
-            col = lambda e: (e[0][:, None], e[1][:, None])
-            fs = self._segdist(col(a), col(b), (self.fa[:, 0], self.fa[:, 1]), (self.fb[:, 0], self.fb[:, 1])) - lay["req"]
-            out = out + ((t.relu(m - fs) / m) ** 2).sum()
+            Vn = V.detach().numpy()
+            k, j = self.m.candidates(Vn[sa.numpy()], Vn[sb.numpy()], m)
+            if len(k):
+                k, j = t.as_tensor(k), t.as_tensor(j)
+                req = self.req[lay["tr"][k], j]
+                fs = self._segdist((a[0][k], a[1][k]), (b[0][k], b[1][k]),
+                                   (self.fa[j, 0], self.fa[j, 1]), (self.fb[j, 0], self.fb[j, 1])) - req
+                out = out + ((t.relu(m - fs) / m) ** 2).sum()
         i, j = lay["pi"], lay["pj"]
         if len(i):
             ms = self._segdist((a[0][i], a[1][i]), (b[0][i], b[1][i]), (a[0][j], a[1][j]), (b[0][j], b[1][j]))

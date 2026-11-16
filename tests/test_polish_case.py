@@ -3,6 +3,8 @@ hard constraints' swept moves (conservative advancement keeps the topology)."""
 
 import copy
 import json
+import math
+import os
 from pathlib import Path
 
 import pytest
@@ -142,3 +144,90 @@ def test_a_move_through_a_hole_is_refused_although_both_ends_are_clear():
     assert m.sweep(m.initial(), away) is None
     assert m.sweep(m.initial(), closer).startswith("clearance")
     assert kat.pcb.polish_check(EXAMPLE)["ok"]
+
+
+def test_pruned_checks_match_measuring_every_pair():
+    """The spatial index leaves out only what cannot matter: a board dense with pads, moves
+    short and far (past ``SKIN``)."""
+    torch = pytest.importorskip("torch")
+    pytest.importorskip("scipy")
+    from kat.pcb.polish.merit import Merit
+    d = example()
+    (x0, y0), (x1, y1) = np.min(d["movement_region"], 0), np.max(d["movement_region"], 0)
+    board = np.asarray(d["board"]["outline"], float)
+    corners = 0.5 * np.array([[1, 1], [1, -1], [-1, 1], [-1, -1]])
+    on_board = lambda p: cs.inside(p + corners, board).all() and not any(
+        cs.inside(p + corners, np.asarray(cut, float)).any() for cut in d["board"]["cutouts"])
+    grid = [np.array((x, y)) for x in np.arange(x0 + 1, x1 - 1, 1.3) for y in np.arange(y0 + 1, y1 - 1, 1.1)]
+    for i, (x, y) in enumerate(p for p in grid if on_board(p)):
+        if i % 4 == 0:                                   # large round pads: a wide range of required distances
+            shape = {"type": "circle", "center": [x, y], "radius_mm": 0.2 + 0.1 * (i % 5)}
+        else:
+            r = 0.15 + 0.1 * (i % 3)
+            shape = {"type": "polygon", "points": [[x + r * math.cos(a), y + r * math.sin(a)]
+                                                   for a in np.linspace(0, 2 * math.pi, 9)[:-1]]}
+        d["fixed_copper"].append({"id": f"p{i:03d}", "net": "nx", "shape": shape})
+    c = pc.loads(json.dumps(d))
+    fast, ref = cs.Model(c), cs.Model(c, prune=False)
+    assert fast.prune and len(fast.fa) > 500
+    start = fast.initial()
+    rng = np.random.default_rng(7)
+    for scale in (0.03, 0.3, 3.0):
+        new = {t: p.copy() for t, p in start.items()}
+        for t in new:
+            new[t][1:-1] += rng.normal(0, scale, new[t][1:-1].shape)
+        a, b, tr, _ = fast._segments(new)
+        slack = cs.seg_dist(a[:, None], b[:, None], fast.fa[None], fast.fb[None]) - fast.req[tr]
+        for most in (0.05, 0.4, 1.5):
+            k, j = fast.candidates(a, b, most)
+            assert len(k) < slack.size and set(zip(*np.nonzero(slack <= most))) <= set(zip(k, j))
+        for name in ("violations", "min_slack", "shortfall", "short_pairs", "blocking"):
+            assert getattr(fast, name)(new) == getattr(ref, name)(new), (scale, name)
+        (f, m), (rf, rm) = fast.pair_slack(new), ref.pair_slack(new)
+        assert np.array_equal(m, rm)
+        assert np.array_equal(np.where(rf <= cs.SKIN, rf, np.inf), np.where(f <= cs.SKIN, f, np.inf))
+        assert fast.sweep(start, new, 10_000) == ref.sweep(start, new, 10_000), scale
+        grads = []
+        for model in (fast, ref):
+            P = {t: torch.tensor(p, requires_grad=True) for t, p in new.items()}
+            b = Merit(model, c.objectives).barrier(P)
+            b.backward()
+            grads.append((float(b.detach()), torch.cat([P[t].grad.ravel() for t in model.ids])))
+        assert grads[0][0] == pytest.approx(grads[1][0], rel=1e-12, abs=1e-12)
+        assert torch.allclose(grads[0][1], grads[1][1], rtol=1e-12, atol=1e-12)
+
+
+@pytest.mark.skipif(not os.environ.get("KAT_POLISH_BENCH"), reason="set KAT_POLISH_BENCH=<case.json> (a large case)")
+def test_bench_pruned_checks_on_a_large_case():
+    """Opt-in timing of the hard checks and the barrier, pruned against every pair, on a
+    real case: ``KAT_POLISH_BENCH=<case.json> pytest -s -k bench``."""
+    import time
+    torch = pytest.importorskip("torch")
+    from kat.pcb.polish.merit import Merit
+    c = pc.load(os.environ["KAT_POLISH_BENCH"])
+    group = os.environ.get("KAT_POLISH_BENCH_GROUP")
+    t0 = time.perf_counter()
+    fast = cs.Model(c, group)
+    setup = time.perf_counter() - t0
+    ref = cs.Model(c, group, prune=False)
+    start = fast.initial()
+    new = {t: p.copy() for t, p in start.items()}
+    for t in new:
+        new[t][1:-1] += np.random.default_rng(1).normal(0, 0.02, new[t][1:-1].shape)
+
+    def timed(f, *args):
+        t = time.perf_counter()
+        return f(*args), time.perf_counter() - t
+
+    def barrier(model):
+        P = {t: torch.tensor(p, requires_grad=True) for t, p in new.items()}
+        b = Merit(model, c.objectives).barrier(P)
+        b.backward()
+        return float(b.detach())
+
+    print(f"\n{len(fast.ids)} traces, {len(fast.fa)} fixed primitives; setup {setup:.2f} s")
+    for name, call in [("violations", lambda m: m.violations(new)), ("min_slack", lambda m: m.min_slack(new)),
+                       ("sweep", lambda m: m.sweep(start, new)), ("barrier", barrier)]:
+        (a, ta), (b, tb) = timed(call, fast), timed(call, ref)
+        print(f"{name:10} pruned {ta * 1e3:8.1f} ms   every pair {tb * 1e3:8.1f} ms   x{tb / ta:.0f}")
+        assert a == pytest.approx(b, rel=1e-12) if name == "barrier" else a == b

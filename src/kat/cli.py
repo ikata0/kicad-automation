@@ -1156,7 +1156,7 @@ def build_parser() -> argparse.ArgumentParser:
                                       "run.json, history.jsonl and result.json (best feasible state) into OUT.\n"
                                       "A case short of clearance is recovered: no shortfall may grow, rescue\n"
                                       "bends where it stalls; 'recovery' and the result's feasible tell.\n"
-                                      "The case is never changed. Needs kat[polish] (torch); --gui kat[polish-gui].\n\n"
+                                      "The case is never changed. Needs kat[polish] (torch, scipy); --gui kat[polish-gui].\n\n"
                                       "Report (headless runs, unless --no-report): OUT/report.md documents the run\n"
                                       "for review without the window: the selected traces (net, width, length and\n"
                                       "vertices before -> after, snapped segments, added bends, largest deviation),\n"

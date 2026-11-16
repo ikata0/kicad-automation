@@ -273,7 +273,11 @@ configurable.
   anchors stay fixed, so the obstacle side and the route order are preserved,
   including across discrete edits. Clearance is checked on the state a move ends
   in, not on the way: a trace that sits exactly at its clearance (common on
-  router output) can still move away. A step whose end state fails the hard check
+  router output) can still move away. Fixed copper is only measured where it is
+  close: k-d trees yield the pairs whose slack may be below 1 mm (plus the
+  move's largest displacement in a sweep); every other pair is provably clear
+  and decides nothing, so large boards cost little more than small ones. A step
+  whose end state fails the hard check
   is retried with what the failure names kept where it is: the vertices of a
   segment short of clearance, and only when that cannot help, the whole trace.
   One trace at a limit does not stop the group. There is no distance limit:

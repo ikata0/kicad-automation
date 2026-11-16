@@ -13,6 +13,12 @@ far as the farther of its two vertices, so a sub-step shorter than every pair's 
 cannot let anything touch, let alone pass through, anything else (conservative
 advancement). With fixed anchors that preserves the side of every obstacle, the order of
 neighbouring routes and the absence of crossings. Pure float64 numpy; no autograd.
+
+Fixed primitives are measured only where they can matter: k-d trees (scipy) over pieces
+of them yield the pairs whose slack may be at most ``SKIN``; every other pair has more
+slack and decides nothing. A sweep widens that by the move's largest displacement, so a
+pair left out cannot come into contact on the way. ``Model(prune=False)`` measures every
+pair (the reference).
 """
 
 from __future__ import annotations
@@ -22,10 +28,14 @@ import math
 import numpy as np
 
 from ...env import KatError
+from . import require
 from .case import Case
 
 TOL = 1e-9                  # mm: numerical tolerance, never a clearance allowance
 MAX_SUBSTEPS = 64
+SKIN = 1.0                  # mm: slack beyond which a fixed primitive is not measured
+CHUNK = 0.5                 # mm: longest piece of a segment in the spatial index
+BAND = 0.25                 # mm: primitives are indexed in bands of their required distance
 
 
 def point_seg(p, s, e) -> np.ndarray:
@@ -72,11 +82,23 @@ def ring_edges(ring) -> tuple[np.ndarray, np.ndarray]:
     return r, np.roll(r, -1, axis=0)
 
 
+def _pieces(a: np.ndarray, b: np.ndarray, h: float) -> tuple[np.ndarray, np.ndarray]:
+    """Midpoints of the pieces, none longer than ``h``, of segments a-b (every point of a
+    segment lies within h/2 of one) and the segment index of each."""
+    v = b - a
+    n = np.maximum(1, np.ceil(np.hypot(v[:, 0], v[:, 1]) / h).astype(int))
+    seg = np.repeat(np.arange(len(a)), n)
+    i = np.arange(len(seg)) - np.repeat(np.cumsum(n) - n, n)
+    return a[seg] + ((i + 0.5) / n[seg])[:, None] * v[seg], seg
+
+
 class Model:
     """The constraints of one run: ``movable`` traces (default the group ``group``) move,
-    all other traces are fixed copper. ``orig`` holds the input geometry."""
+    all other traces are fixed copper. ``orig`` holds the input geometry. ``prune`` false
+    measures every (segment, fixed primitive) pair instead of the nearby ones (reference)."""
 
-    def __init__(self, case: Case, group: str | None = None, movable: list[str] | None = None):
+    def __init__(self, case: Case, group: str | None = None, movable: list[str] | None = None,
+                 prune: bool = True):
         self.case = case
         if movable is None:
             if group is None:
@@ -112,47 +134,61 @@ class Model:
         lo, hi = reg.min(0), reg.max(0)
         reach = float(self.half.max()) + max([case.copper_clearance, case.edge_clearance, case.hole_clearance,
                                               *case.pairs.values(), *(k.clearance for k in case.keepouts.values())])
-        keep = []
-        for p in prims:
-            a, b = np.asarray(p[0], float), np.asarray(p[1], float)
-            gap = np.maximum(np.maximum(lo - np.maximum(a, b), np.minimum(a, b) - hi), 0.0)
-            if float(np.hypot(*gap)) <= reach + p[2] + 1e-6:
-                keep.append(p)
-        self.fa = np.array([p[0] for p in keep], float).reshape(-1, 2)
-        self.fb = np.array([p[1] for p in keep], float).reshape(-1, 2)
-        self.fr = np.array([p[2] for p in keep], float)
-        self.fkind = [p[3] for p in keep]
-        self.fowner = [p[4] for p in keep]
+        A = np.array([p[0] for p in prims], float).reshape(-1, 2)
+        B = np.array([p[1] for p in prims], float).reshape(-1, 2)
+        R = np.array([p[2] for p in prims], float)
+        gap = np.maximum(np.maximum(lo - np.maximum(A, B), np.minimum(A, B) - hi), 0.0)
+        keep = np.flatnonzero(np.hypot(gap[:, 0], gap[:, 1]) <= reach + R + 1e-6)
+        self.fa, self.fb, self.fr = A[keep], B[keep], R[keep]
+        self.fkind = [prims[j][3] for j in keep]
+        self.fowner = [prims[j][4] for j in keep]
+        # clearance floors per (trace, obstacle owner): 0 normally; a run that starts short of
+        # clearance (``allow``) may stay as short as it is, never shorter (``tighten``)
+        self.owners = sorted(set(self.fowner))
+        pos = {o: i for i, o in enumerate(self.owners)}
+        self.own = np.array([pos[o] for o in self.fowner], int)
         base = {"copper": case.copper_clearance, "hole": case.hole_clearance, "edge": case.edge_clearance, "region": 0.0}
-        self.req = np.empty((len(self.ids), len(keep)))
+        n, F = len(self.ids), len(keep)
+        cl = np.tile(np.array([case.keepouts[o].clearance if k == "keepout" else base[k]
+                               for k, o in zip(self.fkind, self.fowner)], float), (n, 1))
+        kind = np.array(self.fkind, dtype=object)
+        paired = np.isin(kind, ("copper", "hole", "keepout"))          # physical edges: no pair entries
+        own_ = np.isin(kind, ("copper", "hole"))
+        row = {t: i for i, t in enumerate(self.ids)}
+        for key, v in case.pairs.items():
+            if len(key) != 2:
+                continue
+            for t, o in (tuple(key), tuple(key)[::-1]):
+                if t in row and o in pos:
+                    js = paired & (self.own == pos[o])
+                    cl[row[t], js] = np.maximum(cl[row[t], js], v)
+        self.req = self.half[:, None] + self.fr[None, :] + cl
         for i, t in enumerate(self.ids):
-            anchors = set(case.traces[t].anchors)
-            for j, (kind, owner) in enumerate(zip(self.fkind, self.fowner)):
-                if kind in ("copper", "hole") and owner in anchors:
-                    self.req[i, j] = -np.inf                     # own anchor: no clearance
-                    continue
-                if kind == "keepout":
-                    cl = case.clearance(t, owner, case.keepouts[owner].clearance)
-                elif kind in ("edge", "region"):
-                    cl = base[kind]                              # physical edges: no pair entries
-                else:
-                    cl = case.clearance(t, owner, base[kind])
-                self.req[i, j] = self.half[i] + self.fr[j] + cl
+            anchors = [pos[o] for o in case.traces[t].anchors if o in pos]
+            self.req[i, own_ & np.isin(self.own, anchors)] = -np.inf        # own anchor: no clearance
         # what a move must never do on the way: the centreline touches an obstacle (or own
         # anchors, waived). Feasible states keep half width + clearance > 0 of this slack,
         # so a trace exactly at its clearance can still move.
         self.treq = np.where(np.isinf(self.req), -np.inf, np.broadcast_to(self.fr, self.req.shape))
-        n = len(self.ids)
         self.mreq = np.array([[self.half[i] + self.half[j] + case.clearance(self.ids[i], self.ids[j], case.copper_clearance)
                                for j in range(n)] for i in range(n)]).reshape(n, n)
-        # clearance floors per (trace, obstacle owner): 0 normally; a run that starts short of
-        # clearance (``allow``) may stay as short as it is, never shorter (``tighten``)
-        self.owners = sorted(set(self.fowner))
-        self.own = np.array([self.owners.index(o) for o in self.fowner], int)
         self.floor_f = np.zeros((n, len(self.owners)))
         self.floor_m = np.zeros((n, n))
         self.polys = [(c.id, np.asarray(c.points, float)) for c in case.copper.values() if c.kind == "polygon"]
         self.keep_polys = [(k.id, np.asarray(k.points, float)) for k in case.keepouts.values()]
+        rings = [r for _, r in self.polys + self.keep_polys]
+        self.poly_box = np.array([[r.min(0), r.max(0)] for r in rings], float).reshape(-1, 2, 2)
+        # the spatial index: pieces of the fixed primitives in k-d trees, one per band of the
+        # largest distance any movable trace requires of them (``BAND``)
+        need = np.where(np.isfinite(self.req), self.req, 0.0).max(0, initial=0.0) if n else np.zeros(F)
+        self.prune, self.trees = prune and F > 0, []
+        if self.prune:
+            self.kdtree = require("scipy.spatial").cKDTree
+            band = np.ceil(need / BAND)
+            for level in np.unique(band):
+                js = np.flatnonzero(band == level)
+                pts, seg = _pieces(self.fa[js], self.fb[js], CHUNK)
+                self.trees.append((float(need[js].max()), js[seg], self.kdtree(pts)))
 
     # --- state ------------------------------------------------------------------------
 
@@ -170,13 +206,37 @@ class Model:
             ix += list(range(len(p) - 1))
         return np.concatenate(a), np.concatenate(b), np.array(tr), np.array(ix)
 
-    def slacks(self, state, topology: bool = False) -> tuple[np.ndarray, np.ndarray, tuple]:
-        """Slack (mm) of every movable segment against every fixed primitive (M, F) and
-        against every other movable segment (M, M; +inf where not constrained), and the
-        segments' (trace index, segment index). With ``topology`` the slack is to contact
-        of the centreline instead of to the clearance."""
+    def candidates(self, a: np.ndarray, b: np.ndarray, slack: float = math.inf) -> tuple[np.ndarray, np.ndarray]:
+        """Indices (k, j), sorted by k then j, of movable segments a-b ((M, 2) arrays) and
+        fixed primitives whose clearance slack may be at most ``slack`` (mm): every pair
+        whose slack is (for any movable trace), and some others. All M x F pairs with
+        ``slack`` inf or without pruning."""
+        M, F = len(a), len(self.fa)
+        if not self.prune or not math.isfinite(slack) or M == 0:
+            k, j = np.divmod(np.arange(M * F), F) if F else (np.zeros(0, int), np.zeros(0, int))
+            return k, j
+        pts, seg = _pieces(a, b, CHUNK)
+        query = self.kdtree(pts)
+        keys = []
+        for need, jmap, tree in self.trees:
+            hit = query.sparse_distance_matrix(tree, need + slack + CHUNK + 1e-9, output_type="ndarray")
+            keys.append(seg[hit["i"]] * F + jmap[hit["j"]])
+        return np.divmod(np.unique(np.concatenate(keys)), F)
+
+    def _fixed(self, a, b, tr, near, topology=False):
+        k, j = near
+        return k, j, seg_dist(a[k], b[k], self.fa[j], self.fb[j]) - (self.treq if topology else self.req)[tr[k], j]
+
+    def slacks(self, state, topology: bool = False, cutoff: float | None = None) -> tuple[tuple, np.ndarray, tuple]:
+        """Slack (mm) of the movable segments against the fixed primitives, sparse as (k, j,
+        value) arrays sorted by segment k then primitive j: every pair whose slack is at most
+        ``cutoff`` (default ``SKIN``) is there, others may be missing (all with ``prune``
+        off). Also the slack against every other movable segment (M, M; +inf where not
+        constrained), and the segments' (trace index, segment index). With ``topology``
+        the slack is to contact of the centreline instead of to the clearance."""
         a, b, tr, ix = self._segments(state)
-        fs = seg_dist(a[:, None], b[:, None], self.fa[None], self.fb[None]) - (self.treq if topology else self.req)[tr]
+        near = self.candidates(a, b, SKIN if cutoff is None else cutoff)
+        fs = self._fixed(a, b, tr, near, topology)
         ms = seg_dist(a[:, None], b[:, None], a[None], b[None])
         same = tr[:, None] == tr[None, :]
         if not topology:
@@ -187,14 +247,12 @@ class Model:
 
     def pair_slack(self, state) -> tuple[np.ndarray, np.ndarray]:
         """The least clearance slack (mm) per (movable trace, obstacle owner) and per pair of
-        movable traces (diagonal +inf)."""
-        fs, ms, (tr, ix) = self.slacks(state)
+        movable traces (diagonal +inf). Exact up to ``SKIN``; a larger slack to an
+        obstacle may read +inf."""
+        (k, j, v), ms, (tr, ix) = self.slacks(state)
         n = len(self.ids)
-        g = np.full((len(tr), len(self.owners)), np.inf)
-        if fs.size:
-            np.minimum.at(g.T, self.own, fs.T)
         f = np.full((n, len(self.owners)), np.inf)
-        np.minimum.at(f, tr, g)
+        np.minimum.at(f, (tr[k], self.own[j]), v)
         mm = np.full((len(tr), n), np.inf)
         same = tr[:, None] == tr[None, :]
         np.minimum.at(mm.T, tr, np.where(same, np.inf, ms).T)
@@ -230,12 +288,12 @@ class Model:
     def short_pairs(self, state) -> list[tuple[str, int, str]]:
         """The segments short of clearance, worst first, as (trace, segment index, obstacle:
         an owner or a movable trace id); one entry per (segment, obstacle)."""
-        fs, ms, (tr, ix) = self.slacks(state)
+        (fk, fj, fv), ms, (tr, ix) = self.slacks(state)
         ms = np.where(tr[:, None] == tr[None, :], np.inf, ms)
         out = {}
-        for k, j in zip(*np.nonzero(fs < -TOL)):
+        for k, j, v in zip(fk[fv < -TOL], fj[fv < -TOL], fv[fv < -TOL]):
             key = (self.ids[tr[k]], int(ix[k]), self.fowner[j])
-            out[key] = min(out.get(key, 0.0), float(fs[k, j]))
+            out[key] = min(out.get(key, 0.0), float(v))
         for k, j in zip(*np.nonzero(ms < -TOL)):
             key = (self.ids[tr[k]], int(ix[k]), self.ids[tr[j]])
             out[key] = min(out.get(key, 0.0), float(ms[k, j]))
@@ -259,8 +317,8 @@ class Model:
         """What no move can repair in ``state``: every hard-constraint failure except a
         clearance shortfall whose centreline is still clear of the obstacle."""
         bad = [v for v in self.violations(state) if not v.startswith("clearance")]
-        fs, ms, (tr, ix) = self.slacks(state, topology=True)
-        for k, j in zip(*np.nonzero(fs <= TOL)):
+        (fk, fj, fv), ms, (tr, ix) = self.slacks(state, topology=True)
+        for k, j in zip(fk[fv <= TOL], fj[fv <= TOL]):
             bad.append(f"{self._ref(tr, ix, k)} touches {self.fowner[j]}")
         for k, j in zip(*np.nonzero(np.triu(ms <= TOL))):
             bad.append(f"{self._ref(tr, ix, k)} touches {self._ref(tr, ix, j)}")
@@ -272,11 +330,19 @@ class Model:
     def min_slack(self, state) -> dict:
         """The smallest slack in ``state``: {value (mm), a, b} with object references
         (``t01#3`` is segment 3 of trace t01)."""
-        fs, ms, (tr, ix) = self.slacks(state)
+        cutoff = SKIN
+        while True:
+            (fk, fj, fv), ms, (tr, ix) = self.slacks(state, cutoff=cutoff)
+            # a pair left out has more slack than the cutoff: the least is known once
+            # something is at or below it
+            least = min(fv.min(initial=math.inf), ms.min(initial=math.inf))
+            if least <= cutoff or not math.isfinite(cutoff) or not self.prune:
+                break
+            cutoff = cutoff * 4 if cutoff < 64 * SKIN else math.inf
         out = {"value": math.inf, "a": None, "b": None}
-        if fs.size:
-            k = np.unravel_index(np.argmin(fs), fs.shape)
-            out = {"value": float(fs[k]), "a": self._ref(tr, ix, k[0]), "b": self.fowner[k[1]]}
+        if fv.size:
+            i = int(np.argmin(fv))
+            out = {"value": float(fv[i]), "a": self._ref(tr, ix, fk[i]), "b": self.fowner[fj[i]]}
         if ms.size and float(ms.min()) < out["value"]:
             k = np.unravel_index(np.argmin(ms), ms.shape)
             out = {"value": float(ms[k]), "a": self._ref(tr, ix, k[0]), "b": self._ref(tr, ix, k[1])}
@@ -293,12 +359,14 @@ class Model:
                 out.append(f"{t}: anchor moved")
             if np.any(np.linalg.norm(np.diff(p, axis=0), axis=1) <= TOL):
                 out.append(f"{t}: zero-length segment")
-        fs, ms, (tr, ix) = self.slacks(state)
-        for k, j in zip(*np.nonzero(fs < self.floor_f[tr][:, self.own] - TOL)):
-            out.append(f"clearance {self._ref(tr, ix, k)}-{self.fowner[j]} short by {-fs[k, j]:.4f} mm")
+        (fk, fj, fv), ms, (tr, ix) = self.slacks(state)
+        short = fv < self.floor_f[tr[fk], self.own[fj]] - TOL
+        for k, j, v in zip(fk[short], fj[short], fv[short]):
+            out.append(f"clearance {self._ref(tr, ix, k)}-{self.fowner[j]} short by {-v:.4f} mm")
         floor = np.where(tr[:, None] == tr[None, :], 0.0, self.floor_m[tr][:, tr])
         for k, j in zip(*np.nonzero(np.triu(ms < floor - TOL))):
             out.append(f"clearance {self._ref(tr, ix, k)}-{self._ref(tr, ix, j)} short by {-ms[k, j]:.4f} mm")
+        rings = self.polys + self.keep_polys
         for i, t in enumerate(self.ids):
             p = state[t]
             if not inside(p, np.asarray(self.case.outline, float)).all() or any(
@@ -307,7 +375,9 @@ class Model:
             if not inside(p, np.asarray(self.case.region, float)).all():
                 out.append(f"{t}: outside the movement region")
             anchors = set(self.case.traces[t].anchors)
-            for pid, ring in self.polys + self.keep_polys:
+            box = self.poly_box                          # a ring can only hold a vertex inside its box
+            near = np.flatnonzero(((p[None] >= box[:, None, 0]) & (p[None] <= box[:, None, 1])).all(2).any(1))
+            for pid, ring in (rings[q] for q in near):
                 if pid not in anchors and inside(p, ring).any():
                     out.append(f"{t}: inside {pid}")
         return out
@@ -331,9 +401,16 @@ class Model:
         rate = np.concatenate(disp)                                  # per segment, mm per unit of the move
         if float(rate.max(initial=0.0)) > 0:
             tau, skip = 0.0, None
+            # a fixed primitive farther than this from a segment at the start stays more
+            # than SKIN clear of its centreline all the way: never measured on the way
+            a0, b0, tr, ix = self._segments(cur)
+            near = self.candidates(a0, b0, SKIN + float(rate.max()))
             for _ in range(max_substeps):
                 pos = {t: cur[t] + tau * (new[t] - cur[t]) for t in self.ids}
-                fs, ms, (tr, ix) = self.slacks(pos, topology=True)
+                a, b, tr, ix = self._segments(pos)
+                fk, fj, fv = self._fixed(a, b, tr, near, topology=True)
+                ms = seg_dist(a[:, None], b[:, None], a[None], b[None])
+                ms[(tr[:, None] == tr[None, :]) & (np.abs(ix[:, None] - ix[None, :]) <= 1)] = np.inf
                 if exempt:
                     if skip is None:
                         skip = np.zeros(ms.shape, bool)
@@ -342,10 +419,10 @@ class Model:
                             skip |= np.outer(mine & (ix == i), mine & (ix == j))
                         skip |= skip.T
                     ms = np.where(skip, np.inf, ms)
-                if (fs.size and fs.min() < -TOL) or (ms.size and ms.min() < -TOL):
+                if (fv.size and fv.min() < -TOL) or (ms.size and ms.min() < -TOL):
                     return "sweep"
                 with np.errstate(divide="ignore", invalid="ignore"):
-                    dt_f = np.where(rate[:, None] > 0, fs / rate[:, None], np.inf)
+                    dt_f = np.where(rate[fk] > 0, fv / rate[fk], np.inf)
                     pair = rate[:, None] + rate[None, :]
                     dt_m = np.where(pair > 0, ms / pair, np.inf)
                 dt = 0.95 * float(min(dt_f.min(initial=np.inf), dt_m.min(initial=np.inf)))
