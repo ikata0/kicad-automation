@@ -142,6 +142,7 @@ def extract(pcb: Path | str, nets: list[str], out: Path | str, layer: str | None
                and o.length >= c.length and (o.length > c.length or id(o) < id(c))):
             held.append(c)
     chains = [c for c in chains if c not in held]
+    reasons = {id(c): "shares an end with a longer run" for c in held}
     chains = _ordered(chains, order)
     uuids = {str(find(n, "uuid")[1]) for c in chains for n in c.nodes}
     lim = {**LIMITS, **(limits or {})}
@@ -267,6 +268,18 @@ def extract(pcb: Path | str, nets: list[str], out: Path | str, layer: str | None
         raise KatError("rules the polisher cannot model: " + "; ".join(u for u in unmodelled if not u.startswith("pour "))
                        + " (accept them to go on; DRC and kat pcb check on the copy still judge)")
 
+    # a same-net contact on a run's body (not on its fixed end caps) could open when it moves:
+    # such runs stay fixed copper, and the runs ending on them join them at their end caps
+    for c in _body_contacts(chains, copper, net_of):
+        chains.remove(c)
+        held.append(c)
+        reasons[id(c)] = "same-net contact on its body"
+        add_copper("c", c.net, {"type": "polyline", "points": [list(_c(q)) for q in c.pts], "width_mm": c.width})
+    if not chains:
+        raise KatError("every selected run carries a same-net contact on its body (a stub or another run "
+                       "ending on it), so none can move without risking the connection: "
+                       + ", ".join(sorted({c.net for c in held})))
+
     traces = []
     for i, c in enumerate(chains, 1):
         tid = f"t{i:02d}"
@@ -331,12 +344,55 @@ def extract(pcb: Path | str, nets: list[str], out: Path | str, layer: str | None
                "unmodelled": unmodelled}
     mp.write_text(json.dumps(mapping, indent=1) + "\n", encoding="utf-8")
     return {"case": str(out), "map": str(mp), "layer": layer, "order": [c.net for c in chains],
-            "held": [{"net": c.net, "from": list(c.pts[0]), "to": list(c.pts[-1])} for c in held],
+            "held": [{"net": c.net, "from": list(c.pts[0]), "to": list(c.pts[-1]), "reason": reasons[id(c)]}
+                     for c in held],
             "traces": [{"id": t["id"], "net": c.net, "points": len(c.pts), "length": round(c.length, 4),
                         "anchors": len(t["anchors"])} for t, c in zip(traces, chains)],
             "context": {"fixed_copper": len(copper), "holes": len(holes), "keepouts": len(keepouts)},
             "rules": {"copper": base, "edge": edge, "hole": hole_cl, "pairs": len(pairs)},
             "unmodelled": unmodelled}
+
+
+def _body_contacts(chains: list, copper: list[dict], net_of: dict) -> list:
+    """The runs among ``chains`` that same-net copper (fixed ``copper`` entries or another run)
+    touches only on the body, not on the run's fixed end caps (the discs of half its width
+    at its ends). Polishing moves the body, so such a contact could open."""
+    import numpy as np
+    from .constraints import TOL, seg_dist
+    from .constraints import inside as _inside
+    runs = [(c, np.array([_c(q) for q in c.pts]), c.width / 2) for c in chains]
+
+    def dist(o, a, b) -> np.ndarray:
+        """Distance of segments a-b to the copper of entry ``o`` (0 inside polygons)."""
+        s = o["shape"]
+        if s["type"] == "circle":
+            q = np.array(s["center"], float)
+            return seg_dist(a, b, q, q) - s["radius_mm"]
+        if s["type"] == "polyline":
+            q = np.array(s["points"], float)
+            return seg_dist(a[:, None], b[:, None], q[None, :-1], q[None, 1:]).min(1) - s["width_mm"] / 2
+        ring = np.array(s["points"], float)
+        d = seg_dist(a[:, None], b[:, None], ring[None], np.roll(ring, -1, 0)[None]).min(1)
+        return np.where(_inside(a, ring) | _inside(b, ring), 0.0, d)
+
+    out = []
+    for c, pts, half in runs:
+        caps = pts[[0, -1]]
+        a, b = pts[:-1], pts[1:]
+        for o in copper:
+            if net_of[o["id"]] == c.net and dist(o, a, b).min() <= half + TOL and dist(o, caps, caps).min() > half + TOL:
+                out.append(c)
+                break
+        else:
+            for u, q, h in runs:
+                if u is c or u.net != c.net:
+                    continue
+                body = seg_dist(a[:, None], b[:, None], q[None, :-1], q[None, 1:]).min()
+                ends = seg_dist(caps[:, None], caps[:, None], q[None, :-1], q[None, 1:]).min()
+                if body <= half + h + TOL and ends > half + h + TOL:
+                    out.append(c)
+                    break
+    return out
 
 
 def _unknown_nets(b: Board, nets: list[str]) -> str | None:

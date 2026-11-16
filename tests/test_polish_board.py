@@ -9,12 +9,13 @@ import pytest
 import kat
 from kat import cli
 from kat.pcb import Board
-from kat.pcb.polish import case as pc
+from kat.pcb.polish import case as pc, constraints as cs
 from kat.schematic import new_uuid
 from kat.sexpr import Sym
 from test_pcb_tidy import SMD, on
 
 pytest.importorskip("torch")
+np = pytest.importorskip("numpy")
 pytestmark = pytest.mark.requires("kicad", "footprints")
 
 
@@ -66,6 +67,50 @@ def test_extract_polish_and_apply_to_a_copy(tmp_path, capsys):
         b.add_track((5, 35), (8, 35), 0.25, "F.Cu", "L0")
     with pytest.raises(kat.KatError, match="changed since the extraction"):
         kat.pcb.polish_apply(pcb, run / "result.json", tmp_path / "case.map.json", tmp_path / "o2.kicad_pcb")
+
+
+def test_same_net_runs_overlapping_at_their_ends_polish_and_apply(tmp_path):
+    """FR-062: net B0 is two runs whose copper overlaps at ends 0.1 mm apart; B1 beside them is
+    a foreign-net control that stays clearance-constrained."""
+    pcb = tmp_path / "joined.kicad_pcb"
+    b = Board.create(pcb)
+    b.outline(rect=(0, 0, 60, 40))
+    for k in range(2):
+        on(b.add_footprint(SMD, f"R{k + 1}", 10, 10 + 2 * k), {"1": f"L{k}", "2": f"B{k}"})
+        on(b.add_footprint(SMD, f"R{k + 11}", 50, 20 + 2 * k), {"1": f"B{k}", "2": f"M{k}"})
+    a0, z0 = b.footprint("R1").pad("2"), b.footprint("R11").pad("1")
+    a1, z1 = b.footprint("R2").pad("2"), b.footprint("R12").pad("1")
+    runs = {"B0": [[(a0.x, a0.y), (20.3, a0.y), (26, 15)], [(26.1, 15), (31.2, z0.y), (z0.x, z0.y)]],
+            "B1": [[(a1.x, a1.y), (20, a1.y), (31, z1.y), (z1.x, z1.y)]]}
+    for n, paths in runs.items():
+        for path in paths:
+            for p, q in zip(path, path[1:]):
+                b.add_track(p, q, 0.25, "F.Cu", n)
+    b.save()
+    case = tmp_path / "case.json"
+    ex = kat.pcb.polish_extract(pcb, ["B*"], case)
+    assert len(ex["traces"]) == 3 and not ex["held"], ex
+    c = pc.load(case)
+    m = cs.Model(c, movable=list(c.traces))
+    net = {t: c.traces[t].net for t in c.traces}
+    b0 = [t for t in c.traces if list(net.values()).count(net[t]) == 2]
+    b1 = next(t for t in c.traces if t not in b0)
+    assert m.joined[b0[0]] == {b0[1]} and not m.joined[b1]
+    assert cs.preflight(c)["feasible"]
+    run = tmp_path / "run"
+    kat.pcb.polish_run(case, run, weights={"spacing": 0}, limits={"max_iterations": 40})
+    out = tmp_path / "polished.kicad_pcb"
+    ap = kat.pcb.polish_apply(pcb, run / "result.json", tmp_path / "case.map.json", out)
+    assert ap["ok"] and ap["round_trip"]["ok"] and ap["drc"]["after"] == {"errors": 0, "unconnected": 0}, ap
+    res = json.loads((run / "result.json").read_text())
+    state = {t["id"]: np.array(t["points"]) for t in res["traces"]}
+    f, mm = m.pair_slack(state)
+    assert all(mm[m.ids.index(b1), m.ids.index(t)] >= -1e-9 for t in b0)     # control keeps clearance
+    b = Board(pcb)                                   # a stub ending on B1's body: B1 must stay
+    b.add_track((40, z1.y), (40, z1.y + 3), 0.25, "F.Cu", "B1")
+    b.save()
+    ex = kat.pcb.polish_extract(pcb, ["B1"], tmp_path / "stub.json")
+    assert [h["reason"] for h in ex["held"]] == ["same-net contact on its body"] and len(ex["traces"]) == 1
 
 
 def test_rules_it_cannot_model_stop_the_extraction(tmp_path):

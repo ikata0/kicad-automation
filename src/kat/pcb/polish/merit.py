@@ -188,7 +188,7 @@ class Merit:
                "first_u": Li(soff[:-1][self.tr_u]), "last_u": Li(soff[1:][self.tr_u] - 1),
                "rows": Li(table[targets]), "interior": t.as_tensor(interior),
                "req": self.req[Li(tr)], "pi": Li(i), "pj": Li(j),
-               "need": self.T(np.where(tr[i] == tr[j], 0.0, m.mreq[tr[i], tr[j]])),
+               "need": self.T(np.where(tr[i] == tr[j], 0.0, np.where(np.isfinite(m.mreq), m.mreq, -1e9)[tr[i], tr[j]])),
                "ones": [t.ones(c - 1, dtype=t.float64) for c in counts]}
         if not own:
             self._layouts[counts] = lay
