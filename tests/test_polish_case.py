@@ -110,13 +110,31 @@ def test_check_says_whether_a_run_can_recover(tmp_path, y, recoverable):
 def test_v2_anchors_waive_only_their_own_copper():
     d = to_v2(example())
     d["fixed_copper"].append({"id": "p01", "net": "n01", "shape": {"type": "circle", "center": [3, 5], "radius_mm": 0.3}})
-    c = pc.loads(json.dumps(d))
-    assert not cs.preflight(c)["feasible"]                           # same net, not an anchor: clearance
+    assert cs.preflight(pc.loads(json.dumps(d)))["feasible"]          # same net at its end: a joint
+    d["fixed_copper"][-1]["net"] = "n09"
+    assert not cs.preflight(pc.loads(json.dumps(d)))["feasible"]      # foreign net: clearance
+    d["fixed_copper"][-1]["net"] = "n01"
     d["traces"][0]["anchors"] = ["p01"]
     assert cs.preflight(pc.loads(json.dumps(d)))["feasible"]
     d["traces"][1]["anchors"] = ["p01"]                              # n02 cannot anchor on n01 copper
     with pytest.raises(pc.CaseError, match="has net n01"):
         pc.loads(json.dumps(d))
+
+
+def test_same_net_runs_joined_at_their_ends_need_no_clearance():
+    d = tiny(points=((2, 10), (10, 10)), holes=())
+    d["traces"].append({"id": "t02", "net": "n01", "width_mm": 0.2, "points": [[10.1, 10], [18, 10]]})
+    d["groups"][0]["trace_ids"] = ["t01", "t02"]
+    d = to_v2(d)
+    assert cs.preflight(pc.loads(json.dumps(d)))["feasible"]          # end caps overlap 0.1 mm apart
+    assert cs.joints(pc.loads(json.dumps(d)), "t01") == {"t02"}
+    d["traces"][1]["net"] = "n02"                                     # foreign net: still constrained
+    assert not cs.preflight(pc.loads(json.dumps(d)))["feasible"]
+    d["traces"][1]["net"] = "n01"
+    d["fixed_copper"] = [{"id": "c01", "net": "n01",                  # a stub on t01's body: no joint
+                          "shape": {"type": "polyline", "points": [[6, 10.05], [6, 13]], "width_mm": 0.2}}]
+    res = cs.preflight(pc.loads(json.dumps(d)))
+    assert not res["feasible"] and all("c01" in v for v in res["violations"])
 
 
 def test_pair_clearances_take_the_maximum():

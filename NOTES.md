@@ -203,6 +203,10 @@ You commented about the edge margin contribution for the merit function. As far 
 
 ---
 
+DONE
+
 Implement a screenshot feature and a report feature for `kat pcb polish`. My goal is to run the optimization headlessly (without --gui), but still have a full documentation what happened: Screenshots and a report about which traces were selected, what the looked like before the run started, and visualized results afterwards.
 Be sure to document the feature in the help text.
+
+---
 

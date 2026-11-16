@@ -117,26 +117,6 @@ the first write, and audit other commands that save through external tools.
 before reaching any guarded save. Apply the same protection to the initial fill
 and retry paths; a refusal must leave the board and project files unchanged.
 
-### FR-062: Preserve connected same-net runs during route polishing
-
-**Open.** Represent electrically connected same-net runs without imposing
-foreign-net clearance between them. Separate runs can have overlapping copper
-despite different endpoint coordinates; fixed endpoints then make the false
-clearance violation impossible to resolve, even with `spacing=0`.
-
-`src\kat\pcb\polish\constraints.py` builds movable-pair clearance requirements
-without consulting net identity. Preserve existing same-net connections through
-extraction, optimization and write-back in `src\kat\pcb\polish\board.py`,
-including the apply round-trip gate. Do not waive foreign-net clearances or
-permit optimization to disconnect copper merely because the runs share a net.
-This extends FR-061's topology-preserving polishing.
-
-Acceptance: a generic board with same-net runs whose copper overlaps at
-non-coincident endpoints can be extracted, polished with `spacing=0` and applied
-without a false inter-net violation or lost connectivity. Include a nearby
-foreign-net control that remains clearance-constrained, and verify connectivity
-and DRC with KiCad after write-back.
-
 ## Fabrication and assembly
 
 ### FR-058: Versioned supplier rule profiles and fabrication checks
@@ -691,6 +671,17 @@ gives the shape without gaps as `routing_shape`. Running it again changes nothin
 On the routed LED matrix with locked copper included: 17 s, 136 nets, 90-degree corners
 196 -> 0, DRC clean (`../kicad-sandbox/experiments/2026-11-07-batch-speed/`).
 Not done: `--move-vias`, since vias stay fixed.
+
+### FR-062: Preserve connected same-net runs during route polishing
+
+`kat.pcb.polish.constraints.joints` derives same-net joints from the case: copper or runs that
+meet a trace's fixed end caps get no clearance (like anchors; ends never move, so the contact
+cannot open). Derived from geometry, not a new field, so cases extracted before the fix pass
+`check` and the `apply` round-trip gate too. A same-net contact on a run's body could open, so
+`extract` holds that run fixed (`held[].reason`). Foreign nets keep full clearance.
+Tests: `test_same_net_runs_joined_at_their_ends_need_no_clearance`,
+`test_same_net_runs_overlapping_at_their_ends_polish_and_apply` (extract, run with
+`spacing=0`, apply, KiCad DRC clean, foreign control constrained, body stub held).
 
 ### FR-061: Topology-preserving route polishing (`kat pcb polish`)
 

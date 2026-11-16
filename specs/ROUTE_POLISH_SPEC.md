@@ -261,9 +261,11 @@ configurable.
   `apply` writes the result into a **new** board file, never the input. It
   then runs DRC on that copy and compares it per net with the original.
 - **Endpoints.** A trace's own endpoint pads, vias, their drills and stubs are its
-  `anchors`. Clearance to them is waived, while all other copper of the same net
-  keeps full clearance. When selected runs share an end, the longer one moves and
-  the others stay fixed (`held`).
+  `anchors`. Clearance to them is waived, and so it is to same-net copper or runs
+  that meet a trace's fixed end caps (joints, `ROUTE_POLISH_INPUT.md` §11), while
+  all other copper of the same net keeps full clearance. When selected runs share
+  an end, the longer one moves and the others stay fixed (`held`); so does a run
+  carrying a same-net contact on its body (a stub or run ending on its middle).
 - **Group order.** It is inferred geometrically at extraction from the offset
   across the bundle, reported, and can be overridden with `--order`.
 - **Topology.** Every change of state is a linear interpolation of vertex

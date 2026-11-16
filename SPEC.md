@@ -383,7 +383,9 @@ if only block-owned straight tracks match, extraction explains that none can mov
 Their end pads, vias and drills are anchors. The traces may move anywhere the hard
 constraints allow inside the movement region, their bounding box grown by `--move-margin`
 (default 2 mm; there is no distance limit), and context within 3 mm of it is fixed.
-Runs that share an end with a longer one stay fixed (`held`). A private `CASE.map.json` is
+Same-net copper or runs that meet a trace's fixed end caps need no clearance (joints: the ends
+never move). Runs that share an end with a longer one, or carry a same-net contact on their body
+(a stub ending on them), stay fixed (`held`, with a `reason`). A private `CASE.map.json` is
 written beside it. Custom DRC or kat net rules it cannot model stop it unless
 `--accept-unmodelled`. `check CASE` preflights.
 `run CASE [--out DIR] [--gui] [--weight T=W] [--option KEY=V]` minimises a weighted merit (angle to 45-degree
@@ -1296,6 +1298,7 @@ column in place of the net.
 | Pins that could be swapped were routed in the order the design happened to give, with crossings and vias a different assignment does not need | `kat pcb escape` chooses assignment and tracks together, then `kat back-annotate` carries the assignment through the design |
 | kat writes coordinates with 4 decimals (`sexpr.num`), so polished vertices moved by up to 0.05 µm: exact 45-degree segments bent and small clearance margins could vanish. KiCad itself keeps 6 decimals (nm) | `pcb polish apply` writes its segments to the nanometre and checks the saved copy against the hard constraints again |
 | Router output often sits at exactly its clearance (slack 0 up to float noise). A topology check that bounds each sub-step by the clearance slack then lets such a segment move nowhere, not even away, and one trace at a limit stopped the whole group's step | `pcb polish` bounds sub-steps by the centrelines' distance to contact and requires clearance of the end state only; a failing step keeps the named vertices (else the trace) in place |
+| Two same-net runs whose copper overlaps at non-coincident ends (or an end cap overlapping same-net copper the end point misses) got the foreign-net clearance: unrepairable with fixed ends, so `check` failed and `apply`'s round-trip gate refused the result | the polish model treats same-net contacts at fixed end caps as joints (no clearance); a same-net contact on a run's body could open, so `extract` holds that run fixed |
 | A track ends over the drill of its own pad or via; a hole-clearance rule without nets made every extracted trace infeasible | in the polish case a trace's end pads, vias **and their drills** are its anchors, exempt from its own clearance only |
 | A hard distance limit (0.3-1 mm) on top of the clearances froze long segments 2-20 degrees off 45: the dogleg that straightens one puts its corner 1-3 mm off the line, and a bend in the middle of a segment with fixed ends gains nothing (one half turns towards 45, the other away) | `pcb polish` has no distance limit; the movement region (`--move-margin`) only bounds the context, the `displacement` weight keeps traces near the input |
 | Polish events wrote snapped direction codes (0-3) as segment indices; the GUI crashed on an empty segment slice and left pale original traces or a partial frame, and GUI exports carried the same wrong indices | Events store the indices of snapped segments in their own geometry, shared by rendering, history and export |

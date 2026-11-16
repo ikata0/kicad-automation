@@ -92,6 +92,29 @@ def _pieces(a: np.ndarray, b: np.ndarray, h: float) -> tuple[np.ndarray, np.ndar
     return a[seg] + ((i + 0.5) / n[seg])[:, None] * v[seg], seg
 
 
+def joints(case: Case, t: str) -> set[str]:
+    """The ids of same-net objects that trace ``t`` is joined to at its fixed ends in the input
+    (version 2; empty for version 1), besides its anchors: fixed copper that its end cap (the
+    disc of half its width at a fixed end) meets, other traces whose end cap meets one of its
+    end caps, and the drills inside such copper. Every move keeps the ends, so these
+    contacts cannot open: clearance to them is waived like to an anchor. A same-net contact
+    with a trace's body is not a joint (a move could break it)."""
+    if case.version < 2:
+        return set()
+    from .case import TOUCH, copper_distance
+    me = case.traces[t]
+    ends, half = (me.points[0], me.points[-1]), me.width / 2
+    out = {c.id for c in case.copper.values() if c.net == me.net and c.id not in me.anchors
+           and any(copper_distance(c, e) <= half + TOL for e in ends)}
+    for u in case.traces.values():
+        if u.id != t and u.net == me.net and any(
+                math.dist(p, q) <= half + u.width / 2 + TOL for p in ends for q in (u.points[0], u.points[-1])):
+            out.add(u.id)
+    joined_cu = [case.copper[c] for c in out if c in case.copper]
+    out |= {h.id for h in case.holes.values() if any(copper_distance(c, h.center) <= TOUCH for c in joined_cu)}
+    return out
+
+
 class Model:
     """The constraints of one run: ``movable`` traces (default the group ``group``) move,
     all other traces are fixed copper. ``orig`` holds the input geometry. ``prune`` false
@@ -149,6 +172,7 @@ class Model:
         self.own = np.array([pos[o] for o in self.fowner], int)
         base = {"copper": case.copper_clearance, "hole": case.hole_clearance, "edge": case.edge_clearance, "region": 0.0}
         n, F = len(self.ids), len(keep)
+        self.joined = {t: joints(case, t) for t in self.ids}
         cl = np.tile(np.array([case.keepouts[o].clearance if k == "keepout" else base[k]
                                for k, o in zip(self.fkind, self.fowner)], float), (n, 1))
         kind = np.array(self.fkind, dtype=object)
@@ -164,14 +188,18 @@ class Model:
                     cl[row[t], js] = np.maximum(cl[row[t], js], v)
         self.req = self.half[:, None] + self.fr[None, :] + cl
         for i, t in enumerate(self.ids):
-            anchors = [pos[o] for o in case.traces[t].anchors if o in pos]
-            self.req[i, own_ & np.isin(self.own, anchors)] = -np.inf        # own anchor: no clearance
+            anchors = [pos[o] for o in set(case.traces[t].anchors) | self.joined[t] if o in pos]
+            self.req[i, own_ & np.isin(self.own, anchors)] = -np.inf        # own anchor or joint: no clearance
         # what a move must never do on the way: the centreline touches an obstacle (or own
         # anchors, waived). Feasible states keep half width + clearance > 0 of this slack,
         # so a trace exactly at its clearance can still move.
         self.treq = np.where(np.isinf(self.req), -np.inf, np.broadcast_to(self.fr, self.req.shape))
         self.mreq = np.array([[self.half[i] + self.half[j] + case.clearance(self.ids[i], self.ids[j], case.copper_clearance)
                                for j in range(n)] for i in range(n)]).reshape(n, n)
+        for i, t in enumerate(self.ids):                 # same-net runs joined at their fixed ends
+            for j, u in enumerate(self.ids):
+                if u in self.joined[t]:
+                    self.mreq[i, j] = self.mreq[j, i] = -np.inf
         self.floor_f = np.zeros((n, len(self.owners)))
         self.floor_m = np.zeros((n, n))
         self.polys = [(c.id, np.asarray(c.points, float)) for c in case.copper.values() if c.kind == "polygon"]
@@ -238,6 +266,7 @@ class Model:
         near = self.candidates(a, b, SKIN if cutoff is None else cutoff)
         fs = self._fixed(a, b, tr, near, topology)
         ms = seg_dist(a[:, None], b[:, None], a[None], b[None])
+        ms = np.where(np.isinf(self.mreq[tr][:, tr]), np.inf, ms)       # joined runs: no constraint
         same = tr[:, None] == tr[None, :]
         if not topology:
             ms = ms - np.where(same, 0.0, self.mreq[tr][:, tr])         # own segments: no crossing
@@ -447,4 +476,4 @@ def preflight(case: Case) -> dict:
     return {"feasible": not bad, "violations": bad, "min_slack": m.min_slack(s)}
 
 
-__all__ = ["Model", "inside", "point_seg", "preflight", "seg_dist", "to_polyline"]
+__all__ = ["Model", "inside", "joints", "point_seg", "preflight", "seg_dist", "to_polyline"]

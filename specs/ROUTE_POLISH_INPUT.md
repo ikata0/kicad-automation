@@ -303,11 +303,15 @@ each version's rules only to documents of that version.
 - Clearance between a trace and its own anchors is not checked, and that
   includes hole clearance to an anchor drill. A trace's copper may overlap them
   anywhere, because same-net contact cannot short.
-  Every other fixed copper keeps the full copper clearance, including copper of
-  the same net that is not one of the trace's anchors. New same-net junctions
-  therefore remain impossible.
+  Same-net **joints** are treated like anchors without being listed: fixed copper
+  of the trace's net that its end cap (the disc of half its width at a fixed end)
+  meets in the input, another trace of the same net whose end cap meets one of its
+  end caps, and the drills inside such copper. Ends never move, so these contacts
+  cannot open. Every other fixed copper keeps the full copper clearance, including
+  same-net copper that touches only a trace's body: a move could break that
+  contact, so the extractor keeps such a trace fixed instead.
 - Several movable traces may carry the same net token. The copper clearance
-  still applies between them.
+  still applies between them unless they are joined at their end caps.
 - A `pair_clearances` entry between a trace and one of its own anchors is
   invalid.
 - Traces still have distinct endpoints. Two traces that share an endpoint (a
