@@ -190,16 +190,19 @@ DONE
 Add a 'fit all' (autoscale to fit whole geometry into the view, without changing aspect ratio of course) button, shortcut 'f'.
 
 ---
-DONE
 
-Make `kat pcb polish extract` ignore trace segments that are inside a block (aka sub-layout) in kicad (they also show as group in the layout). In the ... example  there are many identical blocks that are instances of a sub-schematic and sub-layout. 
-
----
 DONE
 
 I am looking at t11 segment 5 after 1000 iterations in the routing-fcu.json example. Seems to me like it won't move anymore, but could be if new vertices would be inserted in pairs, instead of single vertices. We could divide the segment in 1/3 subsegments, and add two vertices at the same time.
-What is your opinion?
 
 ---
 
-For `kat pcb polish run`: If no --out argument is given, default shall be the original file name, with the suffix '-polished' appended; for instance, 'pcb-traces-left-01.json' yields the output file 'pcb-traces-left-01-polished.json' in the same folder.
+DONE
+
+You commented about the edge margin contribution for the merit function. As far as I have understood, that term is computed based on the distances of vertices to the edges, correct? If so, wouldn't the minimum distance of every trace segment to the PCB edge be more accurate?
+
+---
+
+Implement a screenshot feature and a report feature for `kat pcb polish`. My goal is to run the optimization headlessly (without --gui), but still have a full documentation what happened: Screenshots and a report about which traces were selected, what the looked like before the run started, and visualized results afterwards.
+Be sure to document the feature in the help text.
+
