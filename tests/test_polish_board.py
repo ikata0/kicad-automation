@@ -50,6 +50,9 @@ def test_extract_polish_and_apply_to_a_copy(tmp_path, capsys):
     run = tmp_path / "run"
     res = kat.pcb.polish_run(case, run, weights={"displacement": 0.05}, limits={"max_iterations": 60})
     assert res["result"]["total"] < res["initial"]["total"]
+    assert res["board_view"] is None and set(res["images"]) >= {"board", "board_region", "before", "after"}
+    md = (run / "report.md").read_text()
+    assert "| t01 | B3 |" in md and "Private" in md                  # real net names from the map
     out = tmp_path / "out" / "polished.kicad_pcb"
     ap = kat.pcb.polish_apply(pcb, run / "result.json", tmp_path / "case.map.json", out)
     assert ap["ok"] and ap["round_trip"]["ok"] and not ap["drc"]["worse_nets"], ap

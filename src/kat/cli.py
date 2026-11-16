@@ -191,9 +191,9 @@ def _cmd_polish(a):
         limits = {k: v for k, v in (("max_iterations", a.max_iterations), ("snap_tolerance_deg", a.snap_tolerance),
                                     ("max_added_vertices_per_trace", a.max_bends)) if v is not None}
         return kat.pcb.polish_run(a.case, a.out, a.group, weights or None, options or None, limits or None,
-                                  a.force, a.gui)
+                                  a.force, a.gui, not a.no_report)
     if a.polish_cmd == "replay":
-        return kat.pcb.polish_replay(a.run, a.case, a.gui)
+        return kat.pcb.polish_replay(a.run, a.case, a.gui, a.report)
     raise env.KatError(f"polish {a.polish_cmd}: not implemented")
 
 
@@ -1156,12 +1156,27 @@ def build_parser() -> argparse.ArgumentParser:
                                       "run.json, history.jsonl and result.json (best feasible state) into OUT.\n"
                                       "A case short of clearance is recovered: no shortfall may grow, rescue\n"
                                       "bends where it stalls; 'recovery' and the result's feasible tell.\n"
-                                      "The case is never changed. Needs kat[polish] (torch); --gui kat[polish-gui].",
+                                      "The case is never changed. Needs kat[polish] (torch); --gui kat[polish-gui].\n\n"
+                                      "Report (headless runs, unless --no-report): OUT/report.md documents the run\n"
+                                      "for review without the window: the selected traces (net, width, length and\n"
+                                      "vertices before -> after, snapped segments, added bends, largest deviation),\n"
+                                      "effective options, events and rejection reasons, merit terms before -> after,\n"
+                                      "the hard-constraint verdict. Pictures in OUT/report/:\n"
+                                      "  before.png        the input: selected traces labelled, context, region\n"
+                                      "  after.png         the result: snapped segments green, added vertices pink\n"
+                                      "  overlay.png       the input faintly under the result\n"
+                                      "  merit.png         merit (and clearance shortfall) over the iterations\n"
+                                      "  board.png         the whole board, movement region boxed (*)\n"
+                                      "  board_region.png  KiCad render of the region, selection highlighted (*)\n"
+                                      "(*) only with the private CASE.map.json beside CASE.json, as extract writes it.\n"
+                                      "Before and after also go into the project's <NAME>_REPORT.md. A report of a\n"
+                                      "private extract is private. replay --report rewrites it for any run.",
                           epilog=_polish_options_help())
     pl2.add_argument("case", metavar="CASE.json")
     pl2.add_argument("--out", metavar="DIR",
-                     help="run directory (refused if it holds a run); omitted: writes CASE-polished.json "
-                          "beside CASE.json, with history in CASE-polished")
+                     help="run directory for the run files and the report (refused if it holds a run); "
+                          "omitted: writes CASE-polished.json beside CASE.json, with history and report in "
+                          "CASE-polished")
     pl2.add_argument("--group", metavar="G", help="the group to optimise (needed when there are several)")
     pl2.add_argument("--weight", action="append", metavar="TERM=W",
                      help="override a merit weight: angle, spacing, edge, displacement, length, complexity")
@@ -1173,13 +1188,20 @@ def build_parser() -> argparse.ArgumentParser:
     pl2.add_argument("--max-bends", type=int, metavar="N", help="added vertices per trace")
     pl2.add_argument("--gui", action="store_true",
                      help="inspection window; pink dots mark added vertices; writes only on Export")
+    pl2.add_argument("--no-report", action="store_true",
+                     help="skip report.md and the pictures in OUT/report/ (written by default without --gui)")
     pl2.add_argument("--force", action="store_true", help="overwrite a run in OUT")
-    pl3 = plsp.add_parser("replay", formatter_class=_Fmt, help="summary of a finished run, or browse it",
+    pl3 = plsp.add_parser("replay", formatter_class=_Fmt, help="summary of a finished run, browse it, or report it",
                           description="Counts per event type, rejection reasons, initial and result score.\n"
-                                      "--gui browses the recorded history; nothing is written.")
+                                      "--gui browses the recorded history; nothing is written.\n"
+                                      "--report (re)writes RUN_DIR/report.md and RUN_DIR/report/*.png as a headless\n"
+                                      "run does (see kat pcb polish run --help), e.g. for an older run or after an\n"
+                                      "export from the window; board pictures need CASE.map.json beside CASE.")
     pl3.add_argument("run", metavar="RUN_DIR")
-    pl3.add_argument("--case", metavar="CASE.json", help="the run's input (needed with --gui)")
-    pl3.add_argument("--gui", action="store_true")
+    pl3.add_argument("--case", metavar="CASE.json", help="the run's input (needed with --gui and --report)")
+    pl3x = pl3.add_mutually_exclusive_group()
+    pl3x.add_argument("--gui", action="store_true")
+    pl3x.add_argument("--report", action="store_true", help="write the run's report and pictures")
     s34 = psp.add_parser("lock", formatter_class=_Fmt, help="lock tracks and vias (all, or one net's)",
                          description="Locked copper stays when the router runs again: lock each accepted chunk\n"
                                      "of routing, then route the next.")

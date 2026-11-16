@@ -1,6 +1,6 @@
 """A polishing run's directory (``specs/ROUTE_POLISH_OUTPUT.md``): ``run.json`` (identity,
-options, termination), ``history.jsonl`` (one event per line) and ``result.json`` (the
-exported candidate). With no explicit run directory, a copy of the result is also written
+options, termination), ``history.jsonl`` (one event per line), ``result.json`` (the
+exported candidate) and, from ``report``, ``report.md`` with its pictures. With no explicit run directory, a copy of the result is also written
 beside the input. Existing files are never overwritten unless forced.
 """
 
@@ -11,7 +11,7 @@ from pathlib import Path
 
 from ...env import KatError
 
-FILES = ("run.json", "history.jsonl", "result.json")
+FILES = ("run.json", "history.jsonl", "result.json", "report.md")
 
 
 def prepare(out: Path | str, force: bool = False, result_file: Path | None = None) -> Path:

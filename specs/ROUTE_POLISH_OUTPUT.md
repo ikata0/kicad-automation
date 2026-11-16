@@ -1,6 +1,6 @@
 # Route polisher output formats
 
-**Version 1 - 2026-11-12.** This document covers the files that
+**Version 1 - 2026-11-12** (report: 2026-11-16). This document covers the files that
 `kat pcb polish run` writes into its run directory, and that `replay` and
 `apply` read. The input is specified in [`ROUTE_POLISH_INPUT.md`](ROUTE_POLISH_INPUT.md).
 Units and axes are the same as the input's: millimetres, x right, y up. A run
@@ -11,6 +11,7 @@ directory holds:
 | `run.json` | Run record: input identity, effective options, solver identity, termination. |
 | `history.jsonl` | One event per line, in order. This file is enough to replay the inspection. |
 | `result.json` | The exported candidate: the best feasible state unless another event is chosen. |
+| `report.md`, `report/*.png` | Headless runs only, unless `--no-report`: a readable account of the run with pictures (§4). |
 
 A run with an explicit `--out DIR` writes only in that directory. Without `--out`,
 `CASE.json` writes the candidate to `CASE-polished.json` beside the input and keeps
@@ -112,3 +113,39 @@ has `feasible: false`. The best state is then the least short one, not
 a feasible one.
 A result says that its traces passed the polisher's own hard check. It is not
 DRC and not a board-level safety certificate.
+
+## 4 `report.md`
+
+A run without `--gui` also writes `report.md` and the pictures it links in
+`report/`, unless `--no-report` is given. The report is derived from the case,
+`run.json`, `history.jsonl` and `result.json`. Nothing reads it back.
+`replay DIR --case CASE --report` (re)writes it for any finished run, for example
+after an export from the window. Like the other run files, an existing `report.md`
+is refused unless forced, and a forced run removes a stale report.
+
+Sections:
+
+| Section | Content |
+|---|---|
+| Run | Case file name and hash, layer, group, solver, termination, iterations, events, exported event, date, wall time. |
+| Selection | One row per trace in group order: id, net, width, anchors, length before → after and Δ, vertices, snapped segments, added vertices, largest deviation from the input (mm, sampled every 0.05 mm both ways). Context counts and clearance rules follow. |
+| Board | `board.png` and `board_region.png`, or why they are missing. |
+| Before | `before.png`, start merit, least slack, and the start's violations when the run recovered. |
+| Options | Effective objectives, weights, limits and solver options from `run.json`. |
+| Progress | `merit.png`, the accepted/rejected events per type, and the rejection reasons. |
+| After | `after.png`, `overlay.png`, merit terms before → after (Δ weighted), the hard-constraint verdict and the remaining violations. |
+
+Pictures (case area: movement region plus 3 mm; colours as in the window):
+
+| File | Shows |
+|---|---|
+| `before.png` | The input: the selected traces labelled, fixed ends, fixed copper, holes, keep-outs, the dashed movement region. |
+| `after.png` | The exported state: snapped segments green, added vertices pink. |
+| `overlay.png` | The input faintly under the exported state. |
+| `merit.png` | The weighted total over iterations, the clearance shortfall (right axis) when recovering, ticks for accepted snaps, bends, rescues and simplifications, and the exported event circled. |
+| `board.png` | Only with the case's `CASE.map.json` beside it, matching the case's hash: a KiCad render (kicad-cli, copper layer and outline) of the whole board, the movement region boxed red, the selected input traces blue. |
+| `board_region.png` | The same render around the movement region, with traces labelled by id and real net name. |
+
+The net names in the report come from the map file, so the report and its
+pictures of a private extract are private (see the top of this document). If the board changed after the
+extraction, the board pictures show its current state, and the report says so.

@@ -257,7 +257,8 @@ def polish_check(case: Path | str, group: str | None = None) -> dict:
 
 
 def polish_run(case: Path | str, out: Path | str | None = None, group: str | None = None, weights: dict | None = None,
-               options: dict | None = None, limits: dict | None = None, force: bool = False, gui: bool = False) -> dict:
+               options: dict | None = None, limits: dict | None = None, force: bool = False, gui: bool = False,
+               write_report: bool = True) -> dict:
     """Polish one group of a route-polish case (``kat.pcb.polish``): continuous moves on the
     merit's gradient (PyTorch) and snaps / bends, every state change checked against the hard
     constraints along the way. ``weights`` {angle, spacing, edge, displacement, length,
@@ -271,8 +272,14 @@ def polish_run(case: Path | str, out: Path | str | None = None, group: str | Non
     inspection window instead and writes only on its Export. An input short of clearance
     (centrelines still clear) is recovered: no shortfall may grow, the solver works it off
     and bends where steps stall; ``recovery`` then reports the shortfall (mm) at the start
-    and in the result, and the result's remaining violations. Returns out, termination,
-    iterations, events per type, rejections, initial and result score."""
+    and in the result, and the result's remaining violations. Unless ``write_report`` is
+    false (and not with ``gui``), the run directory also gets ``report.md`` with pictures in
+    ``report/``: the selected traces before and after, both overlaid, the merit over the run
+    and, when the case's private map file is beside it, the selection on a KiCad render of
+    the board (``specs/ROUTE_POLISH_OUTPUT.md`` §4); before and after also go into the
+    project journal. Returns out, termination, iterations, events per type, rejections,
+    initial and result score, and report / images (paths) / board_view (why the board
+    pictures are missing, else null)."""
     from .polish import case as _case, constraints as _cs, history as _hist, require
     require("numpy")
     c = _case.load(case)
@@ -283,23 +290,49 @@ def polish_run(case: Path | str, out: Path | str | None = None, group: str | Non
     if gui:
         from .polish import gui as _gui
         return tidy(_gui.run_live(c, Path(out), group, weights, options, limits, force, result_file))
+    import time
+    from .polish import report as _report
+    report.touch(case)
     d = _hist.prepare(out, force, result_file)
+    _report.remove(d)                                     # a forced rerun leaves no stale report
+    t0 = time.monotonic()
     s = _solver.Solver(c, group, weights, options, limits)
     rec = _hist.write(d, s, s.events(), result_file=result_file)
     extra = {"result_file": str(result_file)} if result_file is not None else {}
-    return tidy({"out": str(d), **extra, **_hist.summary(rec, *_hist.load(d)[1:])})
+    res = {"out": str(d), **extra, **_hist.summary(rec, *_hist.load(d)[1:])}
+    if write_report:
+        res.update(_polish_report(d, c, case, time.monotonic() - t0))
+    return tidy(res)
 
 
-def polish_replay(run_dir: Path | str, case: Path | str | None = None, gui: bool = False) -> dict:
+def _polish_report(run_dir: Path, c, case: Path | str, duration: float | None) -> dict:
+    """Write a run's report (``polish.report.write``) and journal its before/after pictures."""
+    from .polish import report as _report
+    rep = _report.write(run_dir, c, case, duration)
+    shown = {k: v for k, v in rep["images"].items() if k in ("board_region", "before", "after")}
+    report.snapshot_images(case, {"images": shown}, f"kat.pcb.polish_run({str(case)!r})", "polish")
+    return rep
+
+
+def polish_replay(run_dir: Path | str, case: Path | str | None = None, gui: bool = False,
+                  write_report: bool = False) -> dict:
     """A finished polishing run (``polish_run``'s directory): its summary (termination,
     events per type, rejections, initial and result score), or with ``gui`` the inspection
-    window browsing its recorded history; that needs the run's input ``case`` (checked by
-    sha256), since a run stores no paths. Writes nothing unless exported from the window."""
+    window browsing its recorded history. That and ``write_report`` need the run's input
+    ``case`` (checked by sha256), since a run stores no paths. ``write_report`` (re)writes the run's
+    ``report.md`` and pictures (as ``polish_run`` does, without the duration), e.g. for an
+    older run or after an export from the window, and adds report / images / board_view.
+    Otherwise writes nothing unless exported from the window."""
     from .polish import history as _hist
     rec, events, res = _hist.load(run_dir)
+    if (gui or write_report) and case is None:
+        raise KatError(f"replay {'--gui' if gui else '--report'} needs the case file the run was made from (--case)")
+    if write_report:
+        from .polish import case as _case
+        report.touch(case)
+        out = {"run": str(run_dir), "group": rec["group"], "solver": rec["solver"], **_hist.summary(rec, events, res)}
+        return tidy({**out, **_polish_report(Path(run_dir), _case.load(case), case, None)})
     if gui:
-        if case is None:
-            raise KatError("replay --gui needs the case file the run was made from (--case)")
         from .polish import case as _case, gui as _gui
         return tidy(_gui.run_replay(Path(run_dir), _case.load(case)))
     return tidy({"run": str(run_dir), "group": rec["group"], "solver": rec["solver"], **_hist.summary(rec, events, res)})

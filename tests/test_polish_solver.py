@@ -127,6 +127,25 @@ def test_run_directory_and_replay(tmp_path, capsys):
         kat.pcb.polish_run(EXAMPLE, out, limits={"max_iterations": 1})
     assert cli.main(["--no-report", "pcb", "polish", "replay", str(out)]) == 0
     assert json.loads(capsys.readouterr().out)["iterations"] == 15
+    # the headless report: selection, pictures before and after; no map beside the example
+    from PIL import Image
+    assert set(res["images"]) == {"before", "after", "overlay", "merit"} and "no map file" in res["board_view"]
+    for v in res["images"].values():
+        with Image.open(v["png"]) as im:
+            assert im.width > 500
+    md = (out / "report.md").read_text()
+    assert all(f"| {t} |" in md for t in pc.load(EXAMPLE).groups["g01"]) and "report/after.png" in md
+    for name in ("run.json", "history.jsonl", "result.json"):
+        (out / name).rename(tmp_path / name)
+    with pytest.raises(kat.KatError, match="already holds report.md"):
+        kat.pcb.polish_run(EXAMPLE, out, limits={"max_iterations": 1})
+    for name in ("run.json", "history.jsonl", "result.json"):
+        (tmp_path / name).rename(out / name)
+    (out / "report.md").unlink()
+    assert kat.pcb.polish_replay(out, EXAMPLE, write_report=True)["report"] == str(out / "report.md")
+    assert (out / "report.md").exists()
+    kat.pcb.polish_run(EXAMPLE, out, limits={"max_iterations": 1}, force=True, write_report=False)
+    assert not (out / "report.md").exists() and not (out / "report").exists()      # no stale report
     assert cli.main(["--no-report", "pcb", "polish", "run", str(EXAMPLE), "--out", str(tmp_path / "r2"),
                      "--weight", "nope=1"]) == 2
     assert math.isfinite(rec["events"])

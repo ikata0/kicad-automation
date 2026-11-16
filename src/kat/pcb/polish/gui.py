@@ -22,6 +22,7 @@ from ...env import KatError
 from . import history as _hist, require
 from .case import Case
 from .constraints import Model
+from .picture import COLORS
 from .solver import Solver, result_doc
 
 
@@ -308,10 +309,7 @@ def _classes():
     class Window(QtWidgets.QMainWindow):
         """Board view, controls, event list and the details of the event shown."""
 
-        COLORS = {"board": "#f4f1e8", "edge": "#6b6b6b", "region": "#3a7bd5", "keepout": "#d9534f",
-                  "fixed": "#9a8f80", "hole": "#222222", "orig": "#c9a46a", "cur": "#c46a00",
-                  "snapped": "#2e8b57", "cand": "#d0021b", "env": "#f0ad4e", "anchor": "#1f4e79",
-                  "added": "#e91e63"}
+        COLORS = COLORS
 
         def __init__(self, ctl: Controller, worker: Worker | None, out: Path | None, force: bool,
                      result_file: Path | None = None):

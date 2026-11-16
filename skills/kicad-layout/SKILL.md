@@ -230,6 +230,11 @@ with kat.pcb.edit(PCB) as b:
   run/result.json --map case.map.json --out polished.kicad_pcb`. The original is never written.
   Omitting `run --out` writes `case-polished.json` beside `case.json`, with run history in
   `case-polished`; existing outputs require `--force`. The GUI writes only on Export.
+  A headless run documents itself in `run/report.md`: the selected traces (real net names when
+  `case.map.json` is beside the case) before and after, pictures `report/before.png`,
+  `after.png`, `overlay.png`, `merit.png` and the selection on the board (`board_region.png`).
+  Read it and look at the pictures before applying; `--no-report` skips it, `kat pcb polish
+  replay run --case case.json --report` rewrites it.
   Extraction leaves recorded stamped blocks fixed (including nested member groups);
   external runs end at block copper, with the usual same-net anchors. Ownership follows
   group membership, not a bounding box. Ordinary and unrecorded groups remain eligible.
