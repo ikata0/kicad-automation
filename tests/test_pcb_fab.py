@@ -25,7 +25,7 @@ def test_fab_set_and_gate_refuses_an_unrouted_board(placed):
     r = kat.pcb.ready(placed)
     assert not r["ready"]
     assert {e["problem"] for e in r["errors"]} >= {"check_not_clean", "title_block"}
-    assert r["assembly"]["ok"] and r["assembly"]["fitted"] == r["assembly"]["placed"] == 7
+    assert r["assembly"]["base"]["ok"] and r["assembly"]["base"]["fitted"] == r["assembly"]["base"]["placed"] == 7
 
 
 def test_assembly_check_names_each_bad_part(placed, project):

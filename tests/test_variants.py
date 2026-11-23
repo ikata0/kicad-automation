@@ -1,6 +1,6 @@
 """Assembly variants (FR-063): declared in the SKiDL script, written by kat sync, exported by
-KiCad. One hierarchical design built once: two CH channels (three RC stages each) and a
-top-level connector."""
+KiCad. One hierarchical design built once per worker: two CH channels (three RC stages each)
+and a top-level connector. Tests that change the declaration for good come last."""
 
 import csv
 import json
@@ -103,31 +103,6 @@ def test_a_second_sync_changes_nothing_and_check_sees_edits(design):
     assert kat.check(sch, net)["variants"]["ok"]
 
 
-def test_removed_declarations_go_and_kicad_edits_stay(design):
-    sch, net, ref = design["sch"], design["net"], design["ref"]
-    # a variant and an override written in KiCad by hand
-    pro = sch.with_suffix(".kicad_pro")
-    data = json.loads(pro.read_text())
-    data["schematic"]["variants"].append({"name": "HAND"})
-    pro.write_text(json.dumps(data))
-    text = sch.read_text()
-    at = text.index(f'(reference "{ref["j"]}")')
-    sch.write_text(text[:at] + '(variant (name "HAND") (dnp yes)) ' + text[at:])
-    # the declaration loses FULL and the CH_A/RC2/r override
-    f = variants.variants_file(net)
-    decl = json.loads(f.read_text())
-    del decl["variants"]["FULL"]
-    decl["variants"]["LITE"]["parts"] = [e for e in decl["variants"]["LITE"]["parts"] if e.get("tag") != "CH_A/RC2/r"]
-    f.write_text(json.dumps(decl))
-    rep = kat.sync(sch, net, sheets=["ch", "rc"])["variants"]
-    assert rep["names"] == ["HAND", "LITE"] and rep["names_removed"] == ["FULL"]
-    assert sorted((e["ref"], e["key"]) for e in rep["removed"]) == [(ref["CH_A/RC2/r"], "Value"),
-                                                                     (ref["CH_A/RC2/r"], "in_bom")]
-    assert ref["CH_A/RC2/r"] in bom(sch, "LITE") and bom(sch, "HAND")[ref["j"]]["DNP"]
-    listed = variants.listing(sch)
-    assert listed["parts"][ref["j"]] == {"LITE": {"MPN": "J-LITE"}, "HAND": {"dnp": True}}
-
-
 def pos(pcb: Path, variant: str | None = None) -> set[str]:
     out = pcb.parent / f"pos-{variant or 'base'}.csv"
     env.run_cli("pcb", "export", "pos", "--format", "csv", "--units", "mm", "--side", "both", "--exclude-dnp",
@@ -155,6 +130,55 @@ def test_board_sync_carries_variants_through_kicad_saves(design):
     kat.pcb.refill(pcb)                                           # a KiCad save of the board
     assert variants.listing(pcb)["parts"] == board["parts"]
     assert not kat.pcb.sync(pcb, force=True, require=())["changed"]
+
+    # fabrication: base files as before, one BOM and position file per variant
+    f = kat.pcb.fab(pcb, step=False, three_d=False)
+    asm = Path(f["dir"]) / "assembly"
+    assert sorted(f["files"]["variants"]) == sorted(names)
+    assert f["files"]["variants"]["LITE"] == {"pos": "top-LITE-pos.csv", "bom": "top-LITE-bom.csv"}
+    with open(asm / "top-pos.csv", newline="") as fh:
+        assert {r["Ref"] for r in csv.DictReader(fh)} == pos(pcb)
+    with open(asm / "top-LITE-pos.csv", newline="") as fh:
+        assert {r["Ref"] for r in csv.DictReader(fh)} == pos(pcb, "LITE")
+    with open(asm / "top-LITE-bom.csv", newline="") as fh:
+        rows = list(csv.DictReader(fh))
+    caps = sorted((int(r["Qty"]), bool(r["DNP"])) for r in rows if r["Value"] == "100n")
+    assert caps == [(3, False), (3, True)]                        # fitted and DNP not in one row
+    assert any(r["Value"] == "6k8" for r in rows) and "6k8" not in (asm / "top-bom.csv").read_text()
+    r = kat.pcb.ready(pcb)
+    problems = {e["problem"] for e in r["errors"]}
+    assert "variants_differ" not in problems and not any(
+        "variant" in str(e["detail"]) for e in r["errors"] if e["problem"] == "fab_incomplete"), r["errors"]
+    lite = [e["detail"] for e in r["errors"] if e["problem"] == "assembly" and e["detail"]["variant"] == "LITE"]
+    assert lite and lite[0]["counts"]["pos_not_in_bom"] == 1         # (and no MPNs in this design)
+    assert r["assembly"]["LITE"]["differs"][ref["CH_A/RC2/r"]] == {"exclude_from_bom": True, "Value": "2k7"}
+    assert r["assembly"]["LITE"]["differs"][ref["CH_B/RC1/r"]] == {"Value": "6k8"}
+    assert r["assembly"]["FULL"]["differs"] == {} if "FULL" in names else True
+
+
+def test_removed_declarations_go_and_kicad_edits_stay(design):
+    sch, net, ref = design["sch"], design["net"], design["ref"]
+    # a variant and an override written in KiCad by hand
+    pro = sch.with_suffix(".kicad_pro")
+    data = json.loads(pro.read_text())
+    data["schematic"]["variants"].append({"name": "HAND"})
+    pro.write_text(json.dumps(data))
+    text = sch.read_text()
+    at = text.index(f'(reference "{ref["j"]}")')
+    sch.write_text(text[:at] + '(variant (name "HAND") (dnp yes)) ' + text[at:])
+    # the declaration loses FULL and the CH_A/RC2/r override
+    f = variants.variants_file(net)
+    decl = json.loads(f.read_text())
+    del decl["variants"]["FULL"]
+    decl["variants"]["LITE"]["parts"] = [e for e in decl["variants"]["LITE"]["parts"] if e.get("tag") != "CH_A/RC2/r"]
+    f.write_text(json.dumps(decl))
+    rep = kat.sync(sch, net, sheets=["ch", "rc"])["variants"]
+    assert rep["names"] == ["HAND", "LITE"] and rep["names_removed"] == ["FULL"]
+    assert sorted((e["ref"], e["key"]) for e in rep["removed"]) == [(ref["CH_A/RC2/r"], "Value"),
+                                                                     (ref["CH_A/RC2/r"], "in_bom")]
+    assert ref["CH_A/RC2/r"] in bom(sch, "LITE") and bom(sch, "HAND")[ref["j"]]["DNP"]
+    listed = variants.listing(sch)
+    assert listed["parts"][ref["j"]] == {"LITE": {"MPN": "J-LITE"}, "HAND": {"dnp": True}}
 
 
 def test_declaration_errors_name_the_entry(tmp_path):

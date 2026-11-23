@@ -1234,14 +1234,16 @@ def build_parser() -> argparse.ArgumentParser:
     s6 = psp.add_parser("fab", formatter_class=_Fmt, help="fabrication files",
                         description="fab/<name>-<rev>/: gerbers/ (copper, paste, silk, mask, outline, drill\n"
                                     "files and drill map) and a zip of them, assembly/ (position file, BOM\n"
-                                    "with MPN from the schematic), IPC-D-356 netlist, STEP, 3D renders.\n"
+                                    "with MPN from the schematic), and both again per assembly variant on\n"
+                                    "the board (NAME-VARIANT-pos.csv / -bom.csv), IPC-D-356 netlist, STEP, 3D renders.\n"
                                     "Pours are refilled for the Gerbers.")
     s6.add_argument("pcb", metavar="PCB")
     s6.add_argument("--out", help="output directory")
     s6.add_argument("--no-step", action="store_true"); s6.add_argument("--no-3d", action="store_true")
     s7 = psp.add_parser("ready", formatter_class=_Fmt, help="release gate before ordering",
                         description="ready = board check clean (no DRC errors or warnings, parity 0,\n"
-                                    "nothing unconnected, nothing outside the outline), title and revision\n"
+                                    "nothing unconnected, nothing outside the outline), assembly data clean for\n"
+                                    "the base and each variant (kat pcb assembly), title and revision\n"
                                     "set, fabrication set complete and newer than the board. Warnings judged\n"
                                     "harmless pass with --accept KIND=REASON, edge-mount parts with --overhang.")
     s7.add_argument("pcb", metavar="PCB")

@@ -516,9 +516,9 @@ that no more fit on this grid, on these layers; a finer `grid` cannot go below t
 | `b.board_text(text, at)`, `b.title_from_schematic()` | board name/revision on the silkscreen; title block copied from the schematic |
 | `b.fiducials(3)` | board-only fiducials near the corners, clear of courtyards |
 | `kat pcb refill PCB` | KiCad's zone filler fills every pour and saves the board; a fill DRC finds over other nets' copper is retried once with that zone's minimum width nudged by 0.001 mm (`fill_retry`) |
-| `kat pcb fab PCB` | `fab/<name>-<rev>/`: Gerbers (copper, paste, silk, mask, outline) + drill files and map, zipped; `assembly/` position file and BOM (with MPN, from the schematic); IPC-D-356; STEP; 3D renders. Pours are refilled for the Gerbers |
+| `kat pcb fab PCB` | `fab/<name>-<rev>/`: Gerbers (copper, paste, silk, mask, outline) + drill files and map, zipped; `assembly/` position file and BOM (with MPN, from the schematic; grouped by value, footprint, MPN and DNP), and both again per assembly variant on the board (`<name>-<variant>-pos.csv` / `-bom.csv`, `variants` in the result); IPC-D-356; STEP; 3D renders. Pours are refilled for the Gerbers |
 | `kat pcb assembly PCB [--variant V] [--require-field F]` | assembly data as KiCad exports it (ungrouped BOM from the schematic, position file from the board, base or one variant), per reference: `no_mpn` (fitted BOM item, MPN blank or a placeholder such as `-`, `n/a`, `tbd`), `missing_field` (`--require-field`, profile `bom_fields`), `mechanical_in_bom` / `mechanical_in_pos` (field `Mechanical`=yes without the exclusion; a missing MPN never makes a part mechanical), `pos_not_in_bom` (placed, not bought), `dnp_in_pos`, `bom_not_in_pos` (fitted, not excluded from position files, not placed), `flag_mismatch` (symbol vs footprint DNP / BOM / position exclusion, variant overrides included), `dnp_only_in_value`. Flags come from KiCad's netlist and the footprints, not from the BOM's localized `${DNP}` text |
-| `kat pcb ready PCB [--accept KIND=REASON] [--overhang REF]` | release gate: board check clean (no DRC errors or warnings, parity 0, nothing unconnected or outside the outline), assembly data clean (`kat pcb assembly`, error `assembly`, summary in `assembly`), title and revision set, fabrication set complete and newer than the board. Warnings judged harmless pass with `--accept` and their reason, edge-mount parts (pads inside, body beyond the edge: `overhang` in the check) with `--overhang`; the result lists both (`accepted`); errors never pass |
+| `kat pcb ready PCB [--accept KIND=REASON] [--overhang REF]` | release gate: board check clean (no DRC errors or warnings, parity 0, nothing unconnected or outside the outline), assembly data clean for the base and every variant (`kat pcb assembly`, one error `assembly` per variant; `assembly` in the result: per variant ok, counts and `differs`, the parts that differ from the base), schematic and board with the same variants (`variants_differ`), title and revision set, fabrication set complete (variant files included) and newer than the board. Warnings judged harmless pass with `--accept` and their reason, edge-mount parts (pads inside, body beyond the edge: `overhang` in the check) with `--overhang`; the result lists both (`accepted`); errors never pass |
 
 ### 4.12 Board checks and review
 
@@ -1070,7 +1070,8 @@ kv.write("design.net")                              # -> design.variants.json (a
   with the declaration (`variants`: what a sync would write); a difference makes `ok` false.
 - `kat variants SCH|PCB` lists names and per-reference differences. `kicad-cli sch export bom
   --variant NAME` exports a variant's BOM; `pcb export pos --variant NAME` reads only the board's
-  variants, which `kat pcb sync` writes (§4.6; KiCad's netlist lists them alphabetically). The
+  variants, which `kat pcb sync` writes (§4.6; KiCad's netlist lists them alphabetically).
+  `kat pcb fab` writes both per variant, `kat pcb ready` checks each (§4.11). The
   board has no `on_board` override and KiCad's netlist carries `on_board` for the base only, so a
   variant's `on_board` never reaches the board: for an unfitted part use `dnp`.
 
@@ -1362,6 +1363,7 @@ column in place of the net.
 | Escaping a SKiDL pin name with `+` or brackets (`u[r"IN\+"]`) finds no pin: names match exactly unless `match_pin_regex` is set | write the name literally, `u["IN+"]`; a name with a space takes the pin number (`tests/test_skidl_blocks.py` pins this down) |
 | KiCad 10 keeps assembly-variant overrides as `(variant ...)` children of each symbol's `(instances (project (path ...)))`; annotation rebuilt those paths (and a flat sync's part replacement rebuilt the symbol), so a no-op hierarchical `kat sync` deleted every variant and `bom --variant` fell back to the base | `hierarchy.annotate` updates reference, unit and page of an existing path in place and keeps its other children; a replaced part takes its old instance data along (FR-063) |
 | KiCad's BOM `${DNP}` column is localized ("Nicht bestücken"), `${EXCLUDE_FROM_BOM}` stays empty, and `--include-excluded-from-bom` does not bring back a part a variant excludes | `pcb assembly` takes the rows and field values from the BOM export, the flags from the netlist (`dnp`, `exclude_from_bom`, `exclude_from_pos_files`, per-variant overrides) and the footprints; only a non-empty `DNP` cell counts |
+| A BOM grouped by value, footprint and MPN puts fitted and DNP parts of one value into one row, and KiCad marks the whole row DNP (C1-C6 "DNP" with only C4-C6 unfitted in a variant) | `kat pcb fab` groups by `${DNP}` too (`BOM_GROUP`) |
 
 ## 8. Open points
 

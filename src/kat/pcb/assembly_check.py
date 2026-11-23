@@ -131,7 +131,8 @@ def check(pcb: Path | str, sch: Path | str | None = None, variant: str | None = 
     base or the KiCad 10 assembly ``variant``. ``require``: fields every fitted BOM item
     needs (MPN placeholders count as empty); the fabrication profile's ``bom_fields`` are
     added. Returns ``ok``, ``errors`` [{ref, problem, detail}], ``counts`` per problem,
-    and the numbers of ``bom`` rows, ``fitted`` BOM items and ``placed`` positions."""
+    the numbers of ``bom`` rows, ``fitted`` BOM items and ``placed`` positions, and for a
+    variant ``differs`` {ref: {flag or field: value}} (its parts that differ from the base)."""
     from . import fabprofile
     pcb = Path(pcb)
     sch = Path(sch) if sch else pcb.with_suffix(".kicad_sch")
@@ -196,5 +197,15 @@ def check(pcb: Path | str, sch: Path | str | None = None, variant: str | None = 
     counts: dict[str, int] = {}
     for e in errors:
         counts[e["problem"]] = counts.get(e["problem"], 0) + 1
+    differs = {}
+    if variant:                          # what the variant changes, as KiCad's netlist says
+        for ref in sorted(comps, key=natural_key):
+            base_f, var_f = symbol_flags(comps[ref]), sym[ref]
+            base_v, var_v = symbol_fields(comps[ref]), fields[ref]
+            d = {**{k: var_f[k] for k in FLAGS if var_f[k] != base_f[k]},
+                 **{k: v for k, v in var_v.items() if base_v.get(k) != v}}
+            if d:
+                differs[ref] = d
     return {"board": str(pcb), "variant": variant, "ok": not errors, "errors": errors, "counts": counts,
-            "bom": len(bom), "fitted": len(fitted), "placed": len(placed), "require": require}
+            "bom": len(bom), "fitted": len(fitted), "placed": len(placed), "require": require,
+            **({"differs": differs} if variant else {})}

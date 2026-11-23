@@ -8,6 +8,7 @@ fabrication set complete.
 
 from __future__ import annotations
 
+import re
 import zipfile
 from pathlib import Path
 
@@ -18,6 +19,7 @@ from .board import Board
 
 TECH = ["F.Paste", "B.Paste", "F.SilkS", "B.SilkS", "F.Mask", "B.Mask", "Edge.Cuts"]
 BOM_FIELDS = ("Reference,Value,Footprint,MPN,${QUANTITY},${DNP}", "Refs,Value,Footprint,MPN,Qty,DNP")
+BOM_GROUP = "Value,Footprint,MPN,${DNP}"     # without ${DNP} a fitted and a DNP part share a row, marked DNP
 
 
 def _title(b: Board) -> dict:
@@ -30,9 +32,23 @@ def _title(b: Board) -> dict:
     return out
 
 
+def board_variants(b: Board) -> list[str]:
+    """The assembly variant names on the board (KiCad 10, written by ``kat pcb sync``)."""
+    return [str(find(v, "name")[1]) for v in (find(b.tree, "variants") or [])[1:]
+            if isinstance(v, list) and find(v, "name") is not None]
+
+
+def variant_stem(stem: str, variant: str) -> str:
+    """``<board>-<variant>``: a variant's file name stem, unsafe characters as ``_``."""
+    return f"{stem}-{re.sub(r'[^A-Za-z0-9_.-]', '_', variant)}"
+
+
 def fab(pcb: Path | str, out: Path | str | None = None, step: bool = True, three_d: bool = True) -> dict:
     """Write the fabrication set into ``out`` (default fab/<name>-<rev>/ next to the board).
-    Refused when the board has vias its fabrication profile forbids (``fab_profile``)."""
+    Each assembly variant on the board gets its own position file and BOM in assembly/
+    (``<board>-<variant>-pos.csv`` / ``-bom.csv``, listed in ``variants``); the base files
+    keep their names. Refused when the board has vias its fabrication profile forbids
+    (``fab_profile``)."""
     from . import fabprofile as profile
     pcb = Path(pcb)
     b = Board(pcb)
@@ -60,8 +76,22 @@ def fab(pcb: Path | str, out: Path | str | None = None, step: bool = True, three
     if sch.exists():
         bom = asm / f"{pcb.stem}-bom.csv"
         env.run_cli("sch", "export", "bom", "--fields", BOM_FIELDS[0], "--labels", BOM_FIELDS[1],
-                    "--group-by", "Value,Footprint,MPN", "-o", str(bom), str(sch))
+                    "--group-by", BOM_GROUP, "-o", str(bom), str(sch))
         files["bom"] = bom.name
+    if names := board_variants(b):
+        files["variants"] = {}
+        for v in names:
+            vstem = variant_stem(pcb.stem, v)
+            vpos = asm / f"{vstem}-pos.csv"
+            env.run_cli("pcb", "export", "pos", "--format", "csv", "--units", "mm", "--side", "both",
+                        "--exclude-dnp", "--variant", v, "-o", str(vpos), str(pcb))
+            entry = {"pos": vpos.name}
+            if sch.exists():
+                vbom = asm / f"{vstem}-bom.csv"
+                env.run_cli("sch", "export", "bom", "--fields", BOM_FIELDS[0], "--labels", BOM_FIELDS[1],
+                            "--group-by", BOM_GROUP, "--variant", v, "-o", str(vbom), str(sch))
+                entry["bom"] = vbom.name
+            files["variants"][v] = entry
     if step:
         stp = out / f"{pcb.stem}.step"
         proc = env.run_cli("pcb", "export", "step", "--subst-models", "-o", str(stp), str(pcb), check=False)
@@ -88,8 +118,11 @@ def ready(pcb: Path | str, fab_dir: Path | str | None = None, accept: dict[str, 
     unconnected, parts outside the outline), departures from the fabrication profile
     (``fab_profile``: forbidden vias, classes or rules below its minimum), title or revision empty, fabrication set
     missing or incomplete (Gerbers for copper, mask and outline, drill, position file,
-    BOM, IPC-D-356), or older than the board, and (error ``assembly``) the assembly data
-    check of ``assembly_check.check`` when the schematic is next to the board. ``accept``: DRC warning kinds judged
+    BOM, IPC-D-356, and both per assembly variant), or older than the board; (error
+    ``assembly``, one per variant) the assembly data check of ``assembly_check.check`` for
+    the base and every variant when the schematic is next to the board, whose variants must
+    be the board's (``variants_differ``). ``assembly`` in the result: per variant ``ok``,
+    counts and the parts that ``differs`` from the base. ``accept``: DRC warning kinds judged
     harmless, each with its reason ({"via_dangling": "..."}); ``overhang``: parts meant to
     reach beyond the edge (pads inside). Both are listed in the result; DRC errors can
     never be accepted."""
@@ -115,13 +148,24 @@ def ready(pcb: Path | str, fab_dir: Path | str | None = None, accept: dict[str, 
                 "overhang": [r for r in overhang if r in c["overhang"]]}
     sch = pcb.with_suffix(".kicad_sch")
     assembly = None
+    vnames = board_variants(b)
     if sch.exists():
+        from .. import variants as _variants
         from . import assembly_check
-        a = assembly_check.check(pcb, sch)
-        assembly = {k: a[k] for k in ("ok", "counts", "bom", "fitted", "placed")}
-        if not a["ok"]:
-            errors.append({"problem": "assembly", "detail": {"counts": a["counts"], "errors": a["errors"][:20],
-                                                             "more": max(0, len(a["errors"]) - 20)}})
+        assembly = {}
+        for v in [None, *vnames]:
+            a = assembly_check.check(pcb, sch, v)
+            assembly[v or "base"] = {k: a[k] for k in ("ok", "counts", "bom", "fitted", "placed")}
+            if v:
+                assembly[v]["differs"] = a["differs"]
+            if not a["ok"]:
+                errors.append({"problem": "assembly", "detail": {
+                    "variant": v, "counts": a["counts"], "errors": a["errors"][:20],
+                    "more": max(0, len(a["errors"]) - 20)}})
+        in_sch = [n["name"] if isinstance(n, dict) else str(n) for n in _variants.listing(sch)["names"]]
+        if sorted(in_sch) != sorted(vnames):
+            errors.append({"problem": "variants_differ", "detail": {
+                "schematic": sorted(in_sch), "board": sorted(vnames), "fix": "kat pcb sync"}})
     t = _title(b)
     for key in ("title", "rev"):
         if not t.get(key):
@@ -140,6 +184,13 @@ def ready(pcb: Path | str, fab_dir: Path | str | None = None, accept: dict[str, 
                               ("IPC-D-356", "*.ipc")):
             if not list(d.glob(pattern)):
                 errors.append({"problem": "fab_incomplete", "detail": what})
+        for v in vnames:
+            vstem = variant_stem(pcb.stem, v)
+            for what, suffix in (("position file", "pos"), ("BOM", "bom")):
+                if what == "BOM" and not sch.exists():
+                    continue
+                if not (d / "assembly" / f"{vstem}-{suffix}.csv").exists():
+                    errors.append({"problem": "fab_incomplete", "detail": f"{what} of variant {v}"})
         newest = max((p.stat().st_mtime for p in d.rglob("*") if p.is_file()), default=0)
         if newest and pcb.stat().st_mtime > newest:
             errors.append({"problem": "fab_outdated", "detail": "the board changed after kat pcb fab"})
