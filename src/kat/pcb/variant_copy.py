@@ -69,6 +69,8 @@ def variant_board(pcb: Path | str, variant: str, out: Path | str | None = None) 
         b.tree.remove(vs)
 
     dst = out / pcb.name
+    from ..gui import guard
+    guard(dst)                          # a copy written earlier and open in KiCad
     dst.write_text(_rebase(dumps(b.tree), rel) + "\n", encoding="utf-8")
     normalize(dst)                      # KiCad loads it and writes it its way
     files = [dst.name]

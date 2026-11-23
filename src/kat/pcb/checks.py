@@ -18,7 +18,11 @@ def _items(v: dict) -> list[dict]:
 
 def drc(pcb: Path, parity: bool = True, refill: bool = False, save: bool = False) -> dict:
     """KiCad's DRC as JSON: violations (with positions in mm), unconnected items and
-    schematic parity problems. ``refill``: refill zones first (``save`` writes them back)."""
+    schematic parity problems. ``refill``: refill zones first (``save`` writes them back;
+    refused while the board is open in KiCad, as every kat save is)."""
+    if refill and save:
+        from ..gui import guard
+        guard(pcb)
     args = ["pcb", "drc", "--format", "json", "--severity-all"]
     if parity:
         args.append("--schematic-parity")

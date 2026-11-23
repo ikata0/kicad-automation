@@ -642,6 +642,8 @@ Every public call has a docstring stating units and return value (`tests/test_ap
 - **Guard:** kat refuses to save a schematic or board while KiCad's lock file
   (`~NAME.kicad_pcb.lck`) says the file is open: from another host, or while a KiCad
   process of this user runs. A lock without any KiCad process is stale and ignored.
+  This covers saves made through kicad-cli too: `kat pcb refill` (DRC's `--save-board`,
+  first fill and retry) refuses before KiCad writes anything.
 - `kat open FILE` starts the matching editor (pcbnew, eeschema, kicad for a `.kicad_pro`)
   for a person.
 - `kat open FILE --verify` starts it with a private copy of the KiCad settings (IPC API on)

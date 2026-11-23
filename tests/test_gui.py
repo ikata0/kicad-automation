@@ -68,3 +68,19 @@ def test_verify_board_and_schematic_in_the_editors(project, tmp_path):
     pcb.write_text(text)                            # KiCad cannot read this any more
     res = kat.open_kicad(pcb, verify=True)
     assert res["verified"] and not res["ok"] and res["mismatches"]
+
+
+@needs_cli
+def test_refill_refuses_while_the_board_is_open_in_kicad(tmp_path, monkeypatch):
+    from kat.pcb.board import Board
+    pcb = tmp_path / "b.kicad_pcb"
+    Board.create(pcb)
+    pro = pcb.with_suffix(".kicad_pro")
+    pro.write_text("{}\n")
+    before = pcb.read_bytes(), pro.read_bytes()
+    monkeypatch.setattr(gui, "_kicad_running", lambda: True)
+    lock(pcb)                         # KiCad's DRC save would overwrite the editor's copy
+    with pytest.raises(kat.KatError, match="open in KiCad"):
+        kat.pcb.refill(pcb)
+    assert cli.main(["pcb", "refill", str(pcb)]) == 2
+    assert (pcb.read_bytes(), pro.read_bytes()) == before

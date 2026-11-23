@@ -95,15 +95,6 @@ cluster inventory or linker. Zone-origin DRC coordinates alone are insufficient
 to locate a fragment. See `src\kat\pcb\checks.py` and
 `src\kat\pcb\placement.py`; judge any applied links by KiCad's DRC and connectivity.
 
-### FR-057: Guard every board-saving path against KiCad locks
-
-**Open.** Refuse `kat pcb refill` while the board is open in KiCad, before
-the first write, and audit other commands that save through external tools.
-`Board.save` in `src\kat\pcb\board.py` already calls `gui.guard`, but
-`checks.refill` in `src\kat\pcb\checks.py` invokes DRC with `--save-board`
-before reaching any guarded save. Apply the same protection to the initial fill
-and retry paths; a refusal must leave the board and project files unchanged.
-
 ## Fabrication and assembly
 
 ### FR-058: Versioned supplier rule profiles and fabrication checks
@@ -739,3 +730,19 @@ would block that repair, so there is none. Fixed: the box pin's label was drawn 
 stub lying over the hand-drawn wire; a box pin a wire already ends on now takes its label on
 the pin itself (`syncer_hier._label_at`; test in `tests/test_sync_hier.py`). Reproducer in
 `kicad-sandbox/experiments/2026-11-23-fr030/`.
+
+### FR-057: Guard every board-saving path against KiCad locks
+
+**Resolved.** Refuse `kat pcb refill` while the board is open in KiCad, before
+the first write, and audit other commands that save through external tools.
+`Board.save` in `src\kat\pcb\board.py` already calls `gui.guard`, but
+`checks.refill` in `src\kat\pcb\checks.py` invokes DRC with `--save-board`
+before reaching any guarded save. Apply the same protection to the initial fill
+and retry paths; a refusal must leave the board and project files unchanged.
+
+Done: `checks.drc` calls `gui.guard` whenever it refills with `--save-board`, so
+`kat pcb refill` (first fill and retry) and every other refill-and-save refuse before
+kicad-cli writes. Audit of the other external writers: `Board.save` / `Schematic.save`
+(`pcb upgrade` / `sch upgrade`) were guarded already; `kat pcb variant-board` now guards its
+copy; exports write only new output files; symbol/footprint library upgrades are not
+project files. Test: `tests/test_gui.py` (lock → refusal, board and `.kicad_pro` bytes unchanged).
