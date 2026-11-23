@@ -722,11 +722,18 @@ def _touches(p, seg) -> bool:
 
 
 def run(sch: Path, design: Path, dry_run: bool = False) -> dict:
+    from . import variants
+    variants.precheck(design, flat=True)
     s = Schematic(sch)
     report = Syncer(s, design).run()
     changed = any(report[k] for k in report if k != "unresolved")
     if not dry_run and changed:
         s.save()
+    var = variants.apply(sch, design, dry_run=dry_run)
+    if var:
+        report["variants"] = var
+        changed = changed or any(var[k] for k in ("added", "changed", "removed", "fields_added", "names_removed")) \
+            or var["names_differ"]
     report["dry_run"] = dry_run
     report["changed"] = changed
     report["check"] = checks.run(sch, design) if not dry_run else None

@@ -1025,6 +1025,46 @@ kat sync top/top.kicad_sch design.net --sheets ch,rc      # remembered in top.ka
   SVGs always cover every page). The design's path is remembered too (`top.kat.json`):
   `kat pcb sync`'s gate compares the schematic with it.
 
+### 4.22 Assembly variants (KiCad 10)
+
+One schematic and one board, several assemblies, each with its own BOM and position file.
+
+```python
+import kat.skidl_variants as kv                     # in the SKiDL script, after generate_netlist
+kv.variant("LITE", "channel B unpopulated")
+kv.override(esd, "LITE", dnp=True)                  # a Part (named by its final reference)
+kv.override("CH_A/RC2/r", "LITE", Value="2k7", in_bom=False)    # a tag, qualified by the block path
+kv.override("c", "LITE", block="CH_B/RC*", dnp=True)            # a local tag in every matching block
+kv.param("/CH_B", "LITE", "ra", "6k8")              # a sheet instance's parameter
+kv.write("design.net")                              # -> design.variants.json (also fine by hand)
+```
+
+- **Declaration** (`kat.variants.load`): `{"variants": {NAME: {"description", "parts": [entry],
+  "params": {sheet path: {parameter: value}}}}}`. An entry selects by `ref`, `tag` or `block`
+  (glob) + `tag`, and sets flags (`dnp`, `in_bom`, `on_board`, `in_pos_files`, `exclude_from_sim`:
+  true/false) or field values (`Value`, `MPN`, ...; not Reference or Footprint). An entry that
+  matches nothing, or two that disagree on a part, stop the sync before anything is written.
+- **Written by `kat sync`** (flat and hierarchical, so also `kat block build`): the names into the
+  project (`.kicad_pro` `schematic.variants`, `[{name, description}]`) and, per symbol instance
+  path, only the differences from the base as `(variant (name ..) (dnp yes) (in_bom no) (field
+  (name "Value") (value "2k7")))`. The result's `variants` lists `added`, `changed`, `removed`,
+  `fields_added`, `names`, `names_removed`; a second sync changes nothing.
+- **Parameters:** KiCad does not expand a sheet box's variant fields into `${ra}` inside the sheet,
+  so a parameter override becomes a field override on each symbol whose field uses it, with the
+  value it then has (inherited below the box like the box's own field). A flat drawing has plain
+  values: there, `params` are refused; give part overrides.
+- **Ownership:** kat records what it wrote (`<root>.kat.json`, `variant_owned`). An override or a
+  variant name it wrote that the declaration no longer has is removed and reported; variants and
+  overrides made in KiCad stay. Without a declaration file kat writes nothing and keeps what is
+  there; annotation and part replacement keep every instance's variant data.
+- **Fields:** a field override needs the field on the base symbol (KiCad leaves it out of the BOM
+  otherwise, and kicad-cli asserts), so kat adds it empty and hidden (`fields_added`).
+- **Checked:** `kat check --expect design.net` (and the sync's own check) compares the schematic
+  with the declaration (`variants`: what a sync would write); a difference makes `ok` false.
+- `kat variants SCH|PCB` lists names and per-reference differences. `kicad-cli sch export bom
+  --variant NAME` exports a variant's BOM; the position file needs the board's variants
+  (`kat pcb sync`).
+
 ## 5. Command reference
 
 Library: `kat.init`, `kat.new`, `kat.load`, `kat.edit`, `kat.sync`, `kat.stamp`, `kat.check`, `kat.snapshot`, `kat.view`,
@@ -1047,8 +1087,9 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `lib search WORDS` / `lib show LIB:NAME` | find symbols; units, pins, body |
 | `lib make --pins TABLE --name NAME [--lib L] [--out DIR] [--view component/pin] [--y-up] [--origin table/pin1/center] [--drill] [--pad] [--pitch] [--marker PIN] [--reference P]` | generate a symbol and a footprint from a pin table (§4.7) |
 | `list SCH [--near X,Y --radius R]` / `pins SCH REF` / `netlist SCH` | inspect placement (or what is near a point, with uuids), pin positions + outward direction, KiCad's nets |
-| `sync SCH NETLIST [--dry-run] [--sheets TYPE,...] [--rename-sheet OLD=NEW]` | bring the design into the drawing (§4.4); block types as sheets; a renamed instance keeps its box (§4.21) |
-| `check SCH [--expect NETLIST] [--full] [--map TABLE]` | ERC + netlist comparison + drawing findings (lists cut to 10 per kind, totals in `counts`; `--full` all); `--map`: also against a pin table |
+| `sync SCH NETLIST [--dry-run] [--sheets TYPE,...] [--rename-sheet OLD=NEW]` | bring the design into the drawing (§4.4); block types as sheets; a renamed instance keeps its box (§4.21); assembly variants from `NETLIST`'s `.variants.json` (§4.22) |
+| `variants SCH\|PCB` | assembly variants: names and per-reference differences from the base (§4.22) |
+| `check SCH [--expect NETLIST] [--full] [--map TABLE]` | ERC + netlist comparison + drawing findings (lists cut to 10 per kind, totals in `counts`; `--full` all); `--map`: also against a pin table; assembly variants against `NETLIST`'s declaration (`variants`) |
 | `back-annotate TABLE --assign PIN=NET... / --from FILE --run SCRIPT --sch SCH [--pcb PCB] [--netlist NET] [--dry-run] [--rip-stale]` | a computed pin assignment through the SKiDL design, verified, put back on failure (§4.3) |
 | `map SOURCE TABLE [--complete REF] [--partial] [--pins COL,...]` | a schematic, board or netlist against an external pin table: missing, mismatched, split, merged, extra (§6.2) |
 | `ready SCH [--expect NETLIST] [--require-field NAME]` | gate before the PCB layout (§6.1) |

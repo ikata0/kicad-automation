@@ -42,6 +42,11 @@ the schematic; board copies in `history/<stamp>_pcb_*/`).
 `kat.skidl_blocks.write("design.net")`. Parts then carry `Block = CH_A/...`, and the
 board can move and arrange whole instances.
 
+**Assembly variants** (one board, several assemblies) are declared in the SKiDL script with
+`kat.skidl_variants` (`variant`, `override`, `param`, then `write("design.net")`); `kat sync`
+writes them as KiCad 10 variants, `kat variants SCH` lists them. Never fork the schematic per
+assembly.
+
 **Blocks used many times go into the block library first**: `kat block new
 NAME`, write the function and its test harness in `blocks/NAME/NAME.py`, `kat block build
 NAME`, arrange its schematic, lay out its board (kicad-layout), and repeat until

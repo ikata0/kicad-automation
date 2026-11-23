@@ -29,7 +29,9 @@ layout.
    records the pins tied to `NC` (a SKiDL builtin - `from skidl import NC` fails), which
    sync marks with no-connect flags. Name a block's port nets differently from its ports,
    not only in case (`SPI_SCLK` into port `sclk`): `SCLK` gives an ERC "similar labels"
-   warning per instance.
+   warning per instance. Assembly variants: `kat.skidl_variants` in the script, then
+   `kv.write("design.net")`; sync writes them and `kat check` compares them (`kat variants
+   SCH` lists them); do not edit them in the sheet.
 3. KiCad GUI closed while editing (kat refuses while KiCad's lock file says it is open).
 4. Snapshot after every sync and every arrangement pass.
 5. Keep the design report readable: passes run with `kat batch-exec`, your plans, problems

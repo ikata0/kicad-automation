@@ -188,6 +188,26 @@ def test_library_change_replaces_part_in_place(project, tmp_path):
     assert find(path, "variant") is not None and str(find(path, "reference")[1]) == "R1"
 
 
+def test_variants_of_a_flat_drawing(project, tmp_path):
+    """FR-063: a declaration next to the netlist is written on sync; a flat drawing has plain
+    values, so block parameters are refused there with the way out."""
+    import json
+    net = write_netlist(tmp_path / "a.net", BASE_PARTS, BASE_NETS)
+    decl = {"variants": {"LITE": {"parts": [{"tag": "tag-r1", "Value": "470", "dnp": True}],
+                                  "params": {"/X": {"a": "1"}}}}}
+    (tmp_path / "a.variants.json").write_text(json.dumps(decl))
+    before = project.read_text()
+    with pytest.raises(kat.KatError, match="give part overrides"):
+        kat.sync(project, net)
+    assert project.read_text() == before
+    del decl["variants"]["LITE"]["params"]
+    (tmp_path / "a.variants.json").write_text(json.dumps(decl))
+    report = sync_ok(project, net)
+    assert sorted(e["key"] for e in report["variants"]["added"]) == ["Value", "dnp"]
+    assert kat.variants.listing(project)["parts"] == {"R1": {"LITE": {"dnp": True, "Value": "470"}}}
+    assert not kat.sync(project, net)["changed"]
+
+
 def test_new_parts_go_below_existing_drawing(project, tmp_path):
     sync_ok(project, write_netlist(tmp_path / "a.net", BASE_PARTS, BASE_NETS))
     lowest = max(y for (_, _), (_, y) in positions(project).items())

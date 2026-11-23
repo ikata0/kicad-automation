@@ -418,6 +418,10 @@ def cmd_map(a):
     return kat.mapping.check(a.file, a.mapping, _complete(a), a.pins.split(",") if a.pins else None)
 
 
+def cmd_variants(a):
+    return kat.variants.listing(a.file)
+
+
 def cmd_ready(a):
     return kat.ready(a.sch, a.expect, () if a.no_require else (a.require_field or ["MPN"]))
 
@@ -698,6 +702,16 @@ def build_parser() -> argparse.ArgumentParser:
     q.add_argument("--pins", metavar="COL,...", help="the columns that hold pins (REF.NUMBER)")
     _map_options(q)
 
+    q = cmd("variants", cmd_variants, "List the assembly variants of a schematic or board.",
+            "KiCad 10 assembly variants: the names (with descriptions) and, per reference, what\n"
+            "each variant changes from the base (dnp, in_bom, on_board, in_pos_files or field values\n"
+            "for a schematic, the whole hierarchy; dnp, exclude_from_bom, exclude_from_pos_files or\n"
+            "fields for a board). Declare them in DESIGN.variants.json next to the design netlist\n"
+            "(kat.skidl_variants from a SKiDL script); kat sync writes them into the schematic,\n"
+            "kat check compares, kicad-cli ... --variant NAME exports them.",
+            ["kat variants top.kicad_sch", "kat variants board.kicad_pcb"], sch=False)
+    q.add_argument("file", metavar="FILE", help="the .kicad_sch (root) or .kicad_pcb file")
+
     q = cmd("ready", cmd_ready, "Gate before the PCB layout: is the schematic finished?",
             "Checks the parts KiCad will put on the board (symbols marked 'not on board' are\n"
             "skipped):\n"
@@ -778,7 +792,10 @@ def build_parser() -> argparse.ArgumentParser:
             "design. The choice is remembered in NAME.kat.json.\n"
             "--rename-sheet OLD=NEW: after renaming an instance in the design, its box keeps its\n"
             "uuid, place and wiring instead of being removed and added anew; possible_renames in\n"
-            "the result names boxes that look like one. Check with --dry-run first.",
+            "the result names boxes that look like one. Check with --dry-run first.\n"
+            "Assembly variants declared in NETLIST's .variants.json (kat.skidl_variants) are written\n"
+            "as KiCad 10 variant overrides, differences from the base only; overrides kat wrote and\n"
+            "the declaration dropped are removed, ones made in KiCad stay (kat variants SCH).",
             ["kat sync tia.kicad_sch tia_design.net", "kat sync tia.kicad_sch tia_design.net --dry-run",
              "kat sync top.kicad_sch design.net --sheets ch,rc"])
     q.add_argument("netlist", metavar="NETLIST", help="KiCad s-expression netlist, e.g. SKiDL generate_netlist()")

@@ -152,7 +152,8 @@ def duplicates(s: Schematic) -> list[str]:
 def run(sch: Path, expect: Path | None = None, full: bool = False, mapping: Path | None = None,
         complete: bool | list[str] = True) -> dict:
     """``ok``: electrically right (ERC errors 0, netlist matches ``expect``, the pins agree with
-    the ``mapping`` table, see ``kat.mapping.check``, in ``mapping``).
+    the ``mapping`` table, see ``kat.mapping.check``, in ``mapping``, and the assembly
+    variants match ``expect``'s declaration, ``kat.variants.compare``, in ``variants``).
     ``clean``: ``ok`` and no drawing findings (text overlaps, body overlaps, off-page items,
     duplicated items, design net names missing from or different in the drawing).
     The comparison's lists are cut to 10 entries each (``counts`` has the totals) unless
@@ -172,8 +173,12 @@ def run(sch: Path, expect: Path | None = None, full: bool = False, mapping: Path
     if mapping:
         from .mapping import check as check_mapping
         result["mapping"] = check_mapping(sch, mapping, complete)
+    if expect:
+        from .variants import compare
+        if (var := compare(sch, expect)) is not None:
+            result["variants"] = var
     ok = (result["erc"]["errors"] == 0 and (not expect or result["netlist_vs_expected"]["match"])
-          and (not mapping or result["mapping"]["ok"]))
+          and (not mapping or result["mapping"]["ok"]) and result.get("variants", {}).get("ok", True))
     result["ok"] = ok
     from .project import prefixes, ref_prefix
     from .syncer import natural_key

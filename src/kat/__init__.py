@@ -22,7 +22,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from . import blocks, checks, gate, hierarchy, libmake, library, mapping, netlist, pcb, report, skidl_blocks, syncer
+from . import (blocks, checks, gate, hierarchy, libmake, library, mapping, netlist, pcb, report, skidl_blocks,
+               skidl_variants, syncer, variants)
 from .env import KatError, tidy
 from .bootstrap import init
 from .history import restore as _restore

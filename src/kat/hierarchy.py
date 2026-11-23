@@ -288,26 +288,30 @@ def _flip_justify(node: list) -> None:
         just[1:] = [Sym({"left": "right", "right": "left"}.get(str(v), str(v))) for v in just[1:]]
 
 
-def tree(root: Path | str) -> list[dict]:
+def tree(root: Path | str, overrides: dict[str, dict[str, str]] | None = None) -> list[dict]:
     """All instances of a hierarchy, depth-first in reading order (the page order):
     ``path`` (name path), ``uuids`` (uuid path), ``file``, ``page``, ``params`` (the
-    parameters seen there, inherited ones included) and ``block`` (the file's stem)."""
+    parameters seen there, inherited ones included), ``fields`` (the box's own parameters)
+    and ``block`` (the file's stem). ``overrides``: {name path: {parameter: value}} replacing a box's own fields, inherited
+    below it like them (an assembly variant's parameters)."""
+    overrides = {"/" + k.strip("/"): v for k, v in (overrides or {}).items()}
     root = Path(root).resolve()
     out: list[dict] = []
 
-    def walk(file: Path, path: str, uuids: str, params: dict, stack: tuple) -> None:
+    def walk(file: Path, path: str, uuids: str, params: dict, stack: tuple, own: dict) -> None:
         if file in stack:
             raise env.KatError(f"{file.name} contains itself (via {' -> '.join(p.name for p in stack)})")
         if not file.exists():
             raise env.KatError(f"sheet file {file} does not exist")
         s = Schematic(file)
         out.append({"path": path, "uuids": uuids, "file": str(file), "page": len(out) + 1,
-                    "params": dict(params), "block": file.stem})
+                    "params": dict(params), "block": file.stem, "fields": own})
         for sh in sheets(s):
-            walk(sh["path"], f"{path.rstrip('/')}/{sh['name']}", f"{uuids}/{sh['uuid']}",
-                 {**params, **sh["fields"]}, stack + (file,))
+            child = f"{path.rstrip('/')}/{sh['name']}"
+            walk(sh["path"], child, f"{uuids}/{sh['uuid']}",
+                 {**params, **sh["fields"], **overrides.get(child, {})}, stack + (file,), sh["fields"])
 
-    walk(root, "/", "", {}, ())
+    walk(root, "/", "", {}, (), {})
     return out
 
 

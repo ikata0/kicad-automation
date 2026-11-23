@@ -466,6 +466,8 @@ def run(root: Path, design_path: Path, sheets: list[str] | None = None, dry_run:
         raise env.KatError("which block types become sheets? --sheets TYPE,... (remembered afterwards)")
     generate = generate or {}
     design = Design(design_path, set(sheets))
+    from . import variants
+    variants.precheck(design_path)
     near = root.parent
     sheet_names = _sheet_names(root, design, rename_sheets, generate)
     report = {"added": [], "removed": [], "updated": [], "renamed": [], "renamed_sheets": [], "possible_renames": [],
@@ -514,6 +516,8 @@ def run(root: Path, design_path: Path, sheets: list[str] | None = None, dry_run:
         hierarchy.annotate(root, refs=refs)         # the new power symbols and flags too
     report["flags"] += [f"{root.name}: {n}" for n in flags]
     report["unresolved"] += unresolved
+    if var := variants.apply(root, design_path):
+        report["variants"] = var
     report["check"] = verify(root, design)
     return dict(report, dry_run=False)
 
@@ -675,8 +679,9 @@ def _design_refs(root: Path, design: Design) -> dict[str, dict[str, str]]:
 
 
 def verify(root: Path, design: Design) -> dict:
-    """KiCad's netlist of the hierarchy against the design: connectivity, and value and
-    footprint of every part."""
+    """KiCad's netlist of the hierarchy against the design: connectivity, value and
+    footprint of every part, and the assembly variants (``kat.variants.compare``) when
+    the design declares them."""
     from .pcb.syncer import read_design
     got = netlist.from_schematic(root)
     cmp = netlist.compare(got, design.nets)
@@ -692,4 +697,7 @@ def verify(root: Path, design: Design) -> dict:
                 diffs.append({"ref": ref, "problem": what, "drawn": a, "design": b,
                               "hint": f"{c.block or 'the top'}: make it a parameter of the block"
                               if what == "value" else ""})
-    return {"netlist_vs_expected": cmp, "parts": diffs, "ok": cmp["match"] and not diffs}
+    from . import variants
+    var = variants.compare(root, design.path)
+    return {"netlist_vs_expected": cmp, "parts": diffs, **({"variants": var} if var else {}),
+            "ok": cmp["match"] and not diffs and (var is None or var["ok"])}

@@ -33,9 +33,11 @@ not only kat's model.
 
 ### FR-063: Support native KiCad 10 assembly variants
 
-**Partial: phase 1 done.** Annotation and flat part replacement keep KiCad's
-`(variant ...)` instance children (SPEC §7). Declaration, board sync and per-variant
-exports follow. Format findings: `../kicad-sandbox/experiments/2026-11-23-variants/README.md`.
+**Partial: schematic side done.** Annotation and flat part replacement keep KiCad's
+`(variant ...)` instance children (SPEC §7). Declarations in `<design>.variants.json`
+(`kat.skidl_variants`) are written by flat and hierarchical `kat sync` and compared by
+`kat check`; `kat variants` lists them (SPEC §4.22). Board sync and per-variant exports
+follow. Format findings: `../kicad-sandbox/experiments/2026-11-23-variants/README.md`.
 
 Keep one schematic and layout per board while supporting named
 assembly variants with their own BOM and position exports. A downstream
