@@ -178,7 +178,7 @@ table goes to `kat map` and can come from `kat pcb odb-pinout`.
 | part's library symbol changed | replaced at the same position and rotation; pins re-attached |
 | pin moved to another net | pin detached (its own wiring up to the next branch point) and attached to the new net |
 | net renamed | labels renamed; power symbols swapped (or replaced by a label if no such power symbol exists); renamed to a power net, labels (hierarchical ones too) become its power symbol. A lone pin under an old name (a renamed power net) is detached, so no old power symbol or flag stays beside the new one |
-| DNP (`part.fields["DNP"] = "1"`, yes/no/true/false/1/0, or value `DNP`) | KiCad's DNP flag set or cleared (`{"field": "DNP"}`); no such field or value: a flag set in KiCad stays. The field itself is not written |
+| base assembly flags: `part.dnp = True` / `part.exclude_from_bom = True` (SKiDL's netlist properties), a field named like a flag (`DNP`, `in_bom`, `on_board`, `in_pos_files`, `exclude_from_sim`: yes/no/true/false/1/0), or the value `DNP` | the design is the whole truth: all five symbol flags are set on every unit, a flag the design does not set goes back to KiCad's default (dnp no, in_bom yes, on_board yes, in_pos_files yes, exclude_from_sim no), so a flag set by hand in KiCad is undone. Each change is in `updated` as `{"field": "dnp", "from": false, "to": true}`; the flag fields themselves are not written. Parts inside a library block drawn as a sheet keep the block's drawing (`check.flags` names a difference); a per-assembly difference is a variant (§4.22) |
 | undriven power net | one PWR_FLAG added, value hidden; where its power symbol has no free stub (a dense pin row), on a global label of the net nearby. A hierarchy gets its flags on the root sheet only, also for supplies that reach blocks only through their ports (found by the whole hierarchy's ERC; a non-power-library name gets a local label) |
 | power pin in a dense pin row (connector) | the power symbol sits beyond the neighbours' labels on a longer stub, so its text does not cover them |
 
@@ -225,6 +225,11 @@ kicad-cli nor kicad-python offers.
   nets, pin names and types, assembly-variant overrides.
   New parts go in rows to the right of the board outline.
 - **Update**: reference, value, fields (extra custom fields removed), flags, pad nets.
+  Each flag change on a footprint already on the board is in `updated`
+  (`{"ref", "field": "exclude_from_bom", "from", "to"}`). A footprint taken from the library
+  (new or replacing) whose library sets `exclude_from_bom` / `exclude_from_pos_files` while
+  the symbol does not (a mounting hole without `in_bom no`) loses the exclusion with a
+  `warnings` entry naming the symbol flag to set in the design.
   A changed footprint is **replaced in place** (position, rotation, side, uuid kept).
 - **Variants** (KiCad 10, §4.22): the board's `(variants ...)` list and each footprint's
   `(variant (name ..) (dnp yes) (exclude_from_bom yes) (exclude_from_pos_files yes) (field ..))`
@@ -1021,9 +1026,11 @@ kat sync top/top.kicad_sch design.net --sheets ch,rc      # remembered in top.ka
 - **References follow the design:** every instance gets the SKiDL reference of its part
   (annotation per instance), so KiCad's netlist and `design.net` compare 1:1, and the
   block keeps its own references in its own project.
-- **Checked** (`check` in the result): connectivity against the design, and value and
-  footprint of every part. A block that changed after its build shows up as `value`
-  differences ("make it a parameter", or rebuild the block).
+- **Checked** (`check` in the result): connectivity against the design, value and
+  footprint of every part, and the base flags (`flags`, as `kat check`). A block that changed
+  after its build shows up as `value` differences ("make it a parameter", or rebuild the
+  block); a part inside a block sheet whose flag differs from the design gets the hint "set
+  it in the block, or use a variant" (one drawing serves every instance).
 - Sheet boxes are updated in place: their uuid (and with it the board's footprint
   paths), position, size and pin order stay, also when the block gains or loses ports
   (new pins are added by the side rule, removed ones leave with their wiring). Boxes of
@@ -1161,7 +1168,10 @@ Global option `--no-report`: do not journal this command.
 - `overlaps` — text/text and text/symbol collisions (estimated boxes, 0.3 mm clearance).
 - `body_overlaps` — overlapping part bodies; `off_page` — items outside the frame;
   `duplicates` — the same wire, label or power symbol drawn more than once on one spot.
-- `ok` = ERC errors 0 and netlist match. `clean` = `ok` and no drawing finding.
+- `flags` (with `--expect`) — base assembly flags that differ from the design:
+  `[{ref, field, drawn, design}]` (`dnp`, `in_bom`, `on_board`, `in_pos_files`,
+  `exclude_from_sim`; a flag the design does not set means KiCad's default); `kat sync` resets them.
+- `ok` = ERC errors 0, netlist match and no `flags` difference. `clean` = `ok` and no drawing finding.
 
 **Stop when** `clean` is true *and* the image review finds nothing. The heuristics do not see
 pin names/numbers or wires running through text, so the image review is mandatory.
@@ -1222,6 +1232,8 @@ column in place of the net.
 | A block flipped to the bottom with the mirror map on an asymmetric stack-up silently changes its parasitics (dielectric to the reference plane) | `stamp --side bottom` refuses `auto` on an asymmetric stack-up; map by layer roles or explicitly (§4.18) |
 | Updating agent instructions overwrites project-specific guidance or silently loses skill edits | init preserves text outside its AGENTS section, preflights all conflicts and requires --force for differing managed content; commit the deployed bundle and manifest |
 | **kiutils** drops KiCad 8+ syntax (`(hide yes)`, `exclude_from_sim`, `embedded_fonts`, ...) when writing back: hidden fields become visible, the netlist still matches, so only the image shows it | own lossless parser (`kat.sexpr`); never rewrite files with lossy libraries |
+| KiCad's netlist leaves out symbols with `on_board no` (and their pins in the nets) and carries no `exclude_from_sim`; `dnp`, `exclude_from_bom`, `exclude_from_pos_files` are bare `(property (name ..))` entries | flags are compared on the symbols themselves (`kat.variants.base_flags`); the design's `on_board no` parts are left out of the netlist comparison |
+| SKiDL's `part.exclude_from_bom` reaches the netlist only as a property; the symbol keeps `in_bom yes` unless sync sets it | `kat sync` reads the properties (FR-059) |
 | The former MCP server did not re-escape `\"` in power-symbol descriptions → file unloadable, calls reported success | correct escaping (tested); every save is validated by KiCad (`sch upgrade`) |
 | Visible `#PWR` references after MCP edits (it dropped `hide`) | placed fields are copied from the library definition, including visibility |
 | Derived library symbols (`extends`) must be flattened when embedded | flattening verified identical to KiCad's own embedded copies |

@@ -669,7 +669,9 @@ def build_parser() -> argparse.ArgumentParser:
             "Loads it with KiCad, runs ERC, compares the netlist with --expect and reports\n"
             "drawing findings: text overlaps (estimated boxes), overlapping symbol bodies,\n"
             "items outside the page frame and items drawn twice on one spot.\n"
-            "  ok    = ERC has no errors and the netlist matches\n"
+            "With --expect also the base assembly flags (dnp, in_bom, on_board, in_pos_files,\n"
+            "exclude_from_sim) against the design, in flags.\n"
+            "  ok    = ERC has no errors, the netlist and the flags match\n"
             "  clean = ok and no drawing findings\n"
             "The overlap estimate ignores pin names/numbers: always look at the snapshot too.\n"
             "Netlist differences are listed up to 10 per kind (totals in counts); --full lists all.\n"
@@ -786,6 +788,9 @@ def build_parser() -> argparse.ArgumentParser:
             "  - removed parts are deleted together with wires/labels left dangling\n"
             "  - pins on the wrong net are cut loose and re-attached to the right one\n"
             "  - PWR_FLAGs are added where ERC reports undriven power nets\n"
+            "  - the design sets the assembly flags (part.dnp, part.exclude_from_bom, fields\n"
+            "    DNP/in_bom/on_board/in_pos_files/exclude_from_sim); unset ones go back to KiCad's\n"
+            "    default, so flags set by hand are undone\n"
             "Running it twice changes nothing. Review the reported spots afterwards.\n"
             "--sheets TYPE,...: instances of these SKiDL block types become hierarchical sheets\n"
             "that use the block library's own drawing (kat block build); references follow the\n"
@@ -1027,7 +1032,9 @@ def build_parser() -> argparse.ArgumentParser:
                         help="parts and nets from the schematic; keeps placement and copper",
                         description="Creates the board if missing. Footprints match by symbol link, then\n"
                                     "SKiDL tag, then reference. New parts go in rows right of the outline.\n"
-                                    "A changed footprint is replaced in place. Copper that no longer fits\n"
+                                    "A changed footprint is replaced in place; flag changes are in updated,\n"
+                                    "a library exclusion the symbol does not set is cleared (warnings).\n"
+                                    "Copper that no longer fits\n"
                                     "its pads is listed in stale_tracks (--rip-stale removes it).\n"
                                     "Refuses unless `kat ready` passes (--force overrides).")
     s1.add_argument("pcb", metavar="PCB", help="the .kicad_pcb file (created if missing)")

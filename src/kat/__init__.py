@@ -165,7 +165,8 @@ def stamp(sch: Path | str, block: str, instances: str | list[str],
 
 def check(sch: Path | str, expect: Path | str | None = None, full: bool = False,
           mapping: Path | str | None = None, complete: bool | list[str] = True) -> dict:
-    """ERC, netlist comparison with ``expect`` and drawing findings (``ok`` / ``clean``).
+    """ERC, netlist comparison with ``expect``, the base assembly flags against it
+    (``flags``) and drawing findings (``ok`` / ``clean``).
     Lists of the comparison are cut to 10 entries with totals in ``counts``; ``full``
     lists them all. ``mapping``: a pin table the sheet must also agree with, and ``complete``
     what it must cover (``kat.mapping.check``), reported in ``mapping``."""

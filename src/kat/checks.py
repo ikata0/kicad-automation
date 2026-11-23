@@ -153,7 +153,8 @@ def run(sch: Path, expect: Path | None = None, full: bool = False, mapping: Path
         complete: bool | list[str] = True) -> dict:
     """``ok``: electrically right (ERC errors 0, netlist matches ``expect``, the pins agree with
     the ``mapping`` table, see ``kat.mapping.check``, in ``mapping``, and the assembly
-    variants match ``expect``'s declaration, ``kat.variants.compare``, in ``variants``).
+    variants match ``expect``'s declaration, ``kat.variants.compare``, in ``variants``; the
+    base assembly flags match ``expect``, ``kat.variants.flag_differences``, in ``flags``).
     ``clean``: ``ok`` and no drawing findings (text overlaps, body overlaps, off-page items,
     duplicated items, design net names missing from or different in the drawing).
     The comparison's lists are cut to 10 entries each (``counts`` has the totals) unless
@@ -165,7 +166,8 @@ def run(sch: Path, expect: Path | None = None, full: bool = False, mapping: Path
     nets = netlist.from_schematic(sch)
     result["nets"] = len([n for n in nets.values() if len(n) > 1])
     if expect:
-        result["netlist_vs_expected"] = netlist.compare(nets, netlist.read(expect), None if full else 10)
+        comps, want = netlist.read_design(expect)
+        result["netlist_vs_expected"] = netlist.compare(nets, netlist.board_nets(want, comps), None if full else 10)
     result["overlaps"] = overlaps(s)
     result["body_overlaps"] = body_overlaps(s)
     result["off_page"] = off_page(s)
@@ -174,11 +176,13 @@ def run(sch: Path, expect: Path | None = None, full: bool = False, mapping: Path
         from .mapping import check as check_mapping
         result["mapping"] = check_mapping(sch, mapping, complete)
     if expect:
-        from .variants import compare
+        from .variants import compare, flag_differences
+        result["flags"] = flag_differences(sch, expect)
         if (var := compare(sch, expect)) is not None:
             result["variants"] = var
     ok = (result["erc"]["errors"] == 0 and (not expect or result["netlist_vs_expected"]["match"])
-          and (not mapping or result["mapping"]["ok"]) and result.get("variants", {}).get("ok", True))
+          and (not mapping or result["mapping"]["ok"]) and not result.get("flags")
+          and result.get("variants", {}).get("ok", True))
     result["ok"] = ok
     from .project import prefixes, ref_prefix
     from .syncer import natural_key

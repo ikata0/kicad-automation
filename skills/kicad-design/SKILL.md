@@ -45,7 +45,9 @@ board can move and arrange whole instances.
 **Assembly variants** (one board, several assemblies) are declared in the SKiDL script with
 `kat.skidl_variants` (`variant`, `override`, `param`, then `write("design.net")`); `kat sync`
 writes them as KiCad 10 variants, `kat variants SCH` lists them. Never fork the schematic per
-assembly.
+assembly. The base flags (DNP, BOM and position-file exclusion) also come from the design
+(`part.dnp`, `part.exclude_from_bom`, fields `in_pos_files` / `on_board` "no"): sync undoes
+flags set by hand.
 
 **Blocks used many times go into the block library first**: `kat block new
 NAME`, write the function and its test harness in `blocks/NAME/NAME.py`, `kat block build

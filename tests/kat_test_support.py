@@ -188,7 +188,7 @@ def discover(strict: bool = False, gui: bool = False) -> dict[str, Capability]:
 # library in the table first: all 223 symbol libraries take 3 s of CPU per check on a two-part sheet,
 # and these take almost none. A test needing another one fails with "unknown ... library": add it here.
 SYMBOL_LIBS = ("Amplifier_Operational", "Analog_Switch", "Connector", "Connector_Generic", "Device", "LED",
-               "Transistor_BJT", "power")
+               "Mechanical", "Transistor_BJT", "power")
 FOOTPRINT_LIBS = ("Capacitor_SMD", "Connector_Coaxial", "Connector_IDC", "Connector_PinHeader_2.54mm", "Fiducial",
                   "LED_SMD", "MountingHole", "Package_DFN_QFN", "Package_SO", "Package_TO_SOT_SMD", "Resistor_SMD")
 

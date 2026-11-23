@@ -173,8 +173,10 @@ class Syncer:
                 if have != want:
                     s.set_field(ref, field, want, hide=True if have is None else None)
                     self.report["updated"].append({"ref": ref, "field": field, "from": have or "", "to": want})
-            if c.dnp is not None and syms[0].dnp != c.dnp and s.set_dnp(ref, c.dnp):
-                self.report["updated"].append({"ref": ref, "field": "DNP", "from": not c.dnp, "to": c.dnp})
+            for flag, want in c.flags.items():      # the design is the whole truth for the base flags
+                have = syms[0].flag(flag)
+                if s.set_flag(ref, flag, want):
+                    self.report["updated"].append({"ref": ref, "field": flag, "from": have, "to": want})
         new = [c for ref, c in self.comps.items() if ref not in matched]
         self.new_refs = {c.ref for c in new}
         if new:
@@ -209,8 +211,8 @@ class Syncer:
             self.s.set_field(c.ref, TAG, c.tag, hide=True, unit=unit)
         for field, value in c.fields.items():
             self.s.set_field(c.ref, field, value, hide=True, unit=unit)
-        if c.dnp:
-            self.s.set_dnp(c.ref)
+        for flag, want in c.flags.items():
+            self.s.set_flag(c.ref, flag, want)
         self.s.autoplace_fields(sym)
         return sym
 

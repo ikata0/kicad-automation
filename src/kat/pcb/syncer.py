@@ -127,6 +127,10 @@ def _set_child(node: list, key: str, value: str | None) -> bool:
     return True
 
 
+# a footprint's attr flag and the symbol flag that sets it
+_SYMBOL_FLAG = {"exclude_from_bom": "in_bom no", "exclude_from_pos_files": "in_pos_files no"}
+
+
 def _set_attr_flag(node: list, flag: str, on: bool) -> bool:
     attr = find(node, "attr")
     has = attr is not None and any(str(t) == flag for t in attr[1:])
@@ -213,7 +217,7 @@ class BoardSync:
         self.pcb, self.sch = Path(pcb), Path(sch)
         self.report: dict[str, list] = {k: [] for k in (
             "added", "updated", "replaced", "removed", "renamed", "renamed_nets",
-            "stale_tracks", "unresolved")}
+            "stale_tracks", "unresolved", "warnings")}
         self.changed = False
 
     # --- matching ------------------------------------------------------------------
@@ -266,10 +270,12 @@ class BoardSync:
             if not p.footprint:
                 self.report["unresolved"].append({"ref": ref, "problem": "no footprint"})
                 continue
+            was = None
             if f.lib_id != p.footprint:
+                was = {str(t) for t in (find(f.node, "attr") or [None])[1:]}
                 f = self._replace(board, f, p)
                 matched[ref] = f
-            self._update(f, p, pin_net)
+            self._update(f, p, pin_net, was=was)
         names = self._renamed_sheets(board)
         if names:
             self.report["renamed_instances"] = [{"from": k, "to": v} for k, v in sorted(names.items())]
@@ -317,8 +323,11 @@ class BoardSync:
 
     # --- parts -----------------------------------------------------------------------
 
-    def _update(self, f: Footprint, p: Part, pin_net: dict, new: bool = False) -> None:
-        """Make the footprint match the part; ``new`` parts are reported as added only."""
+    def _update(self, f: Footprint, p: Part, pin_net: dict, new: bool = False, was: set | None = None) -> None:
+        """Make the footprint match the part; ``new`` parts are reported as added only.
+        ``was``: the attr flags of the footprint a library one just replaced. A BOM or
+        position exclusion a library footprint (new or replacing) brings and the symbol does
+        not set is cleared with a warning."""
         def note(field_, old, value):
             if not new:
                 self.report["updated"].append({"ref": p.ref, "field": field_, "from": old, "to": value})
@@ -342,9 +351,22 @@ class BoardSync:
                 f.remove_field(k)
         for key, val in (("path", p.path), ("sheetname", p.sheetname), ("sheetfile", p.sheetfile)):
             self.changed |= _set_child(f.node, key, val)
-        self.changed |= _set_attr_flag(f.node, "dnp", p.dnp)
-        self.changed |= _set_attr_flag(f.node, "exclude_from_bom", p.exclude_from_bom)
-        self.changed |= _set_attr_flag(f.node, "exclude_from_pos_files", p.exclude_from_pos_files)
+        for flag, on in (("dnp", p.dnp), ("exclude_from_bom", p.exclude_from_bom),
+                         ("exclude_from_pos_files", p.exclude_from_pos_files)):
+            attr = find(f.node, "attr")
+            had = attr is not None and any(str(t) == flag for t in attr[1:])
+            if not _set_attr_flag(f.node, flag, on):
+                continue
+            before = had if was is None else flag in was
+            if before != on:
+                note(flag, before, on)
+            else:
+                self.changed = True
+            if (new or was is not None) and had and flag in _SYMBOL_FLAG:
+                self.report["warnings"].append({
+                    "ref": p.ref, "flag": flag,
+                    "warning": f"the library footprint {p.footprint} sets {flag}, the symbol does not: "
+                               f"set {_SYMBOL_FLAG[flag]} on the symbol (in the design) to keep it"})
         if _set_variants(f.node, p.variants):
             if not new:
                 self.report["updated"].append({"ref": p.ref, "field": "variants", "to": p.variants})

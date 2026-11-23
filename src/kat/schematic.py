@@ -106,8 +106,14 @@ class PlacedSymbol:
     @property
     def dnp(self) -> bool:
         """KiCad's DNP (do not populate) flag."""
-        d = find(self.node, "dnp")
-        return bool(d) and len(d) > 1 and str(d[1]) == "yes"
+        return self.flag("dnp")
+
+    def flag(self, name: str) -> bool:
+        """One of KiCad's symbol flags (``dnp``, ``exclude_from_sim``, ``in_bom``,
+        ``on_board``, ``in_pos_files``); KiCad's default when the symbol does not say."""
+        from .netlist import FLAG_DEFAULTS
+        d = find(self.node, name)
+        return FLAG_DEFAULTS[name] if d is None or len(d) < 2 else str(d[1]) == "yes"
 
 
 class SheetBox:
@@ -461,16 +467,23 @@ class Schematic:
 
     def set_dnp(self, ref: str, dnp: bool = True) -> bool:
         """Set KiCad's DNP flag on all units of ``ref``; True if something changed."""
+        return self.set_flag(ref, "dnp", dnp)
+
+    def set_flag(self, ref: str, name: str, on: bool) -> bool:
+        """Set one of KiCad's symbol flags (``dnp``, ``in_bom``, ...; see ``PlacedSymbol.flag``)
+        on all units of ``ref``; True if something changed."""
+        order = ("exclude_from_sim", "in_bom", "on_board", "in_pos_files", "dnp", "uuid")  # a symbol's
         changed = False
         for s in self.find_symbols(ref):
-            if s.dnp == dnp:
+            if s.flag(name) == on:
                 continue
-            d = find(s.node, "dnp")
+            d = find(s.node, name)
             if d is None:
-                at = next(i for i, c in enumerate(s.node) if head(c) == "uuid")
-                s.node.insert(at, [Sym("dnp"), Sym("yes" if dnp else "no")])
+                later = order[order.index(name) + 1:]
+                at = next(i for i, c in enumerate(s.node) if head(c) in later)
+                s.node.insert(at, [Sym(name), Sym("yes" if on else "no")])
             else:
-                d[1:] = [Sym("yes" if dnp else "no")]
+                d[1:] = [Sym("yes" if on else "no")]
             changed = True
         return changed
 

@@ -45,8 +45,7 @@ from .sexpr import Sym, find, find_all, head
 
 __all__ = ["apply", "compare", "listing", "load", "precheck", "resolve", "variants_file"]
 
-FLAGS = ("dnp", "exclude_from_sim", "in_bom", "on_board", "in_pos_files")     # KiCad's order
-_DEFAULT = {"dnp": False, "exclude_from_sim": False, "in_bom": True, "on_board": True, "in_pos_files": True}
+from .netlist import FLAGS, FLAG_DEFAULTS as _DEFAULT     # FLAGS in KiCad's order
 _SELECT = ("ref", "tag", "block")
 _REFUSED = ("Reference", "Footprint")
 OWNED = "variant_owned"
@@ -348,6 +347,44 @@ def compare(root: Path | str, design: Path | str) -> dict | None:
     diffs = {k: rep[k] for k in ("added", "changed", "removed", "fields_added")}
     ok = not any(diffs.values()) and not rep["names_differ"]
     return {"ok": ok, **diffs, **({"names": rep["names"]} if rep["names_differ"] else {})}
+
+
+def base_flags(root: Path | str) -> dict[str, dict[str, bool]]:
+    """KiCad's base flags (``dnp``, ``exclude_from_sim``, ``in_bom``, ``on_board``,
+    ``in_pos_files``) of every part in the schematic ``root`` (hierarchy included), by
+    reference. Read from the symbols: KiCad's netlist leaves ``on_board`` no parts out and
+    does not carry ``exclude_from_sim``."""
+    root = Path(root).resolve()
+    top = Schematic(root)
+    out: dict[str, dict[str, bool]] = {}
+    for inst in hierarchy.tree(root):
+        s = Schematic(Path(inst["file"]))
+        want = f"/{top.root_uuid}{inst['uuids']}"
+        for sym in s.symbols():
+            pnode = _instance_path(sym.node, top.project_name, want)
+            ref = str(find(pnode, "reference")[1]) if pnode is not None and find(pnode, "reference") else sym.ref
+            if not ref.startswith("#"):
+                out[ref] = _flags(sym.node)
+    return out
+
+
+def flag_differences(root: Path | str, design: Path | str, sheets: bool = False) -> list[dict]:
+    """Base flags of the schematic ``root`` that differ from ``design`` (a netlist; a flag
+    the design does not set means KiCad's default): [{ref, field, drawn, design}].
+    ``sheets``: blocks are drawn as sheets; parts inside one get a ``hint`` (the block's
+    sheet serves all its instances, so sync does not rewrite it)."""
+    comps, _ = netlist.read_design(Path(design))
+    drawn = base_flags(root)
+    out = []
+    for ref, c in sorted(comps.items()):
+        have = drawn.get(ref)
+        if have is None:
+            continue                    # a missing part is reported by the netlist comparison
+        for flag in FLAGS:
+            if have[flag] != c.flags[flag]:
+                out.append({"ref": ref, "field": flag, "drawn": have[flag], "design": c.flags[flag],
+                            **({"hint": f"{c.block}: set it in the block, or use a variant"} if sheets and c.block else {})})
+    return out
 
 
 def listing(path: Path | str) -> dict:

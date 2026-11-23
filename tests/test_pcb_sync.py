@@ -45,6 +45,29 @@ def test_first_sync_creates_board_with_parity_and_is_idempotent(project, tmp_pat
     assert not again["changed"] and board_of(project).read_text() == text
 
 
+def test_mechanical_part_stays_out_of_bom_and_position_files(project, tmp_path):
+    """FR-059: a mounting hole whose design sets in_bom/in_pos_files no is absent from
+    KiCad's BOM and position file; without them the board sync clears the library
+    footprint's exclusions with a warning, and reports each flag change."""
+    from kat.pcb.assembly_check import export_bom, export_pos
+    parts = {**BASE_PARTS, "H1": ("Mechanical", "MountingHole", "MountingHole", "tag-h1")}
+    fps = {**GOOD_FP, "H1": "MountingHole:MountingHole_3.2mm_M3"}
+    design(project, tmp_path, parts, footprints=fps, fields={**MPN, "H1": {"MPN": "M3"}})
+    with kat.edit(project) as s:
+        s.move("H1", to=(180, 150))     # sync put its value onto a power symbol's (not FR-059)
+    r = pcb_ok(project)
+    assert {(w["ref"], w["flag"]) for w in r["warnings"]} == {("H1", "exclude_from_bom"),
+                                                             ("H1", "exclude_from_pos_files")}
+    mech = {**MPN, "H1": {"MPN": "M3", "in_bom": "no", "in_pos_files": "no"}}
+    design(project, tmp_path, parts, footprints=fps, fields=mech, name="mech.net")
+    r = pcb_ok(project)
+    assert not r["warnings"]
+    assert {(u["ref"], u["field"], u["from"], u["to"]) for u in r["updated"]} == {
+        ("H1", "exclude_from_bom", False, True), ("H1", "exclude_from_pos_files", False, True)}
+    assert "H1" not in {row["Reference"] for row in export_bom(project, ["Value"])}
+    assert "H1" not in export_pos(board_of(project)) and "R1" in export_pos(board_of(project))
+
+
 def test_design_change_keeps_placement_and_reports_stale_copper(project, tmp_path):
     design(project, tmp_path)
     pcb_ok(project)

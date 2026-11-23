@@ -34,7 +34,13 @@ class Component:
     tag: str  # SKiDL tag qualified by the block instance ("CH_A/RC1/r"), "" if absent
     fields: dict[str, str] = field(default_factory=dict)  # custom fields, e.g. MPN
     block: str = ""  # block instance path ("CH_A/RC1"), "" at the top level
-    dnp: bool | None = None  # KiCad's DNP flag; None: the design does not say
+    # KiCad's base assembly flags, all of FLAGS: what the design sets, KiCad's default otherwise
+    flags: dict[str, bool] = field(default_factory=lambda: dict(FLAG_DEFAULTS))
+
+    @property
+    def dnp(self) -> bool:
+        """KiCad's DNP (do not populate) flag the design asks for."""
+        return self.flags["dnp"]
 
 
 # netlist fields that are not custom part data
@@ -43,18 +49,49 @@ BLOCK, BLOCK_TYPE = "Block", "Block Type"
 _YES, _NO = {"1", "yes", "y", "true", "x", "dnp"}, {"0", "no", "n", "false", ""}
 
 
-def _dnp(ref: str, fields: dict[str, str], value: str) -> bool | None:
-    """The DNP flag a design part asks for: a ``DNP`` field (1/yes/true/x or 0/no/false,
-    removed from the custom fields) or the value ``DNP``; None if it says nothing."""
-    key = next((k for k in fields if k.upper() == "DNP"), None)
-    if key is not None:
-        v = fields.pop(key).strip().lower()
+# KiCad's symbol flags (in the order of a variant node) and their defaults
+FLAGS = ("dnp", "exclude_from_sim", "in_bom", "on_board", "in_pos_files")
+FLAG_DEFAULTS = {"dnp": False, "exclude_from_sim": False, "in_bom": True, "on_board": True, "in_pos_files": True}
+# netlist properties without a value (SKiDL's part.dnp / part.exclude_from_bom, KiCad's own)
+_FLAG_PROPS = {"dnp": ("dnp", True), "exclude_from_bom": ("in_bom", False),
+               "exclude_from_board": ("on_board", False), "exclude_from_pos_files": ("in_pos_files", False),
+               "exclude_from_sim": ("exclude_from_sim", True)}
+
+
+def _flags(ref: str, props: set[str], fields: dict[str, str], value: str) -> dict[str, bool]:
+    """The base flags a design part asks for (all of FLAGS): netlist properties (``dnp``,
+    ``exclude_from_bom``, ...), the value ``DNP``, then fields named like a flag (``DNP``,
+    ``in_bom``, ``on_board``, ``in_pos_files``, ``exclude_from_sim``; 1/yes/true or
+    0/no/false; removed from the custom fields). What none of them sets is KiCad's default."""
+    out = dict(FLAG_DEFAULTS)
+    for p in props:
+        if p in _FLAG_PROPS:
+            k, v = _FLAG_PROPS[p]
+            out[k] = v
+    if value.strip().upper() == "DNP":
+        out["dnp"] = True
+    for name in list(fields):
+        flag = next((f for f in FLAGS if f.lower() == name.lower()), None)
+        if flag is None:
+            continue
+        v = fields.pop(name).strip().lower()
         if v in _YES:
-            return True
-        if v in _NO:
-            return False
-        raise env.KatError(f"{ref}: DNP field {v!r}: use 1/yes/true or 0/no/false")
-    return True if value.strip().upper() == "DNP" else None
+            out[flag] = True
+        elif v in _NO:
+            out[flag] = False
+        else:
+            raise env.KatError(f"{ref}: {name} field {v!r}: use 1/yes/true or 0/no/false")
+    return out
+
+
+def board_nets(nets: dict[str, "Net"], comps: dict[str, Component]) -> dict[str, "Net"]:
+    """``nets`` without the pins of parts that are not on the board (``on_board`` no):
+    KiCad's netlist leaves such parts out."""
+    off = {r for r, c in comps.items() if not c.flags["on_board"]}
+    if not off:
+        return nets
+    out = {n: frozenset(p for p in pins if p[0] not in off) for n, pins in nets.items()}
+    return {n: pins for n, pins in out.items() if pins}
 
 
 def blocks_file(path: Path) -> Path:
@@ -91,7 +128,8 @@ def read_design(path: Path) -> tuple[dict[str, Component], dict[str, Net]]:
         custom = {k: v for k, v in fields.items()
                   if k not in _STANDARD and not (k == "Datasheet" and not v)}
         value = str(val[1]) if val and len(val) > 1 else ""
-        dnp = _dnp(ref, custom, value)
+        props = {str(find(p, "name")[1]) for p in find_all(c, "property")}
+        flags = _flags(ref, props, custom, value)
         if block:
             custom[BLOCK] = block
             if block in types:
@@ -100,7 +138,7 @@ def read_design(path: Path) -> tuple[dict[str, Component], dict[str, Net]]:
             ref=ref, lib_id=f'{find(src, "lib")[1]}:{find(src, "part")[1]}',
             value=value,
             footprint=str(fp[1]) if fp and len(fp) > 1 else "",
-            tag=f"{block}/{tag}" if block and tag else tag, fields=custom, block=block, dnp=dnp)
+            tag=f"{block}/{tag}" if block and tag else tag, fields=custom, block=block, flags=flags)
     return comps, read(path)
 
 

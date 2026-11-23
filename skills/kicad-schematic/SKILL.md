@@ -155,7 +155,11 @@ and outward directions while computing coordinates. Try a large pass with
 - Finish the sheet: `s.title(title=..., rev=..., date=..., comments={1: ...})`, notes and
   headings with `s.text("J1: rows 1-5", (x, y), size=2.54)`, paper with `s.page("A2")`.
 - Part data such as MPN belongs in SKiDL (`part.fields["MPN"] = "..."`); sync carries it.
-  DNP too: `part.fields["DNP"] = "1"` (or value `DNP`) sets KiCad's DNP flag.
+  So do the assembly flags: `part.dnp = True`, `part.exclude_from_bom = True`, or fields
+  named like KiCad's flags (`part.fields["in_pos_files"] = "no"`, `on_board`,
+  `exclude_from_sim`, `DNP`). The design is the whole truth: a flag it does not set goes back
+  to KiCad's default on the next sync, so never set them by hand in KiCad. A mechanical part
+  (mounting hole, fiducial) needs `in_bom` and `in_pos_files` "no" in the design.
 - Many instances of a library block on one flat sheet: arrange the block's own schematic
   once (`blocks/NAME/NAME_block.kicad_sch`), then `kat stamp SCH NAME all --at X,Y
   --step DX,DY --expect design.net` draws every instance like it, framed with its name

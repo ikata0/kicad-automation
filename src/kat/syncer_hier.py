@@ -733,11 +733,13 @@ def verify(root: Path, design: Design) -> dict:
     the design declares them."""
     from .pcb.syncer import read_design
     got = netlist.from_schematic(root)
-    cmp = netlist.compare(got, design.nets)
+    cmp = netlist.compare(got, netlist.board_nets(design.nets, design.comps))
     parts, _ = read_design(root)
     diffs = []
     for ref, c in design.comps.items():
         p = parts.get(ref)
+        if p is None and not c.flags["on_board"]:
+            continue                    # KiCad's netlist leaves it out
         if p is None:
             diffs.append({"ref": ref, "problem": "missing"})
             continue
@@ -747,6 +749,7 @@ def verify(root: Path, design: Design) -> dict:
                               "hint": f"{c.block or 'the top'}: make it a parameter of the block"
                               if what == "value" else ""})
     from . import variants
+    flags = variants.flag_differences(root, design.path, sheets=True)
     var = variants.compare(root, design.path)
-    return {"netlist_vs_expected": cmp, "parts": diffs, **({"variants": var} if var else {}),
-            "ok": cmp["match"] and not diffs and (var is None or var["ok"])}
+    return {"netlist_vs_expected": cmp, "parts": diffs, "flags": flags, **({"variants": var} if var else {}),
+            "ok": cmp["match"] and not diffs and not flags and (var is None or var["ok"])}

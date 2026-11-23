@@ -46,7 +46,9 @@ kat commands by themselves, passes through `kat batch-exec`, your reasoning thro
 
 1. **Sync**: `kat pcb sync PCB` (creates the board; later brings design changes, assembly
    variants included: `kat variants PCB`). Read
-   `added`, `replaced`, `removed`, `renamed_nets`, `stale_tracks`.
+   `added`, `replaced`, `removed`, `renamed_nets`, `stale_tracks`, and `warnings`: a library
+   footprint's BOM/position exclusion the symbol does not set is cleared (a mounting hole
+   from the schematic needs `in_bom` / `in_pos_files` "no" in the design).
 2. **Setup pass** (`setup.py`): outline, layer count, planes, mounting holes, net classes
    from the specification (current → width, voltage → clearance), keep-outs, pours. It is
    safe to run again: when the specification changes, edit it and re-run it.

@@ -18,24 +18,6 @@ file or its eventual tests.
 
 ## Schematic sync and blocks
 
-### FR-059: Carry assembly exclusions through schematic and board sync
-
-**Partial.** Make the design the explicit source for base schematic symbol
-flags (`in_bom`, `in_pos_files`, `exclude_from_sim`, `on_board`), via SKiDL part
-attributes or a design-side declaration. Have `kat sync` apply them and
-`kat check` report discrepancies. In particular, SKiDL's `exclude_from_bom`
-reaches the design netlist but does not update the symbol's `in_bom`.
-Preserve existing DNP handling and keep assembly flags consistent through
-schematic sync, board sync and `add_board_part`.
-
-Board sync already copies DNP, BOM exclusion and, since FR-063, position-file
-exclusion to footprints. But `src\kat\pcb\syncer.py` can change these flags
-without an `updated` entry. Report each change on an existing footprint as
-`{ref, field, from, to}`. Consider warning when sync clears a BOM or position
-exclusion set by the library footprint; this may belong in FR-060's assembly
-check instead. Verify both the sync report and KiCad's BOM and position exports
-with a generic mechanical footprint that should be absent from both.
-
 ### FR-030: Keep power symbols idempotent across syncs
 
 **Needs reproduction.** Reopened after a downstream report that hierarchical
@@ -740,3 +722,17 @@ A hierarchical `kat sync --dry-run` now reports `variants` as the real sync does
 the block library (same relative layout, `KAT_BLOCKS` pointed at the copy, journaling off), so
 instances the sync would add count too; the project stays untouched. Test:
 `tests/test_variants.py::test_dry_run_previews_what_the_sync_writes_new_instances_included`.
+
+### FR-059: Carry assembly exclusions through schematic and board sync
+
+The design is the whole truth for a symbol's base flags (`dnp`, `in_bom`,
+`on_board`, `in_pos_files`, `exclude_from_sim`): `netlist.read_design` reads SKiDL's
+`dnp` / `exclude_from_bom` properties, fields named like a flag and the value `DNP`
+(`Component.flags`, KiCad's default where the design says nothing). `kat sync` sets all five
+on every unit and reports each change as `{ref, field, from, to}`; `kat check --expect`
+reports differences in `flags`; a hierarchical sync's check names parts inside a block
+sheet ("set it in the block, or use a variant"). Board sync reports each attr flag change
+in `updated` and warns when a library footprint's BOM or position exclusion is cleared
+because the symbol does not set it. Tested with a mounting hole that KiCad's BOM and
+position exports leave out. KiCad's netlist omits `on_board no` parts, so the netlist
+comparisons leave them out too.

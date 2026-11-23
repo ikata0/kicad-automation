@@ -352,31 +352,40 @@ def test_custom_fields_and_project_library(project, tmp_path):
     assert not kat.sync(project, netfile("RC0402-1K2"))["changed"]
 
 
-def test_dnp_from_the_design(project, tmp_path):
-    """#14: part.fields["DNP"]="1" (or value DNP) sets KiCad's DNP flag; "0" clears it;
-    no field leaves it alone. The DNP field itself is not written to the symbol."""
+def test_base_flags_from_the_design(project, tmp_path):
+    """#14, FR-059: the design is the whole truth for a symbol's base flags: a DNP field
+    (or value DNP), SKiDL's exclude_from_bom property, fields named like a flag; what it
+    does not set goes back to KiCad's default. Flag fields are not written to the symbol;
+    ``kat check`` names a hand-made difference, sync resets and reports it."""
     parts = {"R1": ("Device", "R", "1k", "r1"), "R2": ("Device", "R", "DNP", "r2")}
     nets = {"A": [("R1", "1"), ("R2", "1")], "B": [("R1", "2"), ("R2", "2")]}
 
     def netfile(name, dnp):
-        path = write_netlist(tmp_path / f"{name}.net", parts, nets)
-        if dnp is not None:
-            path.write_text(path.read_text().replace(
-                '(field (name "SKiDL Tag") "r1")', f'(field (name "SKiDL Tag") "r1") (field (name "DNP") "{dnp}")'))
+        path = write_netlist(tmp_path / f"{name}.net", parts, nets,
+                             fields={"R1": {"DNP": dnp}, "R2": {"in_pos_files": "no"}})
+        path.write_text(path.read_text().replace(
+            '(ref "R2")', '(ref "R2") (property (name "exclude_from_bom"))'))
         return path
 
-    def flags():
-        return {x.ref: x.dnp for x in Schematic(project).symbols() if x.ref in parts}
+    def flags(ref):
+        sym = Schematic(project).find_symbols(ref)[0]
+        return {f: sym.flag(f) for f in netlist.FLAGS if sym.flag(f) != netlist.FLAG_DEFAULTS[f]}
 
     sync_ok(project, netfile("a", "1"))
-    assert flags() == {"R1": True, "R2": True}
-    assert Schematic(project).find_symbols("R1")[0].field("DNP") is None
+    assert flags("R1") == {"dnp": True}
+    assert flags("R2") == {"dnp": True, "in_bom": False, "in_pos_files": False}
+    sym = Schematic(project).find_symbols("R2")[0]
+    assert sym.field("in_pos_files") is None and Schematic(project).find_symbols("R1")[0].field("DNP") is None
     report = sync_ok(project, netfile("b", "0"))
-    assert {"ref": "R1", "field": "DNP", "from": True, "to": False} in report["updated"]
-    assert flags() == {"R1": False, "R2": True}
+    assert {"ref": "R1", "field": "dnp", "from": True, "to": False} in report["updated"]
+    assert flags("R1") == {}
     with kat.edit(project) as s:
-        s.schematic.set_dnp("R1")
-    assert not kat.sync(project, netfile("c", None))["changed"] and flags()["R1"]
+        s.schematic.set_flag("R1", "on_board", False)
+    c = kat.check(project, netfile("b", "0"))
+    assert c["flags"] == [{"ref": "R1", "field": "on_board", "drawn": False, "design": True}] and not c["ok"]
+    report = kat.sync(project, netfile("b", "0"))
+    assert {"ref": "R1", "field": "on_board", "from": False, "to": True} in report["updated"]
+    assert flags("R1") == {}
 
 
 @pytest.mark.requires("render")
