@@ -55,23 +55,6 @@ Downstream grid routers since needed, on dense multi-layer boards:
 
 Single tracks and vias can already be removed with `kat pcb remove --uuid / --at`.
 
-### FR-053: Preserve stamp records across KiCad refill saves
-
-**Partial; reported data loss needs reproduction.** Downstream reports that
-`kicad-cli pcb drc --refill-zones --save-board` drops `kat.stamp.*` board
-properties, leaving `ports()` empty on an already routed board. Preserve or
-restore records across kat-managed refill saves, including the retry path, and
-provide a durable recovery path for external KiCad saves. A missing record on a
-stamped board must produce an actionable warning rather than silently returning
-no ports; recovery must not require restamping routed copper.
-
-FR-043 already provides explicit `stamps --rebuild` recovery and reads legacy
-sidecars, but saves migrate and remove those sidecars. Reuse that recovery where
-possible rather than introducing a second stamp format. `kat pcb refill`
-already saves; the gap is preservation, not a missing `--save` flag. See
-`src\kat\pcb\stamping.py` and `src\kat\pcb\checks.py`. Recheck FR-043's normal-save
-claim specifically against KiCad's DRC save path.
-
 ### FR-054: Choose the board-view output filename
 
 **Partial.** Add an explicit output filename to `kat pcb view` (requested
@@ -480,7 +463,8 @@ which the warning says. Test: `test_zone_priority_lifts_block_pours_over_a_board
 ### FR-043: Keep stamp records with the board
 
 The stamp records are kept in the board file, one board property `kat.stamp.<instance>`
-each, holding the record as JSON. KiCad 10's save keeps them. `Board.stamps()` and
+each, holding the record as JSON. KiCad 10's save (`pcb upgrade`) keeps them; its DRC save
+(`--save-board`) drops them, see FR-053. `Board.stamps()` and
 `kat pcb stamps PCB` list them. An older `<board>.stamps.json` is read and moved into the
 board on the next save. `kat pcb stamps PCB --rebuild [INSTANCE...]` / `Board.rebuild_stamps`
 / `kat.pcb.stamps(pcb, rebuild=True)` recover lost records: block and side from the group
@@ -746,3 +730,31 @@ kicad-cli writes. Audit of the other external writers: `Board.save` / `Schematic
 (`pcb upgrade` / `sch upgrade`) were guarded already; `kat pcb variant-board` now guards its
 copy; exports write only new output files; symbol/footprint library upgrades are not
 project files. Test: `tests/test_gui.py` (lock → refusal, board and `.kicad_pro` bytes unchanged).
+
+### FR-053: Preserve stamp records across KiCad refill saves
+
+**Resolved.** Originally: partial; reported data loss needs reproduction. Downstream reports that
+`kicad-cli pcb drc --refill-zones --save-board` drops `kat.stamp.*` board
+properties, leaving `ports()` empty on an already routed board. Preserve or
+restore records across kat-managed refill saves, including the retry path, and
+provide a durable recovery path for external KiCad saves. A missing record on a
+stamped board must produce an actionable warning rather than silently returning
+no ports; recovery must not require restamping routed copper.
+
+FR-043 already provides explicit `stamps --rebuild` recovery and reads legacy
+sidecars, but saves migrate and remove those sidecars. Reuse that recovery where
+possible rather than introducing a second stamp format. `kat pcb refill`
+already saves; the gap is preservation, not a missing `--save` flag. See
+`src\kat\pcb\stamping.py` and `src\kat\pcb\checks.py`. Recheck FR-043's normal-save
+claim specifically against KiCad's DRC save path.
+
+Reproduced: on a stamped test board, `kat pcb refill` left `Board.stamps()` empty;
+KiCad 10.0's `pcb drc --refill-zones --save-board` writes the board without its top-level
+`(property ...)` nodes (`pcb upgrade`, kat's normal save, keeps them). Fixed: `checks.drc`
+reads the board properties before every DRC save (refill's first fill and retry, the
+coupling check's scratch fill) and puts back the dropped ones, then lets KiCad normalise the
+file. For saves outside kat (KiCad's own DRC dialog, scripts): `Board.unrecorded_stamps()`
+lists stamped groups without a record, `kat pcb stamps PCB` reports them as `unrecorded`
+with a hint, `Board.ports()` warns and `Board.ports(INSTANCE)` refuses, each naming
+`kat pcb stamps PCB --rebuild` (FR-043's recovery, no restamp). Test:
+`test_stamp_records_live_in_the_board_and_can_be_rebuilt`.

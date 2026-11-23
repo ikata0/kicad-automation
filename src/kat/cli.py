@@ -1376,8 +1376,9 @@ def build_parser() -> argparse.ArgumentParser:
                          description="Where each block instance was stamped (block, at, rot, side, origin,\n"
                                      "outline, layer map, ports), kept in the board file. --rebuild recovers\n"
                                      "records from the stamped groups and footprints (e.g. an older board whose\n"
-                                     "<board>.stamps.json is lost); the instances named are redone, else only\n"
-                                     "those without a record. Stamping still needs the schematic beside the board\n"
+                                     "<board>.stamps.json is lost, or a tool's save dropped the board properties;\n"
+                                     "without --rebuild such instances are listed as unrecorded); the instances\n"
+                                     "named are redone, else only those without a record. Stamping still needs the schematic beside the board\n"
                                      "to pair a hierarchical design's footprints.")
     s30.add_argument("pcb", metavar="PCB")
     s30.add_argument("instance", nargs="*", metavar="INSTANCE", help="with --rebuild: redo these")

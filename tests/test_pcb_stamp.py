@@ -1043,12 +1043,15 @@ def test_zone_priority_lifts_block_pours_over_a_board_pour(hier, tmp_path):
 
 def test_stamp_records_live_in_the_board_and_can_be_rebuilt(hier, tmp_path, capsys):
     """FR-043: the records are board properties (they survive KiCad's save and travel with
-    the file); an older stamps.json is moved in; lost records are fitted from the board."""
+    the file, and KiCad's DRC save of a refill (FR-053) does not lose them); an older
+    stamps.json is moved in; lost records are reported and fitted from the board."""
     c = copy_of(hier, tmp_path)
     pcb = c["top"]
     records = Board(pcb).stamps()
     assert set(records) == {"/CH_A", "/CH_B"} and not stamp_mod.stamps_file(pcb).exists()
     assert '(property "kat.stamp./CH_A"' in pcb.read_text()
+    kat.pcb.refill(pcb)                                      # KiCad's DRC save (FR-053)
+    assert Board(pcb).stamps() == records
     # an older board: the records in stamps.json, none in the board -> moved in on save
     b = Board(pcb)
     b.tree[:] = [x for x in b.tree if not (str(x[0]) == "property" and str(x[1]).startswith("kat.stamp."))]
@@ -1062,7 +1065,13 @@ def test_stamp_records_live_in_the_board_and_can_be_rebuilt(hier, tmp_path, caps
     b = Board(pcb)
     b.tree[:] = [x for x in b.tree if not (str(x[0]) == "property" and str(x[1]).startswith("kat.stamp."))]
     pcb.write_text(dumps(b.tree) + "\n")
-    assert Board(pcb).stamps() == {}
+    assert Board(pcb).stamps() == {} and Board(pcb).unrecorded_stamps() == ["/CH_A", "/CH_B"]
+    with pytest.warns(UserWarning, match="--rebuild"):
+        assert Board(pcb).ports() == {}
+    with pytest.raises(kat.KatError, match="--rebuild"):
+        Board(pcb).ports("/CH_A")
+    assert cli.main(["pcb", "stamps", str(pcb)]) == 0
+    assert json.loads(capsys.readouterr().out)["unrecorded"] == ["/CH_A", "/CH_B"]
     assert cli.main(["pcb", "stamps", str(pcb), "--rebuild"]) == 0
     res = json.loads(capsys.readouterr().out)
     assert sorted(res["rebuilt"]) == ["/CH_A", "/CH_B"] and not res["failed"], res

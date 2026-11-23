@@ -1003,17 +1003,39 @@ class StampMixin:
         legacy = json.loads(f.read_text(encoding="utf-8")) if f.exists() else {}
         return {**legacy, **_stored_stamps(self.tree), **self._stamps}
 
+    def unrecorded_stamps(self) -> list[str]:
+        """Instances stamped on this board (a ``/CH_A (BLOCK)`` group) that have no stamp
+        record, e.g. after a save by a tool that drops board properties: ``ports()`` knows
+        nothing of them until ``kat pcb stamps PCB --rebuild`` fits the records again."""
+        import re
+        have = self.stamps()
+        found = {m.group(1) for g in self._groups()
+                 if (m := re.fullmatch(r"(/\S+) \((\w+)(, bottom)?\)", str(g[1])))}
+        return sorted(i for i in found if i not in have and not any(i.startswith(t + "/") for t in found))
+
+    def _rebuild_hint(self, missing: list[str]) -> str:
+        return (f"{', '.join(missing)} {'is' if len(missing) == 1 else 'are'} stamped on {self.path.name} "
+                f"but {'has' if len(missing) == 1 else 'have'} no stamp record (lost by an external save?): "
+                f"run kat pcb stamps {self.path.name} --rebuild")
+
     def _stamp_record(self, instance: str) -> dict:
         """What the board (or this session) records for an instance."""
         return self.stamps().get(_norm(instance), {})
 
     def ports(self, instance: str | None = None) -> dict:
         """Port points of stamped instances on this board (``set_port`` on the block
-        board): {instance: {port: {x, y, net}}}, or one instance's {port: ...}."""
+        board): {instance: {port: {x, y, net}}}, or one instance's {port: ...}. Stamped
+        instances without a record give a warning (all) or a KatError (one) naming
+        ``kat pcb stamps PCB --rebuild``, never a silent empty result."""
         known = {k: v["ports"] for k, v in self.stamps().items()}
         if instance is None:
+            if missing := self.unrecorded_stamps():
+                import warnings
+                warnings.warn(self._rebuild_hint(missing), stacklevel=2)
             return known
         if _norm(instance) not in known:
+            if _norm(instance) in self.unrecorded_stamps():
+                raise env.KatError(self._rebuild_hint([_norm(instance)]))
             raise env.KatError(f"{instance} is not stamped on {self.path.name}")
         return known[_norm(instance)]
 

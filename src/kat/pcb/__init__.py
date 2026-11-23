@@ -445,10 +445,14 @@ def stamps(pcb: Path | str, rebuild: bool | list[str] = False) -> dict:
     """The board's stamp records ({instance: {block, at, rot, side, origin, outline, layer_map,
     ports, ...}}), kept in the board file. ``rebuild``: recover lost ones from the stamped
     groups and footprints (``Board.rebuild_stamps``; a list names instances to redo) and save
-    them; the result then also has rebuilt, kept and failed."""
+    them; the result then also has rebuilt, kept and failed. Stamped instances without a
+    record are listed as ``unrecorded`` with a hint to rebuild them."""
     report.touch(pcb)
     if not rebuild:
-        return tidy({"board": str(pcb), "stamps": Board(pcb).stamps()})
+        b = Board(pcb)
+        missing = b.unrecorded_stamps()
+        return tidy({"board": str(pcb), "stamps": b.stamps(),
+                     **({"unrecorded": missing, "hint": b._rebuild_hint(missing)} if missing else {})})
     with edit(pcb) as b:
         res = b.rebuild_stamps(None if rebuild is True else list(rebuild))
     return tidy({"board": str(pcb), **res, "stamps": Board(pcb).stamps()})

@@ -854,7 +854,10 @@ with kat.pcb.edit("top/top.kicad_pcb") as b:
   warns unless `kat block check NAME --sides both` passed with the same map.
 - **Stamp records** (block, at, rot, side, origin, outline, layer map, ports, zone priority
   offset) are kept in the board file, one `kat.stamp.<instance>` board property each, so they
-  survive KiCad's save and travel with the board (`b.stamps()`, `kat pcb stamps PCB`). An
+  survive KiCad's save and travel with the board (`b.stamps()`, `kat pcb stamps PCB`).
+  KiCad's DRC save (`kat pcb refill`) drops them; kat puts them back after it. A stamped
+  group without a record is listed by `kat pcb stamps` as `unrecorded` with a hint;
+  `b.ports()` warns and `b.ports(INSTANCE)` refuses, naming `--rebuild`. An
   older `<board>.stamps.json` is read and moved in on the next save. `kat pcb stamps PCB
   --rebuild [INSTANCE...]` (`b.rebuild_stamps`) recovers lost records: block and side from
   the group name, rotation and position fitted to the footprints with the stamp's own
@@ -1390,6 +1393,7 @@ column in place of the net.
 | KiCad 10 keeps assembly-variant overrides as `(variant ...)` children of each symbol's `(instances (project (path ...)))`; annotation rebuilt those paths (and a flat sync's part replacement rebuilt the symbol), so a no-op hierarchical `kat sync` deleted every variant and `bom --variant` fell back to the base | `hierarchy.annotate` updates reference, unit and page of an existing path in place and keeps its other children; a replaced part takes its old instance data along (FR-063) |
 | KiCad's BOM `${DNP}` column is localized ("Nicht bestücken"), `${EXCLUDE_FROM_BOM}` stays empty, and `--include-excluded-from-bom` does not bring back a part a variant excludes | `pcb assembly` takes the rows and field values from the BOM export, the flags from the netlist (`dnp`, `exclude_from_bom`, `exclude_from_pos_files`, per-variant overrides) and the footprints; only a non-empty `DNP` cell counts |
 | A BOM grouped by value, footprint and MPN puts fitted and DNP parts of one value into one row, and KiCad marks the whole row DNP (C1-C6 "DNP" with only C4-C6 unfitted in a variant) | `kat pcb fab` groups by `${DNP}` too (`BOM_GROUP`) |
+| `kicad-cli pcb drc --refill-zones --save-board` (KiCad 10.0) writes the board without its top-level `(property ...)` nodes, so the stamp records went missing after `kat pcb refill`; `kicad-cli pcb upgrade` keeps them | `checks.drc` reads the board properties before a DRC save and puts back the ones it dropped (FR-053) |
 | A root power pin wired by hand straight to a sheet-box pin takes the net name of the block's port (`vs`), not the design's (`+5V`); sync attaches the power symbol, which looked like a duplicate, and drew the box pin's label stub over the hand-drawn wire | The symbol is the naming repair `kat check` asks for (a name difference), added once; a box pin a wire already ends on takes its label on the pin (FR-030) |
 
 ## 8. Open points

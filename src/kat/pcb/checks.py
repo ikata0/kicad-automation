@@ -23,6 +23,7 @@ def drc(pcb: Path, parity: bool = True, refill: bool = False, save: bool = False
     if refill and save:
         from ..gui import guard
         guard(pcb)
+        kept = _board_properties(pcb)
     args = ["pcb", "drc", "--format", "json", "--severity-all"]
     if parity:
         args.append("--schematic-parity")
@@ -36,6 +37,8 @@ def drc(pcb: Path, parity: bool = True, refill: bool = False, save: bool = False
         if not out.exists():
             raise env.KatError(f"kicad-cli pcb drc wrote no report for {pcb}")
         data = json.loads(out.read_text(encoding="utf-8"))
+    if refill and save:
+        _restore_properties(pcb, kept)
     conv = lambda vs: [{"severity": v["severity"], "type": v["type"],
                         "description": v["description"], "items": _items(v)} for v in vs]
     violations = conv(data.get("violations", []))
@@ -45,6 +48,29 @@ def drc(pcb: Path, parity: bool = True, refill: bool = False, save: bool = False
             "by_type": dict(Counter(v["type"] for v in violations).most_common()),
             "errors": sum(v["severity"] == "error" for v in violations),
             "warnings": sum(v["severity"] == "warning" for v in violations)}
+
+
+def _board_properties(pcb: Path) -> list:
+    """The board's own top-level ``(property name value)`` nodes (kat's stamp records)."""
+    from ..sexpr import head, loads
+    return [c for c in loads(Path(pcb).read_text(encoding="utf-8")) if head(c) == "property"]
+
+
+def _restore_properties(pcb: Path, kept: list) -> None:
+    """Put back board properties that KiCad's DRC save (``--save-board``) dropped: KiCad 10.0
+    writes the filled board without them, losing kat's stamp records (FR-053)."""
+    from ..sexpr import dumps, head, loads
+    from .board import normalize
+    tree = loads(Path(pcb).read_text(encoding="utf-8"))
+    have = {str(c[1]) for c in tree if head(c) == "property" and len(c) > 1}
+    lost = [c for c in kept if len(c) > 1 and str(c[1]) not in have]
+    if not lost:
+        return
+    at = next((i + 1 for i, c in enumerate(tree) if head(c) == "setup"),
+              next((i for i, c in enumerate(tree) if head(c) in ("net", "footprint")), len(tree)))
+    tree[at:at] = lost
+    Path(pcb).write_text(dumps(tree) + "\n", encoding="utf-8")
+    normalize(pcb)
 
 
 FILL_TYPES = ("clearance", "shorting_items", "hole_clearance", "copper_edge_clearance")
