@@ -351,7 +351,7 @@ def cmd_pcb(a):
             except (ValueError, AssertionError):
                 raise env.KatError("--region needs X,Y,W,H")
         return kat.pcb.view(a.pcb, a.around, xy(a.at) if a.at else None, region, a.layers,
-                            a.margin, a.ppm, texts=not a.no_texts)
+                            a.margin, a.ppm, a.out, texts=not a.no_texts)
     raise env.KatError(f"unknown pcb action {a.pcb_cmd!r}")
 
 
@@ -1625,13 +1625,15 @@ def build_parser() -> argparse.ArgumentParser:
                                     "top, bottom, placement, copper, copper-top, copper-bottom, assembly,\n"
                                     "assembly-bottom (fab + courtyard, pads sketched), In1, ... or KiCad layer\n"
                                     "names. --no-texts leaves the reference/value texts out (block scale).\n"
-                                    "A pixel maps back to board mm as x = region[0] + px / px_per_mm.")
+                                    "A pixel maps back to board mm as x = region[0] + px / px_per_mm.\n"
+                                    "-o FILE writes the PNG there instead of a timestamped file in views/.")
     s4.add_argument("pcb", metavar="PCB")
     s4.add_argument("--around", metavar="REF"); s4.add_argument("--at", metavar="X,Y")
     s4.add_argument("--region", metavar="X,Y,W,H")
     s4.add_argument("--layers", default="top", help="set name or F.Cu,B.Cu,... (default top)")
     s4.add_argument("--no-texts", action="store_true", help="hide the footprints' reference, value and user texts")
     s4.add_argument("--margin", type=float); s4.add_argument("--ppm", type=float, help="px per mm")
+    s4.add_argument("-o", "--out", metavar="FILE", help="PNG file to write (default: views/<time>_pcb_...png)")
     return p
 
 

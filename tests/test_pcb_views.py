@@ -47,9 +47,12 @@ def test_view_around_part_and_cache(board, capsys):
     assert v["px_per_mm"] <= 120 and max(v["width"], v["height"]) <= 1601
     kat.pcb.view(board, at=(v["region"][0] + 1, v["region"][1] + 1), layers="copper")
     assert len(list((board.parent / "views" / ".cache").glob("*.copper.*.svg"))) == 1
-    assert cli.main(["pcb", "view", str(board), "--region", "0,0,10,5", "--layers", "F.Cu,Edge.Cuts"]) == 0
+    png = board.parent / "named" / "corner.png"
+    assert cli.main(["pcb", "view", str(board), "--region", "0,0,10,5", "--layers", "F.Cu,Edge.Cuts",
+                     "-o", str(png)]) == 0
     out = json.loads(capsys.readouterr().out)
     assert out["region"] == [0, 0, 10, 5] and out["layers"] == ["F.Cu", "Edge.Cuts"]
+    assert Path(out["png"]) == png and png.exists()                  # FR-054
     with pytest.raises(kat.KatError):
         kat.pcb.view(board, around="R1", at=(1, 1))
 

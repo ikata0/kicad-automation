@@ -276,7 +276,7 @@ with kat.pcb.edit(PCB) as b:
    `In<n>.png`; `tiles/` when the board is large; `3d_top.png` for a last look.
 3. Close-ups: `kat pcb view PCB --around U1 --layers copper` (sets: top, bottom, placement,
    copper, copper-top, copper-bottom, assembly, assembly-bottom, In1…, or `F.Cu,F.SilkS`;
-   `--no-texts` hides references at block scale). Pixel → mm: `x = region[0] + px / px_per_mm`.
+   `--no-texts` hides references at block scale; `-o FILE` picks the file name). Pixel → mm: `x = region[0] + px / px_per_mm`.
 4. Write down what you found; it goes into the next pass's docstring.
 5. Warnings you judge harmless (a port via joined on one layer only: `via_dangling`) and
    edge-mount parts (`overhang` in the check) pass the gate only when named:

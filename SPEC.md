@@ -580,7 +580,8 @@ exact. Pictures are for what numbers cannot say (fan-out, detours, crowding, sil
   `top.png`, `bottom.png`, `placement.png`, `In<n>.png` (whole board, about 2000 px),
   `tiles/top|bottom/` at 30 px/mm when the overview is coarser, `findings/` close-ups
   (`--finding-crops N`), `3d_top.png` / `3d_bottom.png`, `check.json`, a board copy.
-- `kat pcb view PCB --around REF | --at X,Y | --region X,Y,W,H --layers SET` → `views/`.
+- `kat pcb view PCB --around REF | --at X,Y | --region X,Y,W,H --layers SET` → `views/`
+  (a timestamped file), or `-o/--out FILE`.
   Sets: `top`, `bottom`, `placement`, `copper`, `copper-top`, `copper-bottom` (copper and
   outline only), `assembly`, `assembly-bottom` (fab and courtyard, pads sketched), `In1`…,
   or KiCad layer names. `--no-texts` hides footprint references and values (at block

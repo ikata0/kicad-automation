@@ -55,14 +55,6 @@ Downstream grid routers since needed, on dense multi-layer boards:
 
 Single tracks and vias can already be removed with `kat pcb remove --uuid / --at`.
 
-### FR-054: Choose the board-view output filename
-
-**Partial.** Add an explicit output filename to `kat pcb view` (requested
-`-o FILE`, with `--out` consistent with other commands), so scripts need not
-search timestamped view files. `src\kat\pcb\views.py` already accepts `out`;
-the CLI in `src\kat\cli.py` does not expose it. Keep the current timestamped
-default, JSON result and image journaling.
-
 ### FR-056: List and link disconnected copper clusters
 
 **Partial.** Proposed `kat pcb clusters NET` should list every electrically
@@ -758,3 +750,15 @@ lists stamped groups without a record, `kat pcb stamps PCB` reports them as `unr
 with a hint, `Board.ports()` warns and `Board.ports(INSTANCE)` refuses, each naming
 `kat pcb stamps PCB --rebuild` (FR-043's recovery, no restamp). Test:
 `test_stamp_records_live_in_the_board_and_can_be_rebuilt`.
+
+### FR-054: Choose the board-view output filename
+
+**Resolved.** Originally: partial. Add an explicit output filename to `kat pcb view` (requested
+`-o FILE`, with `--out` consistent with other commands), so scripts need not
+search timestamped view files. `src\kat\pcb\views.py` already accepts `out`;
+the CLI in `src\kat\cli.py` does not expose it. Keep the current timestamped
+default, JSON result and image journaling.
+
+Done: `kat pcb view PCB ... -o/--out FILE` writes the PNG to FILE (folders made); without
+it the timestamped file in `views/` as before. JSON result and journaling unchanged. Test:
+`test_view_around_part_and_cache`.
