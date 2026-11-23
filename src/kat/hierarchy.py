@@ -378,12 +378,36 @@ def annotate(root: Path | str, per_page: int = 100,
 
 
 def _set_instances(node: list, project: str, paths: list) -> None:
+    """Make ``project``'s instance paths of ``node`` the given ``(path ...)`` nodes. A path
+    that exists already is updated in place: only the children the new node has
+    (reference, unit or page) change; the rest (KiCad 10 ``(variant ...)`` overrides,
+    unknown tokens) stays. Paths not given are dropped, other projects are kept."""
     inst = find(node, "instances")
     if inst is None:
         inst = [Sym("instances")]
         node.append(inst)
-    keep = [p for p in find_all(inst, "project") if str(p[1]) != project]
-    inst[1:] = keep + [[Sym("project"), project, *paths]]
+    proj = next((p for p in find_all(inst, "project") if str(p[1]) == project), None)
+    if proj is None:
+        inst.append([Sym("project"), project, *paths])
+        return
+    old = {str(p[1]): p for p in find_all(proj, "path")}
+    out = []
+    for new in paths:
+        cur = old.get(str(new[1]))
+        if cur is None:
+            out.append(new)
+            continue
+        at = 2                                      # missing children go after the previous one
+        for child in new[2:]:
+            have = find(cur, head(child))
+            if have is not None:
+                at = cur.index(have)
+                cur[at] = child
+            else:
+                cur.insert(at, child)
+            at += 1
+        out.append(cur)
+    proj[2:] = [c for c in proj[2:] if not (isinstance(c, list) and head(c) == "path")] + out
 
 
 def references(root: Path | str) -> dict[str, dict[str, str]]:

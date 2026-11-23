@@ -33,7 +33,11 @@ not only kat's model.
 
 ### FR-063: Support native KiCad 10 assembly variants
 
-**Open.** Keep one schematic and layout per board while supporting named
+**Partial: phase 1 done.** Annotation and flat part replacement keep KiCad's
+`(variant ...)` instance children (SPEC §7). Declaration, board sync and per-variant
+exports follow. Format findings: `../kicad-sandbox/experiments/2026-11-23-variants/README.md`.
+
+Keep one schematic and layout per board while supporting named
 assembly variants with their own BOM and position exports. A downstream
 KiCad 10.0.6 test confirmed that a manually authored variant appeared in
 `kicad-cli sch export bom --variant NAME`, but a no-op hierarchical `kat sync`

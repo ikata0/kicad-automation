@@ -7,6 +7,7 @@ import pytest
 import kat
 from kat import cli, netlist
 from kat.schematic import Schematic
+from kat.sexpr import find
 
 pytestmark = pytest.mark.requires("kicad", "symbols", "footprints")
 
@@ -174,11 +175,17 @@ def test_net_rename_renames_labels(project, tmp_path):
 def test_library_change_replaces_part_in_place(project, tmp_path):
     sync_ok(project, write_netlist(tmp_path / "a.net", BASE_PARTS, BASE_NETS))
     before = positions(project)
+    variant = '(variant (name "LITE") (dnp yes))'     # KiCad 10 per-instance data stays (FR-063)
+    text = project.read_text()
+    at = text.index('(reference "R1")')
+    project.write_text(text[:at] + variant + " " + text[at:])
     parts = dict(BASE_PARTS, R1=("Device", "R_Small", "330", "tag-r1"))
     report = sync_ok(project, write_netlist(tmp_path / "b.net", parts, BASE_NETS))
     assert report["replaced"] == [{"ref": "R1", "lib_id": "Device:R_Small"}]
     r1 = Schematic(project).find_symbols("R1")[0]
     assert r1.lib_id == "Device:R_Small" and (r1.place.x, r1.place.y) == before[("R1", 1)]
+    path = find(find(find(r1.node, "instances"), "project"), "path")
+    assert find(path, "variant") is not None and str(find(path, "reference")[1]) == "R1"
 
 
 def test_new_parts_go_below_existing_drawing(project, tmp_path):

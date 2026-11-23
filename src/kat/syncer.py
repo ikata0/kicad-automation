@@ -184,13 +184,18 @@ class Syncer:
 
     def _replace(self, c: Component, syms) -> None:
         places = {sym.unit: sym.place for sym in syms}
+        # per-instance data beyond reference and unit (KiCad 10 variants) stays with the part
+        kept = {sym.unit: find(sym.node, "instances") for sym in syms}
         self.s.remove_symbol(c.ref)
         sdef = self.s.ensure_lib_symbol(c.lib_id)
         leftover = []
         for unit in range(1, library.unit_count(sdef) + 1):
             if unit in places:
                 p = places[unit]
-                self._add(c, unit, p.x, p.y, p.rot, p.mirror)
+                sym = self._add(c, unit, p.x, p.y, p.rot, p.mirror)
+                if kept.get(unit) is not None:
+                    new = find(sym.node, "instances")
+                    sym.node[sym.node.index(new)] = kept[unit]
             else:
                 leftover.append(unit)
         if leftover:

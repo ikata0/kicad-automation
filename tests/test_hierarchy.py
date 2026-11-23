@@ -133,6 +133,29 @@ def test_erc_clean_and_the_block_keeps_its_own_numbering(design):
 
 
 @pytest.mark.requires("kicad", "symbols", "footprints")
+def test_annotation_keeps_kicad_variants_of_an_instance(design, tmp_path):
+    """FR-063: re-annotating (every hierarchical kat sync does) keeps a KiCad 10
+    ``(variant ...)`` override on an instance path and updates only reference and unit."""
+    rc = design["rc"]
+    text = rc.read_text()
+    at = text.index('(reference "R701")')
+    rc.write_text(text[:at] + '(variant (name "LITE") (dnp yes) (field (name "Value") (value "9k1"))) '
+                  + text[at:])
+    pro = design["top"].with_suffix(".kicad_pro")
+    d = json.loads(pro.read_text())
+    d.setdefault("schematic", {})["variants"] = [{"name": "LITE"}]
+    pro.write_text(json.dumps(d, indent=2))
+    hierarchy.annotate(design["top"])
+    hierarchy.annotate(design["top"], per_page=10)      # renumbered: the override moves along
+    out = tmp_path / "lite.csv"
+    kat.env.run_cli("sch", "export", "bom", "--variant", "LITE", "--fields", "Reference,Value,${DNP}",
+                    "-o", str(out), str(design["top"]))
+    rows = {r.split(",")[0].strip('"'): r for r in out.read_text().splitlines()[1:]}
+    assert '"9k1"' in rows["R71"] and rows["R71"].count('""') == 0      # CH_B/RC1, page 7
+    assert '"1k"' in rows["R31"] and rows["R31"].endswith('""')         # CH_A/RC1: base
+
+
+@pytest.mark.requires("kicad", "symbols", "footprints")
 def test_sheet_pins_and_refusals(design):
     s = kat.load(design["top"])
     names = [sh["name"] for sh in s.sheets()]

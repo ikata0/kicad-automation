@@ -1308,6 +1308,7 @@ column in place of the net.
 | A polished trace ran to a vertex and straight back along almost the same path before turning off: each leg is near 0/180 degrees (no angle cost), the length term only charges growth over the input, and merging only removes collinear vertices | `pcb polish` moves the tip of a doubled-back detour (turn of at least `reversal_turn_deg`, 150) onto its nearer neighbour and drops it, as a checked move (`simplify`); a best state never keeps such a tip that a later state removed |
 | Polished geometry was first judged only by the polisher's own model | `apply` refuses a changed board or case, reads the copy back, and compares KiCad's DRC with the original per net |
 | Escaping a SKiDL pin name with `+` or brackets (`u[r"IN\+"]`) finds no pin: names match exactly unless `match_pin_regex` is set | write the name literally, `u["IN+"]`; a name with a space takes the pin number (`tests/test_skidl_blocks.py` pins this down) |
+| KiCad 10 keeps assembly-variant overrides as `(variant ...)` children of each symbol's `(instances (project (path ...)))`; annotation rebuilt those paths (and a flat sync's part replacement rebuilt the symbol), so a no-op hierarchical `kat sync` deleted every variant and `bom --variant` fell back to the base | `hierarchy.annotate` updates reference, unit and page of an existing path in place and keeps its other children; a replaced part takes its old instance data along (FR-063) |
 
 ## 8. Open points
 
