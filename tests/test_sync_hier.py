@@ -414,6 +414,26 @@ def test_supplies_reaching_only_blocks_get_one_flag_at_the_top(lib, tmp_path):
     again = kat.sync(sch, d / "design.net")
     assert not again["flags"] and flags(sch) == 3, again
 
+    # FR-030: a box pin wired by hand (sync's stub and label replaced by a longer wire with
+    # the label at its far end) gets its label on the pin, not a stub over that wire
+    s = Schematic(sch)
+    v = next(b for b in hierarchy.sheets(s) if b["name"] == "T0")["pins"]["vs"]
+    pin, end = (v["x"], v["y"]), (v["x"] - 2.54, v["y"])
+    s.tree[:] = [n for n in s.tree if not (find(n, "at") is not None and str(n[0]) == "label"
+                                           and (float(find(n, "at")[1]), float(find(n, "at")[2])) == end)]
+    s.tree.remove(next(w for w, seg in zip(s.wires(), s.segments()) if pin in seg))
+    s.add_wire([pin, (pin[0] - 7.62, pin[1])], junctions=False)
+    s.add_label("+5V", pin[0] - 7.62, pin[1], 180)
+    s.save()
+    hand = kat.sync(sch, d / "design.net")
+    assert hand["check"]["ok"], hand["check"]
+    s = Schematic(sch)
+    on_row = [seg for seg in s.segments() if all(abs(a[1] - pin[1]) < 1e-6 and pin[0] - 8 < a[0] <= pin[0] for a in seg)]
+    assert len(on_row) == 1, on_row                          # the hand wire alone
+    assert any(l["text"] == "+5V" and (l["x"], l["y"]) == pin for l in s.labels())
+    again = kat.sync(sch, d / "design.net")
+    assert not any(again[k] for k in ("added", "attached", "detached", "named", "flags")), again
+
 
 def test_boxes_are_arranged_and_keep_hand_changes(lib, tmp_path):
     blocks.build("RC", force=True)

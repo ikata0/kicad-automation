@@ -301,6 +301,10 @@ def _remove_box_wiring(s: Schematic, sh: dict) -> None:
     doomed = set()
     for v in sh["pins"].values():
         pt = (v["x"], v["y"])
+        for n in find_all(s.tree, "label"):            # on the pin itself (a hand-drawn wire)
+            at = find(n, "at")
+            if same((float(at[1]), float(at[2])), pt):
+                doomed.add(id(n))
         for w, seg in zip(s.wires(), s.segments()):
             for a, b in (seg, seg[::-1]):
                 if same(a, pt) and abs(a[1] - b[1]) < 1e-6 and abs(abs(a[0] - b[0]) - 2.54) < 1e-3:
@@ -402,17 +406,22 @@ def _spot(s: Schematic, row: list, left: dict, right: dict, nets: dict[str, str]
 
 def _label_at(s: Schematic, pin: tuple[float, float], side: int, net: str) -> str | None:
     """A stub and a label ``net`` on a sheet pin, unless one is there already. Returns the
-    old name when an existing label was renamed."""
+    old name when an existing label was renamed. A pin a wire drawn by hand already ends on
+    takes the label on the pin itself: a stub would lie over that wire."""
     end = (pin[0] + side * 2.54, pin[1])
     for l in s.labels():
-        if l["kind"] == "label" and abs(l["x"] - end[0]) < 1e-3 and abs(l["y"] - pin[1]) < 1e-3:
+        if l["kind"] == "label" and abs(l["y"] - pin[1]) < 1e-3 and \
+                min(abs(l["x"] - end[0]), abs(l["x"] - pin[0])) < 1e-3:
             if l["text"] != net:
                 for n in find_all(s.tree, "label"):
                     if find(n, "uuid") is not None and str(find(n, "uuid")[1]) == l["uuid"]:
                         n[1] = net
                 return l["text"]
             return None
-    s.add_wire([pin, end], junctions=False)
+    if any(same(a, pin) for seg in s.segments() for a in seg):
+        end = pin
+    else:
+        s.add_wire([pin, end], junctions=False)
     s.add_label(net, end[0], end[1], 0 if side > 0 else 180)
 
 

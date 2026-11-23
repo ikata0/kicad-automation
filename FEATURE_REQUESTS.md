@@ -18,18 +18,6 @@ file or its eventual tests.
 
 ## Schematic sync and blocks
 
-### FR-030: Keep power symbols idempotent across syncs
-
-**Needs reproduction.** Reopened after a downstream report that hierarchical
-`kat sync --dry-run` proposes attaching root-sheet power pins even though KiCad's
-exported netlist already matches the design. Applying sync reportedly stacks
-power symbols on the existing ones, causing duplicate and overlap findings.
-Use KiCad netlist connectivity to distinguish already-correct connections from
-missing or wrong ones. Reproduce with a generic hierarchy: a second sync must
-report no power attachments and add no symbols, while still repairing genuinely
-missing or incorrect connections. Earlier flat and hierarchical fixtures did
-not reproduce this case; see `Syncer.reconcile` in `src\kat\syncer.py`.
-
 ## Electrical checks
 
 ### FR-006: Estimate coupling across repeated blocks in 3D
@@ -734,3 +722,20 @@ and stamp records stay as they are, and the source board is not changed. Test in
 `tests/test_variants.py`: DRC findings are the same on both boards; the copy's base position
 export equals the source's LITE export; per reference, the copy's footprint flags, Value and
 MPN equal the source's LITE data; a library table path is rebased.
+
+### FR-030: Keep power symbols idempotent across syncs
+
+**Resolved (stacking not reproduced; 2026-11-23).** A generic hierarchy (two op-amp blocks on
+`+5V` / `VBAT_SW` and an RC block on `+3V3` through a signal port, root capacitors whose only
+partner on the root sheet is a sheet box) synced twice: the second sync and its `--dry-run`
+report nothing and add no symbol. Also tried, edited by hand after the first sync: a root
+power pin labelled with a local label instead of its power symbol, and one wired to the
+sheet-box wiring; neither got a symbol. One case attaches on connectivity KiCad already has
+right: a root power pin wired **only** to a box pin (its power symbol and the box pin's
+label removed). KiCad then names the net after the block's port (`vs`, not `+5V`); `kat check`
+reports that name difference, and sync's single `+5V` symbol is the naming repair, once (the
+next sync is empty). A netlist guard that skips pins whose net already has the design's pins
+would block that repair, so there is none. Fixed: the box pin's label was drawn on a fresh
+stub lying over the hand-drawn wire; a box pin a wire already ends on now takes its label on
+the pin itself (`syncer_hier._label_at`; test in `tests/test_sync_hier.py`). Reproducer in
+`kicad-sandbox/experiments/2026-11-23-fr030/`.
