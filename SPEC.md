@@ -221,10 +221,17 @@ kicad-cli nor kicad-python offers.
 - **Identity**: symbol path `/<uuid>` (KiCad's link) → SKiDL tag → reference. A footprint
   still linked to another design symbol is never taken over by a fallback.
 - **Add**: footprint from `fp-lib-table` with reference, value, all symbol fields (hidden),
-  symbol path, sheet name/file, DNP / exclude-from-BOM flags, pad nets, pin names and types.
+  symbol path, sheet name/file, DNP / exclude-from-BOM / exclude-from-position-files flags, pad
+  nets, pin names and types, assembly-variant overrides.
   New parts go in rows to the right of the board outline.
 - **Update**: reference, value, fields (extra custom fields removed), flags, pad nets.
   A changed footprint is **replaced in place** (position, rotation, side, uuid kept).
+- **Variants** (KiCad 10, §4.22): the board's `(variants ...)` list and each footprint's
+  `(variant (name ..) (dnp yes) (exclude_from_bom yes) (exclude_from_pos_files yes) (field ..))`
+  come from the netlist's per-part variant data, as "Update PCB from Schematic" does: the
+  schematic decides, a replaced footprint gets them again, stamping moves footprints in place
+  and keeps them, a KiCad save (refill) keeps them. DRC parity does not compare variants;
+  `kat pcb assembly --variant V` does (`flag_mismatch`).
 - **Remove**: footprints whose symbol left the design.
 - **Copper**: a net that disappeared while all its pads went to one new net is renamed on
   tracks, vias and zones (`renamed_nets`). Tracks touching a pad of another net and copper
@@ -1062,8 +1069,10 @@ kv.write("design.net")                              # -> design.variants.json (a
 - **Checked:** `kat check --expect design.net` (and the sync's own check) compares the schematic
   with the declaration (`variants`: what a sync would write); a difference makes `ok` false.
 - `kat variants SCH|PCB` lists names and per-reference differences. `kicad-cli sch export bom
-  --variant NAME` exports a variant's BOM; the position file needs the board's variants
-  (`kat pcb sync`).
+  --variant NAME` exports a variant's BOM; `pcb export pos --variant NAME` reads only the board's
+  variants, which `kat pcb sync` writes (§4.6; KiCad's netlist lists them alphabetically). The
+  board has no `on_board` override and KiCad's netlist carries `on_board` for the base only, so a
+  variant's `on_board` never reaches the board: for an unfitted part use `dnp`.
 
 ## 5. Command reference
 

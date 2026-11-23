@@ -12,7 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .. import env, gate
-from ..sexpr import Sym, find, find_all
+from ..sexpr import Sym, dumps, find, find_all, head
 from ..syncer import natural_key
 from . import checks
 from . import footprints as fps
@@ -34,14 +34,47 @@ class Part:
     dnp: bool = False
     exclude_from_bom: bool = False
     pins: dict[str, tuple[str, str]] = field(default_factory=dict)  # number -> (name, type)
+    exclude_from_pos_files: bool = False
+    # assembly variants: {name: {"dnp"/"exclude_from_bom"/"exclude_from_pos_files": bool, field: text}},
+    # only what differs from the base (KiCad's netlist writes no more)
+    variants: dict[str, dict] = field(default_factory=dict)
 
     @property
     def tag(self) -> str:
         return self.fields.get(TAG, "")
 
 
+VARIANT_FLAGS = ("dnp", "exclude_from_bom", "exclude_from_pos_files")
+
+
+def _comp_variants(c: list) -> dict[str, dict]:
+    out = {}
+    for v in find_all(find(c, "variants") or [], "variant"):
+        vals: dict = {}
+        for p in find_all(v, "property"):
+            name = str(find(p, "name")[1])
+            if name in VARIANT_FLAGS:
+                vals[name] = str(find(p, "value")[1]) not in ("0", "")
+        for f in find_all(find(v, "fields") or [], "field"):
+            vals[str(find(f, "name")[1])] = str(f[2]) if len(f) > 2 else ""
+        out[str(find(v, "name")[1])] = vals
+    return out
+
+
 def read_design(sch: Path) -> tuple[dict[str, Part], dict[tuple[str, str], str]]:
     """Board parts (by reference) and pin -> net, from the schematic's own netlist."""
+    parts, pin_net, _ = _read(sch)
+    return parts, pin_net
+
+
+def variant_names(tree: list) -> list[dict[str, str]]:
+    """The assembly variants KiCad's netlist ``tree`` lists: [{name, description}]."""
+    return [{"name": str(find(v, "name")[1]),
+             **({"description": str(find(v, "description")[1])} if find(v, "description") else {})}
+            for v in find_all(find(tree, "variants") or [], "variant")]
+
+
+def _read(sch: Path) -> tuple[dict[str, Part], dict[tuple[str, str], str], list[dict]]:
     tree = gate._export(sch)
     libpins = {}
     for lp in find_all(find(tree, "libparts") or [], "libpart"):
@@ -65,13 +98,14 @@ def read_design(sch: Path) -> tuple[dict[str, Part], dict[tuple[str, str], str]]
             sheetname=props.get("Sheetname", ""), sheetfile=props.get("Sheetfile", ""),
             fields={k: v for k, v in fields.items() if k not in ("Reference", "Value", "Footprint")},
             dnp="dnp" in props, exclude_from_bom="exclude_from_bom" in props,
-            pins=libpins.get((str(find(src, "lib")[1]), str(find(src, "part")[1])), {}))
+            pins=libpins.get((str(find(src, "lib")[1]), str(find(src, "part")[1])), {}),
+            exclude_from_pos_files="exclude_from_pos_files" in props, variants=_comp_variants(c))
     pin_net = {}
     for n in find_all(find(tree, "nets") or [], "net"):
         name = str(find(n, "name")[1])
         for node in find_all(n, "node"):
             pin_net[(str(find(node, "ref")[1]), str(find(node, "pin")[1]))] = name
-    return parts, pin_net
+    return parts, pin_net, variant_names(tree)
 
 
 def _set_child(node: list, key: str, value: str | None) -> bool:
@@ -106,6 +140,63 @@ def _set_attr_flag(node: list, flag: str, on: bool) -> bool:
         attr.append(Sym(flag))
     else:
         attr[:] = [t for t in attr if str(t) != flag]
+    return True
+
+
+def _bool(v: bool) -> Sym:
+    return Sym("yes" if v else "no")
+
+
+def footprint_variants(node: list) -> dict[str, dict]:
+    """A board footprint's ``(variant ...)`` children: {name: {flag: bool, field: text}},
+    variants without a difference left out."""
+    out = {}
+    for v in find_all(node, "variant"):
+        vals: dict = {}
+        for c in v[1:]:
+            if isinstance(c, list) and head(c) in VARIANT_FLAGS:
+                vals[head(c)] = len(c) < 2 or str(c[1]) in ("yes", "true")
+            elif isinstance(c, list) and head(c) == "field":
+                vals[str(find(c, "name")[1])] = str(find(c, "value")[1])
+        if vals:
+            out[str(find(v, "name")[1])] = vals
+    return out
+
+
+def _set_variants(node: list, variants: dict[str, dict]) -> bool:
+    """A footprint's ``(variant ...)`` children made to say ``variants`` (from the netlist,
+    differences only), before ``embedded_fonts`` / ``model`` as KiCad writes them. True if
+    something changed."""
+    want = []
+    for name, vals in variants.items():
+        v = [Sym("variant"), [Sym("name"), name]]
+        v += [[Sym(k), _bool(vals[k])] for k in VARIANT_FLAGS if k in vals]
+        v += [[Sym("field"), [Sym("name"), k], [Sym("value"), x]] for k, x in vals.items() if k not in VARIANT_FLAGS]
+        if len(v) > 2:
+            want.append(v)
+    if footprint_variants(node) == {n: v for n, v in variants.items() if v}:
+        return False                    # KiCad's own save adds empty ones and orders fields its way
+    node[:] = [c for c in node if not (isinstance(c, list) and head(c) == "variant")]
+    at = next((i for i, c in enumerate(node) if isinstance(c, list) and head(c) in ("embedded_fonts", "model")),
+              len(node))
+    node[at:at] = want
+    return True
+
+
+def _set_board_variants(tree: list, names: list[dict[str, str]]) -> bool:
+    """The board's ``(variants ...)`` list made to be ``names`` [{name, description}]."""
+    want = [Sym("variants")] + [[Sym("variant"), [Sym("name"), n["name"]],
+                                 *([[Sym("description"), n["description"]]] if n.get("description") else [])]
+                                for n in names]
+    have = find(tree, "variants")
+    if have is not None and dumps(have) == dumps(want) or have is None and not names:
+        return False
+    if have is not None:
+        tree.remove(have)
+    if names:
+        at = max((i for i, c in enumerate(tree) if isinstance(c, list)
+                  and head(c) in ("general", "paper", "title_block", "layers", "setup", "property")), default=0)
+        tree.insert(at + 1, want)
     return True
 
 
@@ -152,7 +243,7 @@ class BoardSync:
     # --- the run ---------------------------------------------------------------------
 
     def run(self, dry_run: bool = False, rip_stale: bool = False) -> dict:
-        parts, pin_net = read_design(self.sch)
+        parts, pin_net, variant_list = _read(self.sch)
         if self.pcb.exists():
             board = Board(self.pcb)
         else:
@@ -187,6 +278,9 @@ class BoardSync:
         new = [parts[r] for r in sorted(parts, key=natural_key) if r not in matched]
         self._place_new(board, new, pin_net)
         self._copper(board, before, rip_stale)
+        if _set_board_variants(board.tree, variant_list):
+            self.report["variants"] = [n["name"] for n in variant_list]
+            self.changed = True
 
         report = dict(self.report, changed=self.changed, board=str(self.pcb))
         if self.changed and not dry_run:
@@ -250,6 +344,11 @@ class BoardSync:
             self.changed |= _set_child(f.node, key, val)
         self.changed |= _set_attr_flag(f.node, "dnp", p.dnp)
         self.changed |= _set_attr_flag(f.node, "exclude_from_bom", p.exclude_from_bom)
+        self.changed |= _set_attr_flag(f.node, "exclude_from_pos_files", p.exclude_from_pos_files)
+        if _set_variants(f.node, p.variants):
+            if not new:
+                self.report["updated"].append({"ref": p.ref, "field": "variants", "to": p.variants})
+            self.changed = True
         for pad in find_all(f.node, "pad"):
             num = str(pad[1])
             if not num:

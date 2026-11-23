@@ -128,6 +128,35 @@ def test_removed_declarations_go_and_kicad_edits_stay(design):
     assert listed["parts"][ref["j"]] == {"LITE": {"MPN": "J-LITE"}, "HAND": {"dnp": True}}
 
 
+def pos(pcb: Path, variant: str | None = None) -> set[str]:
+    out = pcb.parent / f"pos-{variant or 'base'}.csv"
+    env.run_cli("pcb", "export", "pos", "--format", "csv", "--units", "mm", "--side", "both", "--exclude-dnp",
+                *(["--variant", variant] if variant else []), "-o", str(out), str(pcb))
+    with open(out, newline="", encoding="utf-8") as f:
+        return {r["Ref"] for r in csv.DictReader(f)}
+
+
+def test_board_sync_carries_variants_through_kicad_saves(design):
+    sch, ref = design["sch"], design["ref"]
+    pcb = sch.with_suffix(".kicad_pcb")
+    rep = kat.pcb.sync(pcb, force=True, require=())
+    assert rep["check"]["parity"] == 0, rep["check"]
+    names = [n["name"] for n in variants.listing(sch)["names"]]
+    assert sorted(rep["variants"]) == sorted(names) and "LITE" in names     # KiCad's netlist sorts them
+    board = variants.listing(pcb)
+    assert sorted(n["name"] for n in board["names"]) == sorted(names)
+    assert board["parts"][ref["CH_A/RC2/r"]]["LITE"] == {"exclude_from_bom": True, "Value": "2k7"}
+    assert board["parts"][ref["j"]]["LITE"] == {"MPN": "J-LITE"}
+    dnp = {ref[f"CH_B/{s}/c"] for s in ("RC1", "RC2", "RC3")}
+    assert dnp <= pos(pcb) and not dnp & pos(pcb, "LITE")         # KiCad's variant position file
+    a = kat.pcb.assembly(pcb, variant="LITE", require=())           # symbol and footprint agree; the
+    assert [(e["ref"], e["problem"]) for e in a["errors"]] == [     # design forgot in_pos_files there
+        (ref["CH_A/RC2/r"], "pos_not_in_bom")], a["errors"]
+    kat.pcb.refill(pcb)                                           # a KiCad save of the board
+    assert variants.listing(pcb)["parts"] == board["parts"]
+    assert not kat.pcb.sync(pcb, force=True, require=())["changed"]
+
+
 def test_declaration_errors_name_the_entry(tmp_path):
     net = tmp_path / "d.net"
     f = variants.variants_file(net)

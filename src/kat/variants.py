@@ -363,15 +363,10 @@ def listing(path: Path | str) -> dict:
         names = [{"name": str(find(v, "name")[1]),
                   **({"description": str(find(v, "description")[1])} if find(v, "description") else {})}
                  for v in find_all(find(b.tree, "variants") or [], "variant")]
+        from .pcb.syncer import footprint_variants
         for f in b.footprints():
-            for v in find_all(f.node, "variant"):
-                vals = {}
-                for c in v[1:]:
-                    if isinstance(c, list) and head(c) in ("dnp", "exclude_from_bom", "exclude_from_pos_files"):
-                        vals[head(c)] = len(c) < 2 or str(c[1]) in ("yes", "true")
-                    elif isinstance(c, list) and head(c) == "field":
-                        vals[str(find(c, "name")[1])] = str(find(c, "value")[1])
-                parts.setdefault(f.ref, {})[str(find(v, "name")[1])] = vals
+            if fv := footprint_variants(f.node):
+                parts[f.ref] = fv
         return {"file": str(path), "names": names, "parts": parts}
     root = path.resolve()
     top = Schematic(root)

@@ -44,7 +44,8 @@ Every step goes into the project's design report `NAME_REPORT.md` (see "Journal"
 kat commands by themselves, passes through `kat batch-exec`, your reasoning through
 `kat comment`.
 
-1. **Sync**: `kat pcb sync PCB` (creates the board; later brings design changes). Read
+1. **Sync**: `kat pcb sync PCB` (creates the board; later brings design changes, assembly
+   variants included: `kat variants PCB`). Read
    `added`, `replaced`, `removed`, `renamed_nets`, `stale_tracks`.
 2. **Setup pass** (`setup.py`): outline, layer count, planes, mounting holes, net classes
    from the specification (current → width, voltage → clearance), keep-outs, pours. It is
