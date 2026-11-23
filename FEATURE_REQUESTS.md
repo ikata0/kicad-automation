@@ -20,16 +20,41 @@ file or its eventual tests.
 
 ### FR-059: Carry assembly exclusions through schematic and board sync
 
-**Partial.** Carry netlist `exclude_from_bom` into the schematic symbol's
-`in_bom`, and keep BOM, position-file and DNP attributes consistent through
-schematic sync, board sync and `add_board_part`. Mechanical or otherwise
-non-fitted items need explicit BOM and position-file exclusions.
-`src\kat\pcb\syncer.py` already copies netlist DNP and BOM exclusion flags to
-footprints, and schematic sync already handles DNP; preserve that behaviour.
-The remaining gap is schematic BOM exclusion; board sync carries the
-symbol's `exclude_from_pos_files` to the footprint since FR-063. See `src\kat\syncer.py`, `src\kat\schematic.py` and
-`src\kat\pcb\setup.py`; acceptance should inspect KiCad's BOM and position exports,
-not only kat's model.
+**Partial.** Make the design the explicit source for base schematic symbol
+flags (`in_bom`, `in_pos_files`, `exclude_from_sim`, `on_board`), via SKiDL part
+attributes or a design-side declaration. Have `kat sync` apply them and
+`kat check` report discrepancies. In particular, SKiDL's `exclude_from_bom`
+reaches the design netlist but does not update the symbol's `in_bom`.
+Preserve existing DNP handling and keep assembly flags consistent through
+schematic sync, board sync and `add_board_part`.
+
+Board sync already copies DNP, BOM exclusion and, since FR-063, position-file
+exclusion to footprints. But `src\kat\pcb\syncer.py` can change these flags
+without an `updated` entry. Report each change on an existing footprint as
+`{ref, field, from, to}`. Consider warning when sync clears a BOM or position
+exclusion set by the library footprint; this may belong in FR-060's assembly
+check instead. Verify both the sync report and KiCad's BOM and position exports
+with a generic mechanical footprint that should be absent from both.
+
+### FR-030: Keep power symbols idempotent across syncs
+
+**Needs reproduction.** Reopened after a downstream report that hierarchical
+`kat sync --dry-run` proposes attaching root-sheet power pins even though KiCad's
+exported netlist already matches the design. Applying sync reportedly stacks
+power symbols on the existing ones, causing duplicate and overlap findings.
+Use KiCad netlist connectivity to distinguish already-correct connections from
+missing or wrong ones. Reproduce with a generic hierarchy: a second sync must
+report no power attachments and add no symbols, while still repairing genuinely
+missing or incorrect connections. Earlier flat and hierarchical fixtures did
+not reproduce this case; see `Syncer.reconcile` in `src\kat\syncer.py`.
+
+### FR-064: Preview assembly variant changes in hierarchical sync
+
+**Partial.** `kat sync --dry-run` should report the same variant additions,
+changes, removals and names as an applied hierarchical sync, without writing the
+schematic or project. `src\kat\syncer_hier.py` returns before variant processing;
+reuse the comparison in `src\kat\variants.py` as flat sync does. The preview
+should reflect the hierarchy sync proposes, including newly added instances.
 
 ## Electrical checks
 
@@ -132,6 +157,21 @@ effective edge clearance instead of independent constants.
 `src\kat\pcb\fabprofile.py` currently covers via types and minimum copper
 clearance only. Extend the existing profile mechanism rather than treating it
 as absent; keep assembly-data validation (FR-060) separately identifiable.
+
+### FR-065: Export a board with a selected assembly variant as the base
+
+**Open.** Provide a standalone KiCad board copy for tools that read only base
+footprint data. Apply the selected variant's effective field values and DNP,
+BOM and position-file flags to each footprint, then remove variant declarations
+and overrides from the copy. Include the relevant project settings, custom
+rules and library tables when present, preserving relative path resolution.
+Leave the source project, copper and stamp records unchanged.
+
+FR-063 exports variant BOM and position files but not a board with the variant
+applied. On a generic design, verify that the copy's KiCad DRC findings and
+position export match the source board's, using the selected variant for the
+position export. Verify that the copy's base footprint assembly data matches
+the source's selected-variant BOM per reference.
 
 ## Resolved
 
@@ -432,18 +472,6 @@ would reach the title block, and reports it in `paper` [{sheet, from, to}], whic
 hierarchical report used to drop (`syncer.grow_paper`, `syncer_hier._next_spot`). New
 parts are now placed below the sheet boxes instead of over them. Test:
 `test_many_boxes_grow_the_paper` (30 boxes from A4).
-
-### FR-030: Keep power symbols idempotent across syncs
-
-Not reproduced. Three or four syncs in a row of hierarchical designs (two blocks on a
-connector, a chain of five and of thirty blocks, a power net driving a block's signal port)
-and repeated block builds each kept one power symbol per net and reported nothing.
-The flat sync's idempotence was already tested (`tests/test_sync.py`). Checking this
-found that the hierarchical report dropped `named`, `wired`, `flags` and `detached`, so a
-repeated power symbol could have gone unnoticed. They are now reported, and
-`test_many_boxes_grow_the_paper` requires a repeated sync to report nothing at all. Reopen
-with the design if it recurs: the likeliest remaining path is a lone power pin whose drawn
-net KiCad names differently from the design net (`Syncer.reconcile`).
 
 ### FR-031: Add one PWR_FLAG per label-driven power net at the top level
 
