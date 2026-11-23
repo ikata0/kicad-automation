@@ -132,21 +132,6 @@ effective edge clearance instead of independent constants.
 clearance only. Extend the existing profile mechanism rather than treating it
 as absent; keep assembly-data validation (FR-060) separately identifiable.
 
-### FR-065: Export a board with a selected assembly variant as the base
-
-**Open.** Provide a standalone KiCad board copy for tools that read only base
-footprint data. Apply the selected variant's effective field values and DNP,
-BOM and position-file flags to each footprint, then remove variant declarations
-and overrides from the copy. Include the relevant project settings, custom
-rules and library tables when present, preserving relative path resolution.
-Leave the source project, copper and stamp records unchanged.
-
-FR-063 exports variant BOM and position files but not a board with the variant
-applied. On a generic design, verify that the copy's KiCad DRC findings and
-position export match the source board's, using the selected variant for the
-position export. Verify that the copy's base footprint assembly data matches
-the source's selected-variant BOM per reference.
-
 ## Resolved
 
 ### FR-027: Document literal SKiDL pin-name selection
@@ -736,3 +721,16 @@ in `updated` and warns when a library footprint's BOM or position exclusion is c
 because the symbol does not set it. Tested with a mounting hole that KiCad's BOM and
 position exports leave out. KiCad's netlist omits `on_board no` parts, so the netlist
 comparisons leave them out too.
+
+### FR-065: Export a board with a selected assembly variant as the base
+
+`kat pcb variant-board PCB VARIANT [--out DIR]` (`kat.pcb.variant_board`, module
+`kat.pcb.variant_copy`) writes a copy, by default to `variants/<VARIANT>/` next to the board,
+with the variant's DNP, BOM and position-file flags and field values applied to each
+footprint, and every variant removed. It copies the `.kicad_pro`, `.kicad_dru`, library tables
+and any legacy stamp record along, and rewrites `${KIPRJMOD}` paths so they still reach the
+source project's files. The copy is normalized by `kicad-cli pcb upgrade`. Copper, placement
+and stamp records stay as they are, and the source board is not changed. Test in
+`tests/test_variants.py`: DRC findings are the same on both boards; the copy's base position
+export equals the source's LITE export; per reference, the copy's footprint flags, Value and
+MPN equal the source's LITE data; a library table path is rebased.

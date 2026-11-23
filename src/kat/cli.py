@@ -268,6 +268,8 @@ def cmd_pcb(a):
                                None if a.bom_fields is None else [f.strip() for f in a.bom_fields.split(",")])
     if a.pcb_cmd == "assembly":
         return kat.pcb.assembly(a.pcb, a.sch, a.variant, a.require_field or ["MPN"])
+    if a.pcb_cmd == "variant-board":
+        return kat.pcb.variant_board(a.pcb, a.variant, a.out)
     if a.pcb_cmd == "stamps":
         return kat.pcb.stamps(a.pcb, (a.instance or True) if a.rebuild else False)
     if a.pcb_cmd == "collisions":
@@ -1274,6 +1276,19 @@ def build_parser() -> argparse.ArgumentParser:
     s35.add_argument("--variant", help="an assembly variant (KiCad 10) instead of the base")
     s35.add_argument("--require-field", action="append", metavar="FIELD",
                      help="required on fitted BOM items (repeatable; default MPN)")
+    s36 = psp.add_parser("variant-board", formatter_class=_Fmt,
+                         help="a copy of the board with one assembly variant as its base",
+                         description="For tools that do not read KiCad 10 assembly variants: writes a copy of the\n"
+                                     "board whose base is VARIANT (its DNP, BOM and position-file exclusions and\n"
+                                     "field values per footprint; no variants left), with the .kicad_pro,\n"
+                                     ".kicad_dru and library tables. ${KIPRJMOD} paths are rewritten to reach the\n"
+                                     "source project's files. Copper, placement and stamp records are copied as\n"
+                                     "they are; the source board is not changed. applied lists what changed.",
+                         epilog="Examples:\n  kat pcb variant-board top.kicad_pcb LITE\n"
+                                "  kat pcb variant-board top.kicad_pcb LITE --out ../lite")
+    s36.add_argument("pcb", metavar="PCB")
+    s36.add_argument("variant", metavar="VARIANT", help="an assembly variant on the board (kat variants PCB)")
+    s36.add_argument("--out", metavar="DIR", help="folder of the copy (default: variants/VARIANT/ next to the board)")
     s9 = psp.add_parser("stamp", formatter_class=_Fmt, help="copy a checked block layout onto instances",
                         description="Places the instance's parts as on the block board and copies its tracks,\n"
                                     "vias, zones, keep-outs, graphics and board-only parts with the instance's\n"

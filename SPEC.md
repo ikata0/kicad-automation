@@ -1084,12 +1084,20 @@ kv.write("design.net")                              # -> design.variants.json (a
   `kat pcb fab` writes both per variant, `kat pcb ready` checks each (§4.11). The
   board has no `on_board` override and KiCad's netlist carries `on_board` for the base only, so a
   variant's `on_board` never reaches the board: for an unfitted part use `dnp`.
+- **A board per variant** for tools that read only base data: `kat pcb variant-board PCB V
+  [--out DIR]` (`kat.pcb.variant_board`) writes a copy (default `variants/V/` next to the board)
+  whose footprints carry V's flags (`dnp`, `exclude_from_bom`, `exclude_from_pos_files`) and
+  field values as their base, with every variant removed (`applied`: what changed per
+  reference). The `.kicad_pro`, `.kicad_dru` and library tables go along, `${KIPRJMOD}/...`
+  paths are rewritten (`${KIPRJMOD}/../top/...`) to the source project's files; copper,
+  placement and stamp records are copied as they are, the source is not changed. Checked:
+  DRC finds the same on both, the copy's base position file is the source's V one.
 
 ## 5. Command reference
 
 Library: `kat.init`, `kat.new`, `kat.load`, `kat.edit`, `kat.sync`, `kat.stamp`, `kat.check`, `kat.snapshot`, `kat.view`,
 `kat.ready`, `kat.pcb.sync` / `edit` / `check` / `snapshot` / `view` / `route` / `refill` / `fab` /
-`ready` / `drc` / `stamp` / `instances` / `block_environment` / `block_port` / `remove` / `layer_roles` /
+`ready` / `drc` / `variant_board` / `stamp` / `instances` / `block_environment` / `block_port` / `remove` / `layer_roles` /
 `stack` / `coupling_rule` / `coupling_2d` / `layer_rule` / `plane_rule` / `net_rules` (board), `kat.hierarchy`,
 `kat.skidl_blocks`, `kat.blocks`, `kat.nets`, `kat.lib_search`, `kat.lib_show`, `kat.comment`,
 `kat.batch_exec`, `kat.open_kicad`, and the `kat.Sheet` / `kat.pcb.Board` methods; each returns
@@ -1117,6 +1125,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `pcb refill PCB` | fill all pours and save them (after finishing) |
 | `pcb fab PCB` / `pcb ready PCB [--accept KIND=REASON] [--overhang REF]` | fabrication set / release gate (§4.11) |
 | `pcb assembly PCB [--sch SCH] [--variant V] [--require-field F]` | BOM and position data check (§4.11) |
+| `pcb variant-board PCB VARIANT [--out DIR]` | a board copy with the variant as its base, no variants left (§4.22) |
 | `pcb route PCB [--passes] [--net NAME/GLOB] [--netclass NAME] [--skip-class NAME] [--no-optimize] [--timeout S] [--router-option KEY=VALUE] [--install]` / `pcb lock PCB [--net N] [--unlock]` | Freerouting through kat's DSN/SES, then the board check; lock an accepted chunk (§4.10) |
 | `pcb check PCB [--map TABLE] [--out FILE]` / `pcb snapshot PCB` / `pcb view PCB ...` | board DRC + findings, history step with pictures, zoomed view (§4.12) |
 | `pcb stamp PCB BLOCK_PCB INSTANCE... --at X,Y [--step DX,DY] [--rot R] [--anchor origin/top-left] [--no-lock] [--make-room] [--side bottom] [--layer-map auto/roles/MAP] [--allow-asymmetric]` | copy a checked block layout onto instances (`all`), flipped on the bottom side, then the board check (§4.18) |

@@ -63,7 +63,9 @@ kat commands by themselves, passes through `kat batch-exec`, your reasoning thro
    and reports the same footprints, nets, copper and outline); `kat pcb ready PCB` must say
    `ready` (it includes `kat pcb assembly PCB`: real MPNs, mechanical parts excluded, BOM,
    position file and symbol/footprint flags agreeing, for every assembly variant; run it alone
-   to see every reference). `fab` writes a BOM and position file per variant too. Then ask the user to open the board in KiCad and look at it.
+   to see every reference). `fab` writes a BOM and position file per variant too; an assembler
+   that needs a whole board per variant gets `kat pcb variant-board PCB VARIANT` (a copy with
+   the variant as its base). Then ask the user to open the board in KiCad and look at it.
 8. **Report on kat**: `KAT_FEEDBACK.md` (below), before you hand over.
 
 A **pass** is a short Python script you write and run with `kat batch-exec passN.py`. It

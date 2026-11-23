@@ -760,6 +760,16 @@ def assembly(pcb: Path | str, sch: Path | str | None = None, variant: str | None
     return tidy(_asm.check(Path(pcb), sch, variant, require))
 
 
+def variant_board(pcb: Path | str, variant: str, out: Path | str | None = None) -> dict:
+    """A copy of the board with assembly ``variant`` applied as its base and no variants
+    left (``kat.pcb.variant_copy``), in ``out`` (default ``<board dir>/variants/<variant>/``)
+    with the project file, rules and library tables. Returns {board, variant, applied
+    ({ref: {key: value}}), files}."""
+    from .variant_copy import variant_board as _variant_board
+    report.touch(pcb)
+    return tidy(_variant_board(Path(pcb), variant, Path(out) if out else None))
+
+
 def ready(pcb: Path | str, fab_dir: Path | str | None = None, accept: dict[str, str] | None = None,
           overhang: list[str] | None = None) -> dict:
     """Release gate: board check clean, title and revision set, fabrication set complete

@@ -157,6 +157,51 @@ def test_board_sync_carries_variants_through_kicad_saves(design):
     assert r["assembly"]["FULL"]["differs"] == {} if "FULL" in names else True
 
 
+def test_variant_board_makes_a_variant_the_base(design):
+    """FR-065: the copy's base is LITE (KiCad's base position file equals the source's
+    LITE one, values and flags per footprint), no variants are left, DRC finds the same,
+    and the source board is not touched."""
+    from kat.pcb import Board, checks
+    from kat.pcb.assembly_check import footprint_flags
+    sch, ref = design["sch"], design["ref"]
+    pcb = sch.with_suffix(".kicad_pcb")
+    if not pcb.exists():                # the board test ran on another worker
+        kat.pcb.sync(pcb, force=True, require=())
+    before = pcb.read_bytes()
+    r = kat.pcb.variant_board(pcb, "LITE")
+    copy = Path(r["board"])
+    assert copy == pcb.parent / "variants" / "LITE" / pcb.name and pcb.read_bytes() == before
+    assert ".kicad_pro" in {Path(f).suffix for f in r["files"]}
+    assert r["applied"][ref["CH_A/RC2/r"]] == {"exclude_from_bom": True, "Value": "2k7"}
+    listed = variants.listing(copy)
+    assert not listed["names"] and not listed["parts"]
+    assert pos(copy) == pos(pcb, "LITE")
+    src, dst = Board(pcb), Board(copy)
+    for f in src.footprints():
+        g = dst.footprint(f.ref)
+        assert footprint_flags(g.node) == footprint_flags(f.node, "LITE"), f.ref
+        lite = variants.listing(pcb)["parts"].get(f.ref, {}).get("LITE", {})
+        assert g.value == lite.get("Value", f.value) and g.field("MPN") == lite.get("MPN", f.field("MPN"))
+
+    def findings(b):
+        d = checks.drc(b, parity=False)
+        return sorted((v["type"], v["description"]) for v in d["violations"] + d["unconnected"])
+    assert findings(copy) == findings(pcb)
+    with pytest.raises(env.KatError, match="no assembly variant 'NOPE'"):
+        kat.pcb.variant_board(pcb, "NOPE")
+    # ${KIPRJMOD} paths of the copy reach the source project's files
+    table = pcb.parent / "fp-lib-table"
+    table.write_text('(fp_lib_table (version 7) (lib (name "parts") (type "KiCad") '
+                     '(uri "${KIPRJMOD}/parts.pretty") (options "") (descr "")))\n')
+    try:
+        out = pcb.parent.parent / "lite-copy"
+        r = kat.pcb.variant_board(pcb, "LITE", out)
+        text = (out / "fp-lib-table").read_text()
+        assert '"${KIPRJMOD}/../top/parts.pretty"' in text
+    finally:
+        table.unlink()
+
+
 def test_removed_declarations_go_and_kicad_edits_stay(design):
     sch, net, ref = design["sch"], design["net"], design["ref"]
     # a variant and an override written in KiCad by hand
