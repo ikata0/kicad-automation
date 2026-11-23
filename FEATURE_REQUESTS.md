@@ -31,6 +31,48 @@ The remaining gaps include schematic BOM exclusion and footprint
 `src\kat\pcb\setup.py`; acceptance should inspect KiCad's BOM and position exports,
 not only kat's model.
 
+### FR-063: Support native KiCad 10 assembly variants
+
+**Open.** Keep one schematic and layout per board while supporting named
+assembly variants with their own BOM and position exports. A downstream
+KiCad 10.0.6 test confirmed that a manually authored variant appeared in
+`kicad-cli sch export bom --variant NAME`, but a no-op hierarchical `kat sync`
+deleted its instance overrides and the variant BOM reverted to base values.
+`src\kat\syncer_hier.py` calls `hierarchy.annotate`, whose `_set_instances` in
+`src\kat\hierarchy.py` replaces the current project's instance paths instead of
+updating their reference and unit in place. Flat sync was not tested in that
+report. `src\kat\netlist.py` handles base DNP but has no variant input, and
+`src\kat\pcb\syncer.py` does not read variant data from the schematic netlist.
+
+1. Declare named variants with descriptions and per-part field overrides
+   (including Value and MPN) and flags (`dnp`, `in_bom`, `on_board`,
+   `in_pos_files`). Possible inputs are SKiDL part metadata carried in the
+   netlist or a CSV/JSON side table keyed by reference, tag or instance path.
+   Support top-level parts, all or selected instances of a block, and
+   variant-specific block parameter values with a base fallback.
+2. Write the declarations to `.kicad_pro` (`schematic.variants`) and write only
+   differences from the base as `(variant ...)` children of each schematic
+   symbol's project instance path. During annotation, preserve existing
+   variants and other unknown children of surviving paths. Remove and report
+   overrides only when explicitly removed from the authoritative source.
+   Cover hierarchical and flat `kat sync` and `kat block build`; have
+   `kat check` report variant differences from the source.
+3. During `kat pcb sync`, read component variants from KiCad's netlist or
+   schematic and write the board's `(variants ...)` list and per-footprint
+   `(variant ...)` overrides, as KiCad's Update PCB from Schematic does.
+   Preserve or reapply the overrides through footprint replacement, stamping,
+   stamp rebuilds, refill and stamp-record restore (FR-043, FR-053).
+4. Export BOM and position files for each declared variant via
+   `kicad-cli ... --variant NAME`. Apply FR-060's assembly checks to each
+   variant and report which parts differ from the base. Optional: commands
+   to list schematic or board variants and render per-variant assembly drawings.
+
+Acceptance: a generic design with repeated blocks and top-level parts exports
+the expected variant values, MPNs and fit/exclusion flags, including an override
+on selected block instances and a variant-dependent parameter. Base exports
+stay unchanged; no-op syncs and board save paths preserve variant exports, and
+KiCad DRC and schematic/board parity stay clean.
+
 ## Electrical checks
 
 ### FR-006: Estimate coupling across repeated blocks in 3D
