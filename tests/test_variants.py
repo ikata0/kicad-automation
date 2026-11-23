@@ -12,6 +12,7 @@ import pytest
 
 import kat
 from kat import blocks, env, hierarchy, variants
+from kat.schematic import Schematic
 
 sys.path.insert(0, str(Path(__file__).parent))
 from test_blocks import RC_PY  # noqa: E402
@@ -179,6 +180,23 @@ def test_removed_declarations_go_and_kicad_edits_stay(design):
     assert ref["CH_A/RC2/r"] in bom(sch, "LITE") and bom(sch, "HAND")[ref["j"]]["DNP"]
     listed = variants.listing(sch)
     assert listed["parts"][ref["j"]] == {"LITE": {"MPN": "J-LITE"}, "HAND": {"dnp": True}}
+
+
+def test_dry_run_previews_what_the_sync_writes_new_instances_included(design):
+    """FR-064: a hierarchical dry run reports the variants a real sync then writes; CH_B's box
+    is gone from the drawing, so its parts come back on a new instance path."""
+    sch, net = design["sch"], design["net"]
+    s = Schematic(sch)
+    box = next(sh["node"] for sh in hierarchy.sheets(s) if sh["name"] == "CH_B")
+    s.tree.remove(box)
+    s.save()
+    project = sch.parents[2]                                     # the design and the block library
+    before = {p: p.read_bytes() for p in project.rglob("*") if p.is_file()}
+    dry = kat.sync(sch, net, sheets=["ch", "rc"], dry_run=True)
+    assert {p: p.read_bytes() for p in project.rglob("*") if p.is_file()} == before
+    real = kat.sync(sch, net, sheets=["ch", "rc"])
+    assert dry["variants"] == real["variants"]
+    assert {e["ref"] for e in real["variants"]["added"]} >= {design["ref"][f"CH_B/{s}/c"] for s in ("RC1", "RC2", "RC3")}
 
 
 def test_declaration_errors_name_the_entry(tmp_path):

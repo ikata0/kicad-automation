@@ -48,14 +48,6 @@ report no power attachments and add no symbols, while still repairing genuinely
 missing or incorrect connections. Earlier flat and hierarchical fixtures did
 not reproduce this case; see `Syncer.reconcile` in `src\kat\syncer.py`.
 
-### FR-064: Preview assembly variant changes in hierarchical sync
-
-**Partial.** `kat sync --dry-run` should report the same variant additions,
-changes, removals and names as an applied hierarchical sync, without writing the
-schematic or project. `src\kat\syncer_hier.py` returns before variant processing;
-reuse the comparison in `src\kat\variants.py` as flat sync does. The preview
-should reflect the hierarchy sync proposes, including newly added instances.
-
 ## Electrical checks
 
 ### FR-006: Estimate coupling across repeated blocks in 3D
@@ -740,3 +732,11 @@ base. Grammar and findings: SPEC §4.22, `../kicad-sandbox/experiments/2026-11-2
 Tests: `tests/test_variants.py` (the acceptance design). Not done: per-variant assembly
 drawings (optional in the request). A variant's `on_board` does not reach the board (KiCad's
 netlist carries it for the base only).
+
+### FR-064: Preview assembly variant changes in hierarchical sync
+
+A hierarchical `kat sync --dry-run` now reports `variants` as the real sync does:
+`syncer_hier._preview_variants` runs the sync on a scratch copy of the hierarchy's folders and
+the block library (same relative layout, `KAT_BLOCKS` pointed at the copy, journaling off), so
+instances the sync would add count too; the project stays untouched. Test:
+`tests/test_variants.py::test_dry_run_previews_what_the_sync_writes_new_instances_included`.

@@ -305,6 +305,17 @@ class Entry:
                       self.images, self.slug)
 
 
+@contextmanager
+def unrecorded() -> Iterator[None]:
+    """Work done inside is not journaled (a dry run that syncs a scratch copy)."""
+    global _current
+    outer, _current = _current, None
+    try:
+        yield
+    finally:
+        _current = outer
+
+
 def touch(path: Path | str) -> None:
     """Record a file a running command or script works on (to find its project)."""
     if _current is not None:

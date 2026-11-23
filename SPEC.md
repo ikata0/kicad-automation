@@ -1055,7 +1055,10 @@ kv.write("design.net")                              # -> design.variants.json (a
   project (`.kicad_pro` `schematic.variants`, `[{name, description}]`) and, per symbol instance
   path, only the differences from the base as `(variant (name ..) (dnp yes) (in_bom no) (field
   (name "Value") (value "2k7")))`. The result's `variants` lists `added`, `changed`, `removed`,
-  `fields_added`, `names`, `names_removed`; a second sync changes nothing.
+  `fields_added`, `names`, `names_removed`; a second sync changes nothing. `--dry-run` reports
+  the same `variants` without writing: flat from the drawing as it is, hierarchical from a sync of
+  a scratch copy of the hierarchy's folders and the block library, so instances the sync would
+  add count too.
 - **Parameters:** KiCad does not expand a sheet box's variant fields into `${ra}` inside the sheet,
   so a parameter override becomes a field override on each symbol whose field uses it, with the
   value it then has (inherited below the box like the box's own field). A flat drawing has plain

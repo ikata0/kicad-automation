@@ -795,7 +795,8 @@ def build_parser() -> argparse.ArgumentParser:
             "the result names boxes that look like one. Check with --dry-run first.\n"
             "Assembly variants declared in NETLIST's .variants.json (kat.skidl_variants) are written\n"
             "as KiCad 10 variant overrides, differences from the base only; overrides kat wrote and\n"
-            "the declaration dropped are removed, ones made in KiCad stay (kat variants SCH).",
+            "the declaration dropped are removed, ones made in KiCad stay (kat variants SCH);\n"
+            "--dry-run reports them too (hierarchical: from a sync of a scratch copy).",
             ["kat sync tia.kicad_sch tia_design.net", "kat sync tia.kicad_sch tia_design.net --dry-run",
              "kat sync top.kicad_sch design.net --sheets ch,rc"])
     q.add_argument("netlist", metavar="NETLIST", help="KiCad s-expression netlist, e.g. SKiDL generate_netlist()")

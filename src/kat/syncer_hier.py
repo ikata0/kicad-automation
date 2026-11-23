@@ -454,12 +454,15 @@ def _sheet_names(root: Path, design: Design, names: dict[str, str] | None, gener
 
 
 def run(root: Path, design_path: Path, sheets: list[str] | None = None, dry_run: bool = False,
-        generate: dict[str, Path] | None = None, rename_sheets: dict[str, str] | None = None) -> dict:
+        generate: dict[str, Path] | None = None, rename_sheets: dict[str, str] | None = None,
+        check: bool = True) -> dict:
     """Sync ``design_path`` into the hierarchy under ``root``. ``sheets``: the block types
     drawn as sheets (default: the remembered choice). ``generate``: {instance: file} of
     instances whose sheet is written here instead of taken from the library (the block's
     own build). ``rename_sheets``: {old path: new path}; those boxes keep their uuid, place
-    and wiring."""
+    and wiring. ``dry_run``: nothing written; the assembly variants a real run would write
+    (``variants``) come from a run on a scratch copy. ``check``: verify the result against
+    the design (``verify``)."""
     root = Path(root)
     sheets = sheets if sheets is not None else remembered_sheets(root)
     if not sheets:
@@ -505,7 +508,10 @@ def run(root: Path, design_path: Path, sheets: list[str] | None = None, dry_run:
     draw(root, "", {}, True)
     report["paper"] = [dict(e, sheet=name) for name, es in report["paper"].items() for e in es]
     if dry_run:
-        return dict(report, dry_run=True)
+        out = dict(report, dry_run=True)
+        if variants.load(design_path) is not None:
+            out["variants"] = _preview_variants(root, design_path, sheets, generate, rename_sheets)
+        return out
     for s in files.values():
         s.save()
     remember(root, sheets=sorted(sheets))
@@ -518,8 +524,51 @@ def run(root: Path, design_path: Path, sheets: list[str] | None = None, dry_run:
     report["unresolved"] += unresolved
     if var := variants.apply(root, design_path):
         report["variants"] = var
-    report["check"] = verify(root, design)
+    if check:
+        report["check"] = verify(root, design)
     return dict(report, dry_run=False)
+
+
+_MIRROR_SKIP = ("fab", "history", "views", "variants", "*_REPORT*", "*.kicad_pcb", "*.kicad_pcb-bak", "*.kicad_prl",
+                "*.step", "*.png", "*.svg", "*.pdf", "*.zip", "*.lck", ".git", "__pycache__", "*.net")
+
+
+def _preview_variants(root: Path, design_path: Path, sheets: list[str], generate: dict[str, Path],
+                      rename_sheets: dict[str, str] | None) -> dict:
+    """What a real sync would write as assembly variants (``variants.apply``'s report): the
+    sync run on a scratch copy of the hierarchy's folders (root, sheets, block library; same
+    relative layout), so the instances it would add count too. Nothing here changes."""
+    import os
+    import shutil
+    from . import blocks, report as journal
+    root = Path(root).resolve()
+    dirs = {root.parent, *(Path(i["file"]).resolve().parent for i in hierarchy.tree(root)),
+            *(Path(f).resolve().parent for f in generate.values())}
+    try:
+        lib = blocks.library(root.parent).resolve()
+        dirs.add(lib)
+    except env.KatError:
+        lib = None
+    dirs = {d for d in dirs if not any(o != d and o in d.parents for o in dirs)}
+    base = Path(os.path.commonpath([str(d) for d in dirs]))
+    with tempfile.TemporaryDirectory() as tmp:
+        def mirror(p: Path) -> Path:
+            return Path(tmp) / Path(p).resolve().relative_to(base)
+        for d in dirs:
+            shutil.copytree(d, mirror(d), ignore=shutil.ignore_patterns(*_MIRROR_SKIP), dirs_exist_ok=True)
+        old = os.environ.get("KAT_BLOCKS")
+        if lib is not None:
+            os.environ["KAT_BLOCKS"] = str(mirror(lib))
+        try:
+            with journal.unrecorded():
+                rep = run(mirror(root), design_path, sheets, False, {k: mirror(v) for k, v in generate.items()},
+                          rename_sheets, check=False)
+        finally:
+            if old is None:
+                os.environ.pop("KAT_BLOCKS", None)
+            else:
+                os.environ["KAT_BLOCKS"] = old
+    return rep.get("variants", {})
 
 
 def _root_flags(root: Path, design: Design) -> tuple[list[str], list[dict]]:
