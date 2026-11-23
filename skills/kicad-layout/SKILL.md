@@ -58,7 +58,8 @@ kat commands by themselves, passes through `kat batch-exec`, your reasoning thro
 6. **Finish pass**: `place_refs`, board text, title, fiducials; then `kat pcb refill PCB`.
 7. **Fabricate**: `kat pcb fab PCB`; `kat open PCB --verify` (KiCad's editor loads the board
    and reports the same footprints, nets, copper and outline); `kat pcb ready PCB` must say
-   `ready`. Then ask the user to open the board in KiCad and look at it.
+   `ready` (it includes `kat pcb assembly PCB`: real MPNs, mechanical parts excluded, BOM,
+   position file and symbol/footprint flags agreeing; run it alone to see every reference). Then ask the user to open the board in KiCad and look at it.
 8. **Report on kat**: `KAT_FEEDBACK.md` (below), before you hand over.
 
 A **pass** is a short Python script you write and run with `kat batch-exec passN.py`. It

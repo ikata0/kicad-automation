@@ -264,7 +264,10 @@ def cmd_pcb(a):
     if a.pcb_cmd == "plane-stub":
         return kat.pcb.plane_stub(a.pcb, a.ref, a.net or None, a.skip_net or [], not a.no_lock)
     if a.pcb_cmd == "profile":
-        return kat.pcb.profile(a.pcb, a.via_types.split(",") if a.via_types else None, a.min_clearance, a.clear)
+        return kat.pcb.profile(a.pcb, a.via_types.split(",") if a.via_types else None, a.min_clearance, a.clear,
+                               None if a.bom_fields is None else [f.strip() for f in a.bom_fields.split(",")])
+    if a.pcb_cmd == "assembly":
+        return kat.pcb.assembly(a.pcb, a.sch, a.variant, a.require_field or ["MPN"])
     if a.pcb_cmd == "stamps":
         return kat.pcb.stamps(a.pcb, (a.instance or True) if a.rebuild else False)
     if a.pcb_cmd == "collisions":
@@ -1230,6 +1233,20 @@ def build_parser() -> argparse.ArgumentParser:
                     help="accept DRC warnings of KIND (e.g. via_dangling) for REASON (repeatable)")
     s7.add_argument("--overhang", action="append", metavar="REF",
                     help="a part meant to reach beyond the edge, pads inside (repeatable)")
+    s35 = psp.add_parser("assembly", formatter_class=_Fmt, help="check the BOM and position data KiCad exports",
+                         description="KiCad's own BOM (from the schematic) and position file (from the board),\n"
+                                     "for the base or one assembly variant: every fitted BOM item has a real MPN\n"
+                                     "(not blank, '-', 'n/a', 'tbd', ...) and the required fields (--require-field,\n"
+                                     "profile --bom-fields); parts with field Mechanical=yes are out of BOM and\n"
+                                     "position file; what is placed is bought and what is bought and fitted is\n"
+                                     "placed (unless its footprint is excluded from position files); symbol and\n"
+                                     "footprint agree on DNP, BOM and position exclusion; a value saying DNP is\n"
+                                     "no DNP flag. ok is false (exit 1) on any error; pcb ready includes it.")
+    s35.add_argument("pcb", metavar="PCB")
+    s35.add_argument("--sch", help="the schematic (default: next to the board)")
+    s35.add_argument("--variant", help="an assembly variant (KiCad 10) instead of the base")
+    s35.add_argument("--require-field", action="append", metavar="FIELD",
+                     help="required on fitted BOM items (repeatable; default MPN)")
     s9 = psp.add_parser("stamp", formatter_class=_Fmt, help="copy a checked block layout onto instances",
                         description="Places the instance's parts as on the block board and copies its tracks,\n"
                                     "vias, zones, keep-outs, graphics and board-only parts with the instance's\n"
@@ -1311,6 +1328,8 @@ def build_parser() -> argparse.ArgumentParser:
     s31.add_argument("--via-types", metavar="KINDS", help="through,blind,buried,micro (comma-separated)")
     s31.add_argument("--min-clearance", type=float, metavar="MM", help="e.g. 0.125")
     s31.add_argument("--clear", action="store_true", help="remove the profile")
+    s31.add_argument("--bom-fields", metavar="FIELDS",
+                     help="fields every fitted BOM item needs besides MPN, comma-separated ('' clears)")
     s30 = psp.add_parser("stamps", formatter_class=_Fmt, help="the board's stamp records; --rebuild lost ones",
                          description="Where each block instance was stamped (block, at, rot, side, origin,\n"
                                      "outline, layer map, ports), kept in the board file. --rebuild recovers\n"

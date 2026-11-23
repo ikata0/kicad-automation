@@ -25,6 +25,28 @@ def test_fab_set_and_gate_refuses_an_unrouted_board(placed):
     r = kat.pcb.ready(placed)
     assert not r["ready"]
     assert {e["problem"] for e in r["errors"]} >= {"check_not_clean", "title_block"}
+    assert r["assembly"]["ok"] and r["assembly"]["fitted"] == r["assembly"]["placed"] == 7
+
+
+def test_assembly_check_names_each_bad_part(placed, project):
+    """FR-060: judged on KiCad's own BOM and position exports and the flags behind them."""
+    with kat.edit(project) as s:
+        s.set("R1", "MPN", "-")                       # placeholder
+        s.set("R2", "Value", "DNP")                   # says DNP, is fitted
+        s.set("D2", "Mechanical", "yes")              # declared mechanical, still in BOM and pos
+        s.schematic.set_dnp("C1")                     # the board does not know (no pcb sync)
+    with kat.pcb.edit(placed) as b:
+        b.remove_footprint("J1")                      # bought, never placed
+        b.add_footprint("Resistor_SMD:R_0603_1608Metric", "R9", 30, 30)   # placed, never bought
+    a = kat.pcb.assembly(placed)
+    got = {(e["ref"], e["problem"]) for e in a["errors"]}
+    assert got == {("R1", "no_mpn"), ("R2", "dnp_only_in_value"), ("D2", "mechanical_in_bom"),
+                   ("D2", "mechanical_in_pos"), ("C1", "flag_mismatch"), ("C1", "dnp_in_pos"), ("J1", "bom_not_in_pos"),
+                   ("R9", "pos_not_in_bom")}, a["errors"]
+    assert not a["ok"] and a["counts"]["no_mpn"] == 1
+    assert kat.pcb.profile(placed, bom_fields=["Manufacturer"])["profile"]["bom_fields"] == ["Manufacturer"]
+    a = kat.pcb.assembly(placed)
+    assert sum(e["problem"] == "missing_field" for e in a["errors"]) == 6   # fitted: all but C1 (DNP)
 
 
 @needs_router

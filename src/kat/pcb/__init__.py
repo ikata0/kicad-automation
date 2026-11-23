@@ -18,7 +18,7 @@ from ..env import KatError, tidy
 from . import checks, syncer, views
 from .board import Board, Footprint, Pad
 
-__all__ = ["Board", "Footprint", "Pad", "block_environment", "block_port", "remove", "check", "clearance", "coupling_2d", "coupling_rule",
+__all__ = ["Board", "Footprint", "Pad", "assembly", "block_environment", "block_port", "remove", "check", "clearance", "coupling_2d", "coupling_rule",
            "drc", "edit", "escape", "fab", "import_mechanics", "instances", "layer_roles", "layer_rule", "load", "mate", "net_rules", "odb_pinout", "plane_rule",
            "pad_geometry", "polish_apply", "polish_check", "polish_extract", "polish_replay", "polish_run", "port_access", "ready", "refill", "route", "snapshot", "stack", "stamp", "stamp_preview", "sync", "view"]
 
@@ -425,18 +425,19 @@ def plane_stub(pcb: Path | str, refs: str | list[str], nets: list[str] | None = 
 
 
 def profile(pcb: Path | str, via_types: list[str] | None = None, min_clearance: float | None = None,
-            clear: bool = False) -> dict:
+            clear: bool = False, bom_fields: list[str] | None = None) -> dict:
     """The board's fabrication profile (``Board.fab_profile``): ``via_types`` the supplier
-    makes (through, blind, buried, micro) and ``min_clearance`` (mm). Set, read (no
-    arguments) or ``clear`` it; returns ``profile`` and the board's departures from it
-    (``departures``, as ``kat pcb check`` reports them)."""
+    makes (through, blind, buried, micro), ``min_clearance`` (mm) and ``bom_fields`` every
+    fitted BOM item needs besides MPN. Set, read (no arguments) or ``clear`` it; returns
+    ``profile`` and the board's departures from it (``departures``, as ``kat pcb check``
+    reports them)."""
     from . import fabprofile as prof
     report.touch(pcb)
-    if via_types is None and min_clearance is None and not clear:
+    if via_types is None and min_clearance is None and bom_fields is None and not clear:
         b = Board(pcb)
         return tidy({"board": str(pcb), "profile": b.fab_profile(), "departures": prof.findings(b)})
     with edit(pcb) as b:
-        p = b.fab_profile(via_types, min_clearance, clear)
+        p = b.fab_profile(via_types, min_clearance, clear, bom_fields)
     return tidy({"board": str(pcb), "profile": p, "departures": prof.findings(Board(pcb))})
 
 
@@ -744,6 +745,19 @@ def fab(pcb: Path | str, out: Path | str | None = None, step: bool = True, three
     report.touch(pcb)
     from . import fabrication as _fab
     return tidy(_fab.fab(Path(pcb), out, step, three_d))
+
+
+def assembly(pcb: Path | str, sch: Path | str | None = None, variant: str | None = None,
+             require: tuple[str, ...] | list[str] = ("MPN",)) -> dict:
+    """Check the assembly data KiCad exports for ``pcb`` (BOM from ``sch``, default next to
+    it, and the position file) for the base or one assembly ``variant``: real MPN and the
+    ``require`` / profile ``bom_fields`` on every fitted BOM item, mechanical parts
+    (field ``Mechanical`` = yes) excluded, BOM and position file agreeing, symbol and
+    footprint DNP/BOM/position flags agreeing, no DNP said only by the value. Returns
+    ``ok``, ``errors`` [{ref, problem, detail}] and ``counts`` (``kat.pcb.assembly_check``)."""
+    report.touch(pcb)
+    from . import assembly_check as _asm
+    return tidy(_asm.check(Path(pcb), sch, variant, require))
 
 
 def ready(pcb: Path | str, fab_dir: Path | str | None = None, accept: dict[str, str] | None = None,

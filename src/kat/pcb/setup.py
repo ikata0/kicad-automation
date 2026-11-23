@@ -415,18 +415,23 @@ class SetupMixin:
     # --- net classes and rules (project files, written on save) ---------------------------
 
     def fab_profile(self, via_types: list[str] | None = None, min_clearance: float | None = None,
-                    clear: bool = False) -> dict:
+                    clear: bool = False, bom_fields: list[str] | None = None) -> dict:
         """The board's fabrication profile, what the supplier can make, held for the whole
         flow (``kat.pcb.fabprofile``): ``via_types`` (through, blind, buried, micro) and
         ``min_clearance`` (mm, also the board minimum DRC uses). A generated rule
         ``kat profile vias`` disallows the other via kinds in DRC; ``via``, ``route_vias``,
-        ``netclass``, ``stamp``, ``check``, ``ready`` and ``fab`` hold to it. No arguments:
-        read it; ``clear``: remove it. Kept in ``<board>.kat.json``, written on save.
-        Returns the profile."""
+        ``netclass``, ``stamp``, ``check``, ``ready`` and ``fab`` hold to it. ``bom_fields``:
+        fields every fitted BOM item needs besides MPN (the assembly check, ``kat pcb
+        assembly``; ``[]`` clears them). No arguments: read it; ``clear``: remove it. Kept in
+        ``<board>.kat.json``, written on save. Returns the profile."""
         from . import fabprofile as prof
         cur = {} if clear else dict(self._profile if self._profile is not None else prof.read(self.path))
-        if via_types is None and min_clearance is None and not clear:
+        if via_types is None and min_clearance is None and bom_fields is None and not clear:
             return cur
+        if bom_fields is not None:
+            cur["bom_fields"] = [f for f in dict.fromkeys(bom_fields) if f]
+            if not cur["bom_fields"]:
+                del cur["bom_fields"]
         prof.check_values(via_types, min_clearance)
         if via_types is not None:
             cur["via_types"] = [k for k in ("through", "blind", "buried", "micro") if k in via_types]

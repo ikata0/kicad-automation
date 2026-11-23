@@ -179,24 +179,6 @@ effective edge clearance instead of independent constants.
 clearance only. Extend the existing profile mechanism rather than treating it
 as absent; keep assembly-data validation (FR-060) separately identifiable.
 
-### FR-060: Check assembly exports before release
-
-**Open.** Validate KiCad's exported BOM and position data, not just DRC and
-schematic/board parity. Require a real MPN (not blank or a placeholder such as
-`-`) and any profile-required fields for fitted BOM items. Flag non-fitted
-mechanical items missing BOM or position exclusions; use explicit metadata
-where needed rather than treating every missing MPN as proof an item is mechanical.
-Check BOM/position reference consistency with declared exclusions and DNP
-policy accounted for, and agreement between symbol `in_bom`/`dnp` and footprint
-attributes. A value containing "DNP" alone is not a DNP flag.
-
-`src\kat\pcb\fabrication.py` exports these files and checks release-set
-completeness, but does not validate their assembly semantics. A proposed
-`kat fab-check`, or assembly section of FR-058's fabrication check, should name
-the offending references and fields. FR-059 covers propagating the attributes;
-this request is the independent release check that catches incorrect inputs too.
-
-
 ## Resolved
 
 ### FR-027: Document literal SKiDL pin-name selection
@@ -747,3 +729,14 @@ Tests: `tests/test_polish_{case,solver,gui,board}.py`. First real-board trial on
 0.169 -> 0.069, DRC unchanged and clean. Open: default weights need tuning on more groups,
 and an agent-side bundle finder. Branches, multilayer and changing pours are left to later
 format versions.
+
+### FR-060: Check assembly exports before release
+
+`kat pcb assembly PCB [--variant V]` / `kat.pcb.assembly` (`src/kat/pcb/assembly_check.py`)
+judges KiCad's own ungrouped BOM and position exports, per reference: `no_mpn` (blank or
+placeholder MPN on a fitted item), `missing_field` (`--require-field`, profile `bom_fields`),
+`mechanical_in_bom`/`mechanical_in_pos` (explicit field `Mechanical`=yes; a missing MPN is
+never taken as mechanical), `pos_not_in_bom`, `dnp_in_pos`, `bom_not_in_pos`, `flag_mismatch`
+(symbol vs footprint DNP/BOM/position exclusion) and `dnp_only_in_value`. Flags come from the
+netlist and the footprints, since the BOM's `${DNP}` text is localized. `kat pcb ready` runs it
+as the separately named error `assembly`. It takes a variant from the start (FR-063).
