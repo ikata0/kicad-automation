@@ -86,6 +86,15 @@ effective edge clearance instead of independent constants.
 clearance only. Extend the existing profile mechanism rather than treating it
 as absent; keep assembly-data validation (FR-060) separately identifiable.
 
+### FR-066: Keep stacked boards apart while placing
+
+**Open.** `kat pcb mate --stack` (FR-003) finds collisions and near misses between stacked boards
+after the fact, in seconds per run. Placement should prevent them: from a stack file, the height
+each region of a board may use (the other boards' bodies and parts above or below it, less the
+clearance), honoured by `move`, `place_near`, `stamp` and reported by `pcb check`, using part
+heights from the 3D models or a height field. Connector gender (a plug must meet a receptacle) is
+not checked either.
+
 ## Resolved
 
 ### FR-027: Document literal SKiDL pin-name selection
@@ -255,8 +264,9 @@ and netlist for the symbol, and DRC's library check and IPC-D-356 for the footpr
 `kat pcb mate A B --pair J1=P1 --at X,Y [--rot R] [--flip]` and `kat.pcb.mate`. Compares pads and
 guide holes of mating connectors by position, the sides they are on, net names pin to pin, and
 mounting holes, in board A's frame. Positions come from pads already checked against IPC-D-356, and
-the tests compare the transform with KiCad's own export. Two boards at a time; stack height, body
-collisions and connector gender are not checked.
+the tests compare the transform with KiCad's own export. Any number of boards in 3D:
+`kat pcb mate --stack STACK.json` / `kat.pcb.mate_stack` (KiCad's STEP per board, judged by cqx:
+collisions, near misses, connector seating, missing models; SPEC §4.12). What remains is FR-066.
 
 ### FR-026: Preserve arrangement when sheet instances are renamed
 

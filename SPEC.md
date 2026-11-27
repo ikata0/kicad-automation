@@ -600,8 +600,51 @@ cannot: board B laid over board A by a given transform. Pads and guide holes of 
 coincide, by position and not by pin number; the connectors must be on the sides that face each
 other; mated pins must carry the same net name or the one given by `--net`; nets joined through
 the connectors are `shorts`. A pin connected on one board only is listed in `open` without failing.
-Hole-only footprints need a partner when inside the other board's outline. Stack height, body
-collisions between the boards and connector gender are not checked.
+Hole-only footprints need a partner when inside the other board's outline. Connector gender is
+not checked.
+
+**A stack of boards in 3D.** `kat pcb mate --stack STACK.json [--clearance MM] [--no-3d]
+[--no-render] [--out DIR]` (`kat.pcb.mate_stack`) takes any number of boards, each lying on a
+parent board:
+
+```json
+{"boards": {
+   "main": {"pcb": "main/main.kicad_pcb", "variant": "A"},
+   "io":   {"pcb": "io/io.kicad_pcb", "on": "main", "at": [12.5, 10], "rot": 0, "flip": true,
+            "below": false, "gap": 11.04, "pairs": [["J1", "P1"]], "nets": {}, "holes": "auto",
+            "engage": "flush"}},
+ "clearance": 0.5, "allow": [["main/H*", "io/SCREW*"]]}
+```
+
+`at`, `rot`, `flip`, `below`, `pairs`, `nets` and `holes` mean what they mean for `mate`, and every
+board is first checked on its parent that way (`links`). `gap` is the distance between the facing
+board surfaces: the connectors' mated height, or the standoff length. Then the 3D check, which
+needs cqx (cadquery-agentic, `KAT_CQX` or on PATH): KiCad exports each board as STEP (`--no-dnp`,
+the board's `variant`) into `STACK.mate/`, kat writes a cqx model there (`stack.py`, placed by
+`stack.json`) and `cqx inspect` compares every part and board body of one board with those of
+every other board:
+
+- `collisions`: overlapping parts, `KEY/REF` pairs with the overlap in mm³ (a board body is
+  `KEY/body`);
+- `near`: parts of different boards closer than `clearance` (default 0.5 mm), with the distance;
+- `not_seated`: a connector pair whose housings do not rest flush on each other (planar faces in
+  one plane with common area): too large a `gap` leaves pins half in the socket, too small a one
+  pushes the housings into each other. `"engage": "touch"` on a board accepts any contact, for
+  connectors whose housings do not meet;
+- `missing_models`: fitted parts (not DNP, not excluded from the BOM) that are not in the export
+  (no model, file not found, hidden). The check cannot see them, so they fail it.
+
+Connector pairs and `allow` pairs may overlap. Pictures: the stack from the front, the right and
+iso, and a close-up of the first four findings with the two parts highlighted. About 8 s for two
+boards of 200 parts each.
+
+KiCad's STEP frame is the board's (x, −y); z = 0 is the bottom of the board body, which is the
+dielectric and inner copper only. A model's z = 0 sits on the outer copper plus 0.05 mm on either
+side (`stacking.SEAT`), measured against KiCad 10 for 2 and 4 layers and other copper thicknesses
+(solder mask thickness does not move it). `gap` is measured between those seats, because library
+models are drawn from them; kat takes the body from KiCad's export and the outer copper from the
+stack-up, and `tests/test_pcb_stack3d.py` compares the placement with KiCad's export for flips,
+turns and boards below.
 
 ### 4.13 Design journal
 
@@ -1144,6 +1187,7 @@ downwards; everything snaps to 1.27 mm, parts belong on multiples of 2.54 mm.
 | `pcb stamps PCB [--rebuild [INSTANCE...]]` | the board's stamp records; recover lost ones from the board (§4.18) |
 | `pcb access SPEC.json` | before routing: can each candidate cell's port reach a source? A coarse maze per layer (§4.18) |
 | `pcb mate BOARD_A BOARD_B --pair J1=P1 [--at X,Y] [--rot R] [--flip] [--below] [--net A=B] [--holes auto/none/A=B] [--tolerance] [--hole-tolerance]` | two boards as they mate: pins by position, nets, guide holes, mounting holes (§4.12) |
+| `pcb mate --stack STACK [--clearance MM] [--no-3d] [--no-render] [--out DIR]` | a stack of boards: each on its parent as above, then in 3D by cqx: collisions, near misses, connectors not seated, parts without a 3D model (§4.12) |
 | `pcb import-mech PCB --odb JOB / --gerber FILE --drill FILE... [--at X,Y] [--offset DX,DY] [--vias] [--min-drill MM] [--assume-plated]` | board edge, cut-outs and holes from fabrication data (§4.7) |
 | `pcb odb-pinout JOB [--step S] [--ref REF] [--out FILE]` | a legacy board's pin-to-net mapping from ODB++; `--out` a table for `kat map` and SKiDL (§6.2) |
 | `pcb clearance PCB A B [--layer L]` | effective clearance between two nets or pads, as DRC resolves it (§4.9) |
@@ -1395,6 +1439,10 @@ column in place of the net.
 | KiCad's BOM `${DNP}` column is localized ("Nicht bestücken"), `${EXCLUDE_FROM_BOM}` stays empty, and `--include-excluded-from-bom` does not bring back a part a variant excludes | `pcb assembly` takes the rows and field values from the BOM export, the flags from the netlist (`dnp`, `exclude_from_bom`, `exclude_from_pos_files`, per-variant overrides) and the footprints; only a non-empty `DNP` cell counts |
 | A BOM grouped by value, footprint and MPN puts fitted and DNP parts of one value into one row, and KiCad marks the whole row DNP (C1-C6 "DNP" with only C4-C6 unfitted in a variant) | `kat pcb fab` groups by `${DNP}` too (`BOM_GROUP`) |
 | `kicad-cli pcb drc --refill-zones --save-board` (KiCad 10.0) writes the board without its top-level `(property ...)` nodes, so the stamp records went missing after `kat pcb refill`; `kicad-cli pcb upgrade` keeps them | `checks.drc` reads the board properties before a DRC save and puts back the ones it dropped (FR-053) |
+| A tall part on one board of a stack nearly touched a part of the next board: each board's DRC sees only itself, and `pcb mate` compared pins in 2D | `kat pcb mate --stack`: KiCad's STEP of each board, placed by kat, judged by cqx (collisions, near misses, connector seating, missing models) (§4.12) |
+| KiCad's STEP export names products by model, so they repeat (`R_0402...` per resistor); CadQuery's `Assembly.importStep` refuses them, and cqx fell back to one compound without references | `cqx.loader.step_assembly` reads instances by name (the reference designators); kat's stack model uses it |
+| A connector pair can touch with too large a gap (pins half in the socket); touching is no proof that it is seated | the pair must rest flush (`a\|b` contact: planar faces in one plane with common area) unless the board says `"engage": "touch"` |
+| A fitted part without a 3D model is invisible to any 3D check | `missing_models`: fitted footprints not in KiCad's export fail the stack check |
 | A root power pin wired by hand straight to a sheet-box pin takes the net name of the block's port (`vs`), not the design's (`+5V`); sync attaches the power symbol, which looked like a duplicate, and drew the box pin's label stub over the hand-drawn wire | The symbol is the naming repair `kat check` asks for (a name difference), added once; a box pin a wire already ends on takes its label on the pin (FR-030) |
 
 ## 8. Open points

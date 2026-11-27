@@ -120,6 +120,17 @@ def run_cli(*args: str, check: bool = True) -> subprocess.CompletedProcess:
     return proc
 
 
+def cqx() -> str:
+    """The ``cqx`` executable of cadquery-agentic (CadQuery EXtensions), used for 3D checks:
+    ``KAT_CQX``, then PATH. Raises KatError with the install hint when neither is set."""
+    if env := os.environ.get("KAT_CQX"):
+        return env
+    if found := shutil.which("cqx"):
+        return found
+    raise KatError("cqx not found: the 3D check needs cadquery-agentic "
+                   "(uv tool install --editable PATH/TO/cadquery-agentic), on PATH or as KAT_CQX")
+
+
 def _config_dir() -> Path:
     if os.environ.get("KICAD_CONFIG_HOME"):      # KiCad's own override, on every platform
         return Path(os.environ["KICAD_CONFIG_HOME"]) / KICAD_MAJOR

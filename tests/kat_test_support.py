@@ -128,6 +128,16 @@ def routing(strict: bool) -> Capability:
     return Capability(True, f"Java {match[1]}; {jar}")
 
 
+def cqx_capability() -> Capability:
+    """cadquery-agentic's cqx, for the 3D stack check (``KAT_CQX`` or PATH)."""
+    try:
+        cqx = env.cqx()
+    except env.KatError as e:
+        return Capability(False, str(e))
+    probe([cqx, "--help"])
+    return Capability(True, cqx)
+
+
 def gui_capability() -> Capability:
     display = sys.platform != "win32" and bool(
         os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
@@ -177,6 +187,7 @@ def discover(strict: bool = False, gui: bool = False) -> dict[str, Capability]:
         bool(rsvg) or capabilities["pymupdf"].available,
         str(rsvg) if rsvg else capabilities["pymupdf"].detail)
     capabilities["routing"] = routing(strict)
+    capabilities["cqx"] = cqx_capability()
     if gui:
         capabilities["gui"] = gui_capability()
     else:
@@ -189,8 +200,9 @@ def discover(strict: bool = False, gui: bool = False) -> dict[str, Capability]:
 # and these take almost none. A test needing another one fails with "unknown ... library": add it here.
 SYMBOL_LIBS = ("Amplifier_Operational", "Analog_Switch", "Connector", "Connector_Generic", "Device", "LED",
                "Mechanical", "Transistor_BJT", "power")
-FOOTPRINT_LIBS = ("Capacitor_SMD", "Connector_Coaxial", "Connector_IDC", "Connector_PinHeader_2.54mm", "Fiducial",
-                  "LED_SMD", "MountingHole", "Package_DFN_QFN", "Package_SO", "Package_TO_SOT_SMD", "Resistor_SMD")
+FOOTPRINT_LIBS = ("Capacitor_SMD", "Capacitor_THT", "Connector_Coaxial", "Connector_IDC", "Connector_PinHeader_2.54mm",
+                  "Connector_PinSocket_2.54mm", "Fiducial", "LED_SMD", "MountingHole", "Package_DFN_QFN", "Package_SO",
+                  "Package_TO_SOT_SMD", "Resistor_SMD")
 
 
 def small_library_tables(root: Path) -> Path:

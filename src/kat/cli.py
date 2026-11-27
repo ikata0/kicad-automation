@@ -313,6 +313,12 @@ def cmd_pcb(a):
     if a.pcb_cmd == "access":
         return kat.pcb.port_access(a.spec)
     if a.pcb_cmd == "mate":
+        if a.stack:
+            if a.pcb or a.other:
+                raise env.KatError("--stack names the boards: give no BOARD_A/BOARD_B")
+            return kat.pcb.mate_stack(a.stack, a.clearance, not a.no_3d, a.out, not a.no_render)
+        if not (a.pcb and a.other):
+            raise env.KatError("give BOARD_A and BOARD_B, or --stack STACK")
         def pairs(items, what):
             bad = [x for x in items if "=" not in x]
             if bad:
@@ -1502,8 +1508,23 @@ def build_parser() -> argparse.ArgumentParser:
                                      "in shorts; a pin connected on one board only in open, which does not fail.\n"
                                      "Hole-only footprints need a partner if inside the other board's outline\n"
                                      "(--holes auto), or name them with --holes A=B, or --holes none.\n"
+                                     "--stack STACK: a JSON file of any number of boards, each on a parent board\n"
+                                     "(on, at, rot, flip, below, gap = mm between the facing board surfaces,\n"
+                                     "pairs, nets, holes; see SPEC 4.12). Each board on its parent is checked as\n"
+                                     "above, then all of them together in 3D by cqx (cadquery-agentic): KiCad's\n"
+                                     "STEP of every board, collisions and near misses (closer than --clearance)\n"
+                                     "between parts and bodies of different boards, connector pairs whose\n"
+                                     "housings do not rest flush on each other (not_seated; \"engage\": \"touch\"\n"
+                                     "on a board relaxes it) and fitted parts without a 3D model (missing_models).\n"
+                                     "Results, the cqx model stack.py and pictures go into STACK's name + .mate/.\n"
                                      "Exit code 1 when it does not fit.")
-    s23.add_argument("pcb", metavar="BOARD_A"); s23.add_argument("other", metavar="BOARD_B")
+    s23.add_argument("pcb", metavar="BOARD_A", nargs="?"); s23.add_argument("other", metavar="BOARD_B", nargs="?")
+    s23.add_argument("--stack", metavar="STACK", help="stack file (JSON) instead of BOARD_A BOARD_B")
+    s23.add_argument("--clearance", type=float, metavar="MM", help="with --stack: least distance between parts of "
+                     "different boards (default: the file's, else 0.5)")
+    s23.add_argument("--no-3d", action="store_true", help="with --stack: the board-on-board checks only")
+    s23.add_argument("--no-render", action="store_true", help="with --stack: no pictures")
+    s23.add_argument("--out", metavar="DIR", help="with --stack: where exports, model and pictures go")
     s23.add_argument("--pair", action="append", metavar="REF_A=REF_B", help="mating connectors (repeatable)")
     s23.add_argument("--at", default="0,0", metavar="X,Y", help="B's origin in A's frame (mm, default 0,0)")
     s23.add_argument("--rot", type=float, default=0.0, help="degrees, counter-clockwise")

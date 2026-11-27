@@ -613,6 +613,36 @@ def mate(a: Path | str, b: Path | str, pairs: list[tuple[str, str]], at: tuple[f
     return _mate(a, b, pairs, at, rot, flip, nets, holes, above, tolerance, hole_tolerance)
 
 
+def mate_stack(stack: dict | Path | str, clearance: float | None = None, solid: bool = True,
+               out: Path | str | None = None, render: bool = True) -> dict:
+    """Check a stack of boards: each board on its parent as ``mate`` checks two (pins, nets,
+    holes), then all of them together in 3D. ``stack``: a stack file (JSON) or its dictionary,
+    ``{"boards": {KEY: {"pcb": PATH, "variant": V}, KEY2: {"pcb": ..., "on": KEY, "at": [x, y],
+    "rot": deg, "flip": bool, "below": bool, "gap": mm, "pairs": [[REF_ON_PARENT, REF]],
+    "nets": {}, "holes": "auto", "engage": "flush"}}, "clearance": mm,
+    "allow": [["KEY/REF*", "KEY2/REF*"]]}``;
+    paths are relative to the file. ``gap`` is the distance between the facing board surfaces
+    (the connectors' mated height). ``clearance`` (mm, default 0.5) overrides the file's.
+
+    The 3D check (``solid``) needs cqx (cadquery-agentic): KiCad exports each board as STEP
+    into ``out`` (default: the stack file's name with ``.mate``), kat writes the cqx model
+    ``stack.py`` there and ``cqx inspect`` compares every part of one board with every part
+    of the others, board bodies included. ``render`` adds pictures of the stack and of the
+    first findings.
+
+    Returns ``links`` (``mate`` per board on its parent), ``collisions`` (parts of different
+    boards that overlap: a, b as ``KEY/REF``, overlap_mm3), ``near`` (closer than clearance:
+    a, b, distance mm), ``not_seated`` (a connector pair whose housings do not rest flush on
+    each other: wrong gap or placement; with ``"engage": "touch"`` on the board, touching is
+    enough), ``missing_models`` (fitted parts without a 3D model in the export, which the
+    check cannot see), ``connectors`` (per pair: seated, touching, gap mm, contact_mm2,
+    overlap_mm3), ``invalid_models``,
+    ``model`` (the cqx model), ``3d`` (PNG paths), ``counts`` and ``ok``. Pairs on ``allow``
+    and the connector pairs may overlap."""
+    from .stacking import mate_stack as _mate_stack
+    return _mate_stack(stack, clearance, solid, out, render)
+
+
 def escape(pcb: Path | str, spec: dict | Path | str, apply: bool = False, out: Path | str | None = None) -> dict:
     """Route a group of permutable pins and choose their assignment with the tracks: a min-cost flow
     on a grid gives the most vertex-disjoint paths possible at the least total length. On one layer
