@@ -210,3 +210,10 @@ Be sure to document the feature in the help text.
 
 ---
 
+In one project that features stacked PCBAs, we got a warning about mounted components on different stages almost colliding.
+We need safeguard to prevent such collisions, and also a mating check for stacked PCBAs.
+Propose a few options how we could implement this; my first idea was to export to cadquery (see my helper framework ../cadquery-agentic),
+mate, check, then check for collisions.
+
+
+
