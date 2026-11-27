@@ -210,12 +210,9 @@ with kat.pcb.edit(PCB) as b:
   first, and holes whose file does not say are non-plated unless `--assume-plated`.
 - Two boards that mate: `kat pcb mate A B --pair J1=P1 --at X,Y [--rot R] [--flip]` compares pins by
   position, net names, guide holes and mounting holes, in 2D.
-- Stacked boards (any number): write a stack file and run `kat pcb mate --stack STACK.json`. Each
-  board names its parent (`on`), the placement as for `mate` and `gap`, the distance between the
-  facing board surfaces (the connectors' mated height from the datasheet). It checks every board on
-  its parent, then in 3D (needs cqx): `collisions`, `near` (closer than `clearance`, default 0.5 mm),
-  `not_seated` connector pairs and `missing_models`. Look at the close-ups in `3d`. A part without a
-  3D model is invisible to the check: give it one rather than accepting the finding.
+- Stacked boards (any number): `kat pcb mate --stack STACK.json` checks each board on its parent,
+  then all of them in 3D (needs cqx): `collisions`, `near` (closer than `clearance`), `not_seated`
+  connectors, `missing_models`. File format and how to fix findings: `references/stacking.md`.
 - A pin table from a datasheet or a legacy board (`kat pcb odb-pinout JOB --out pins.csv`):
   `kat pcb check PCB --map pins.csv`; it says `mismatched`, `missing`, `extra` and more.
 - Around a board cut-out Freerouting can leave a net unrouted however many passes it gets:

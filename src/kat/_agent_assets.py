@@ -21,6 +21,7 @@ REQUIRED = (
     "kicad-layout/SKILL.md",
     "kicad-layout/references/stamping.md",
     "kicad-layout/references/routing.md",
+    "kicad-layout/references/stacking.md",
 )
 
 

@@ -1508,10 +1508,14 @@ def build_parser() -> argparse.ArgumentParser:
                                      "in shorts; a pin connected on one board only in open, which does not fail.\n"
                                      "Hole-only footprints need a partner if inside the other board's outline\n"
                                      "(--holes auto), or name them with --holes A=B, or --holes none.\n"
-                                     "--stack STACK: a JSON file of any number of boards, each on a parent board\n"
-                                     "(on, at, rot, flip, below, gap = mm between the facing board surfaces,\n"
-                                     "pairs, nets, holes; see SPEC 4.12). Each board on its parent is checked as\n"
-                                     "above, then all of them together in 3D by cqx (cadquery-agentic): KiCad's\n"
+                                     "--stack STACK: a JSON file of any number of boards, each on a parent board:\n"
+                                     '  {"boards": {"main": {"pcb": "main/main.kicad_pcb"},\n'
+                                     '              "io": {"pcb": "io/io.kicad_pcb", "on": "main", "at": [12.5, 10],\n'
+                                     '                     "flip": true, "gap": 11.04, "pairs": [["J1", "P1"]]}},\n'
+                                     '   "clearance": 0.5}\n'
+                                     "gap = mm between the facing board surfaces (the connectors' mated height);\n"
+                                     "also rot, below, nets, holes, variant, engage, allow. Each board on its parent\n"
+                                     "is checked as above, then all of them together in 3D by cqx (cadquery-agentic): KiCad's\n"
                                      "STEP of every board, collisions and near misses (closer than --clearance)\n"
                                      "between parts and bodies of different boards, connector pairs whose\n"
                                      "housings do not rest flush on each other (not_seated; \"engage\": \"touch\"\n"

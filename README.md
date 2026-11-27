@@ -124,6 +124,9 @@ enables the 2D coupling estimate (`kat pcb netrule PCB coupling A B --estimate 2
 tests, install Java 25+ (for example,
 `winget install --id EclipseAdoptium.Temurin.25.JDK --exact --source winget`),
 open a new terminal, then run `.\.venv\Scripts\kat.exe pcb route --install`.
+The 3D check of stacked boards (`kat pcb mate --stack`) uses `cqx` from
+[cadquery-agentic](https://github.com/ikata0/cadquery-agentic) (`uv tool install --editable
+PATH\to\cadquery-agentic`, or point `KAT_CQX` at its executable); its tests skip without it.
 
 The editable installation above is ready to use; activation is optional because
 the commands use the environment's executables directly. To build a wheel and
@@ -192,7 +195,7 @@ tests. No activation, manual KiCad PATH/library setup, `PYTHONUTF8` setting or
 collection and exposes the installation and library paths only inside its own
 process and child processes. Explicit executable/library overrides are honored.
 
-Missing KiCad, libraries, SKiDL, rendering support or Java/Freerouting produces
+Missing KiCad, libraries, SKiDL, rendering support, Java/Freerouting or cqx produces
 a dependency warning and targeted skips; independent tests still run. A startup
 inventory and dependency-skip summary show the coverage limitations. Broken
 installed tools, incompatible KiCad/Java versions and invalid explicit overrides
