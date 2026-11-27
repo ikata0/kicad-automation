@@ -157,10 +157,10 @@ def export_step(pcb: Path, variant: str | None, step: Path) -> tuple[Path, bool]
     args = ["--no-dnp", "--subst-models", "--user-origin", "0x0mm"] + (["--variant", variant] if variant else [])
     digest = hashlib.sha256(pcb.read_bytes() + json.dumps(args).encode()).hexdigest()
     stamp = step.with_suffix(".sha256")
-    if step.exists() and stamp.exists() and stamp.read_text().strip() == digest:
+    if step.exists() and stamp.exists() and stamp.read_text(encoding="utf-8").strip() == digest:
         return step, False
     env.run_cli("pcb", "export", "step", "-f", *args, "-o", str(step), str(pcb))
-    stamp.write_text(digest + "\n")
+    stamp.write_text(digest + "\n", encoding="utf-8")
     return step, True
 
 

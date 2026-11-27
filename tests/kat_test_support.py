@@ -29,7 +29,7 @@ class Capability:
     detail: str
 
 
-REQUIRED = ("kicad", "symbols", "footprints", "skidl", "render", "routing")
+REQUIRED = ("kicad", "symbols", "footprints", "skidl", "render", "routing", "cqx")
 
 
 def probe(argv: list[str]) -> str:
